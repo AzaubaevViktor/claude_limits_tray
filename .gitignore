@@ -8,6 +8,9 @@ venv/
 # macOS
 .DS_Store
 
+# runtime poll-timing state
+.poll-state.json
+
 # IDE
 .idea/
 .vscode/

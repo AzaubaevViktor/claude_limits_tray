@@ -9,8 +9,11 @@ Data comes from the same OAuth endpoint Claude Code's /usage screen uses
 "Claude Code-credentials" keychain item that Claude Code itself maintains.
 """
 
+import atexit
 import json
 import math
+import os
+import random
 import subprocess
 import time
 from collections import deque
@@ -30,6 +33,14 @@ WEEK_SECS = 7 * 24 * 3600
 REFRESH_SECS = 30           # how often to poll the usage endpoint
 PROFILE_EVERY = 60          # re-fetch the account profile every N ticks
 FONT_SIZE = 11.0
+CACHE_TTL = 300.0           # keep showing the last good response this long on errors
+SAVE_EVERY_SECS = 300.0     # don't rewrite the poll-state file more often than this
+
+# Remembers, across restarts, when it's safe to poll again — so relaunching
+# doesn't immediately re-hit a 429.
+_HERE = (os.path.dirname(os.path.abspath(__file__))
+         if "__file__" in globals() else os.getcwd())
+STATE_PATH = os.path.join(_HERE, ".poll-state.json")
 
 PLAN_NAMES = {
     "default_claude_max_5x": "Claude Max 5×",
@@ -67,6 +78,19 @@ def time_fraction(reset_at, window_secs):
     if remaining is None:
         return 0.0
     return max(0.0, min(1.0, remaining / window_secs))
+
+
+def wait_seconds(reset_at):
+    """Seconds until a ratelimit-reset value (ISO timestamp or epoch seconds)."""
+    if not reset_at:
+        return None
+    secs = seconds_until(reset_at)        # ISO timestamp
+    if secs is not None:
+        return secs
+    try:
+        return float(reset_at) - time.time()   # epoch seconds
+    except (TypeError, ValueError):
+        return None
 
 
 def fmt_remaining(seconds):
@@ -114,10 +138,11 @@ def aligned(item, left, right, width=250.0):
 class ApiError(Exception):
     """HTTP/transport failure talking to the OAuth API."""
 
-    def __init__(self, message, status=None, retry_after=None):
+    def __init__(self, message, status=None, retry_after=None, reset_at=None):
         super().__init__(message)
         self.status = status
-        self.retry_after = retry_after   # seconds from the 429 retry-after header
+        self.retry_after = retry_after   # seconds, from the retry-after header
+        self.reset_at = reset_at         # ISO/epoch, from a ratelimit-reset header
 
 
 class UsageClient:
@@ -148,27 +173,29 @@ class UsageClient:
              "-H", f"anthropic-beta: {self.OAUTH_BETA}",
              "-H", f"User-Agent: {self.USER_AGENT}",
              "-H", "Accept: application/json",
-             "-w", f"{self.META}%{{http_code}}|%header{{retry-after}}",
+             "-w", f"{self.META}%{{http_code}}|%header{{retry-after}}"
+                   "|%header{anthropic-ratelimit-unified-reset}",
              self.BASE + path],
             capture_output=True, text=True)
         if proc.returncode != 0:
             raise ApiError("Offline — can't reach Claude API")
         body, _, meta = proc.stdout.rpartition(self.META)
-        code_s, _, retry_s = meta.partition("|")
+        fields = meta.split("|")
         try:
-            status = int(code_s)
-        except ValueError:
+            status = int(fields[0])
+        except (ValueError, IndexError):
             raise ApiError("Malformed curl response")
         if status >= 400:
             retry_after = None
-            retry_s = retry_s.strip()
+            retry_s = fields[1].strip() if len(fields) > 1 else ""
             if retry_s:
                 try:
                     retry_after = int(float(retry_s))
                 except ValueError:
                     retry_after = None
+            reset_at = (fields[2].strip() or None) if len(fields) > 2 else None
             raise ApiError(f"HTTP {status}", status=status,
-                           retry_after=retry_after)
+                           retry_after=retry_after, reset_at=reset_at)
         return json.loads(body)
 
     def usage(self):
@@ -416,7 +443,7 @@ class ClaudeLimitsApp(rumps.App):
 
     def __init__(self):
         super().__init__("Claude Limits", title="…", template=True,
-                         quit_button="Quit")
+                         quit_button=None)
         self.client = UsageClient()
         self.rates = RateTracker()
         self.profile_data = None
@@ -427,11 +454,16 @@ class ClaudeLimitsApp(rumps.App):
         self.font_set = False
         self.error = False
         self.blink = False
+        self.cached = False             # showing last good data despite an error
         self.last_ok = None
         self.last_fail = None
+        self.last_fail_msg = None
         self.fail_count = 0
-        self.retry_until = 0.0
+        self.retry_until = 0.0          # monotonic gate (this process)
+        self.next_allowed_epoch = 0.0   # wall-clock gate (persisted)
+        self._last_save = float("-inf")
 
+        self._load_state()              # may defer the first poll after a restart
         self._build_menu()
         self.set_icon(Dial.render(BLANK_LIMITS), "init")
         self.refresh()
@@ -442,6 +474,7 @@ class ClaudeLimitsApp(rumps.App):
         ]
         for t in self._timers:
             t.start()
+        atexit.register(lambda: self._save_state(force=True))
 
     # -- menu --------------------------------------------------------------
 
@@ -473,7 +506,8 @@ class ClaudeLimitsApp(rumps.App):
             self.weekly_item, self.weekly_reset_item, None,
             self.burn_parent, self.scoped_parent, self.legend_parent, None,
             self.status_item, self.ok_item, self.fail_item,
-            rumps.MenuItem("Refresh now", callback=self.refresh),
+            rumps.MenuItem("Refresh now", callback=self.refresh_now),
+            rumps.MenuItem("Quit", callback=self.on_quit),
         ]
 
     # -- status-bar icon ---------------------------------------------------
@@ -498,6 +532,51 @@ class ClaudeLimitsApp(rumps.App):
             self.font_set = True
         except Exception:
             pass
+
+    # -- persistence / lifecycle -------------------------------------------
+
+    def _load_state(self):
+        """Restore the persisted poll gate so a restart doesn't re-hit a 429."""
+        try:
+            with open(STATE_PATH) as f:
+                data = json.load(f)
+        except Exception:
+            return
+        ok = data.get("last_ok")
+        if ok:
+            try:
+                self.last_ok = datetime.fromtimestamp(ok)
+            except Exception:
+                pass
+        na = data.get("next_allowed")
+        if na:
+            delay = na - time.time()
+            if delay > 0:
+                self.retry_until = time.monotonic() + delay
+                self.next_allowed_epoch = na
+
+    def _save_state(self, force=False):
+        """Write the next-allowed poll time, throttled (and forced on quit)."""
+        now_m = time.monotonic()
+        if not force and (now_m - self._last_save) < SAVE_EVERY_SECS:
+            return
+        self._last_save = now_m
+        try:
+            with open(STATE_PATH, "w") as f:
+                json.dump({
+                    "last_ok": self.last_ok.timestamp() if self.last_ok else None,
+                    "next_allowed": self.next_allowed_epoch,
+                }, f)
+        except Exception:
+            pass
+
+    def refresh_now(self, _=None):
+        self.retry_until = 0.0   # explicit user action: bypass the backoff gate
+        self.refresh()
+
+    def on_quit(self, _=None):
+        self._save_state(force=True)
+        rumps.quit_application()
 
     # -- error handling ----------------------------------------------------
 
@@ -536,15 +615,36 @@ class ClaudeLimitsApp(rumps.App):
         return str(exc)   # transport / no-credentials message
 
     def note_fail(self, exc):
-        """Record a failed request and arm a backoff. Honour the server's
-        retry-after on 429s; otherwise back off exponentially."""
+        """Record a failed request and arm a backoff.
+
+        Wait precision, best first: a ratelimit-reset header, then retry-after,
+        then an exponential floor. Add equal jitter, but never wait less than a
+        server-mandated minimum. While the last good response is still fresh
+        (< CACHE_TTL) keep showing it instead of the error dial."""
         self.last_fail = datetime.now()
+        self.last_fail_msg = self.describe(exc)
         self.fail_count += 1
-        backoff = min(600.0, 15.0 * (2 ** (self.fail_count - 1)))
+        base = min(600.0, 15.0 * (2 ** (self.fail_count - 1)))
+        floor = 0.0   # server-mandated minimum wait
         if exc.status == 429:
-            backoff = float(exc.retry_after) if exc.retry_after else max(60.0, backoff)
+            server = wait_seconds(exc.reset_at) or exc.retry_after
+            if server and server > 0:
+                base = floor = float(server)
+            else:
+                base = max(60.0, base)
+        backoff = max(floor, base * 0.5 + random.uniform(0.0, base * 0.5))
         self.retry_until = time.monotonic() + backoff
-        self.show_error(f"{self.describe(exc)} · retry {int(backoff)}s")
+        self.next_allowed_epoch = time.time() + backoff
+
+        fresh = (self.last_ok is not None
+                 and (datetime.now() - self.last_ok).total_seconds() < CACHE_TTL)
+        if fresh:
+            self.error = False     # keep the last good dial on screen
+            self.cached = True
+        else:
+            self.cached = False
+            self.show_error(f"{self.last_fail_msg} · retry {int(backoff)}s")
+        self._save_state()
         self.tick_clock()
 
     # -- relative-time labels (1 s, no network) ----------------------------
@@ -555,7 +655,17 @@ class ClaudeLimitsApp(rumps.App):
         aligned(self.ok_item, "✓ Last success", ago(self.last_ok))
         aligned(self.fail_item, "✗ Last failure", ago(self.last_fail))
         left = self.retry_until - time.monotonic()
-        if self.error and left > 0:
+        if self.cached:
+            age = ((datetime.now() - self.last_ok).total_seconds()
+                   if self.last_ok else 1e9)
+            if age >= CACHE_TTL:        # stale: fall back to the error dial
+                self.cached = False
+                self.show_error(f"No fresh data — {self.last_fail_msg or 'error'}")
+            else:
+                self.status_item.title = (
+                    f"⚠ {self.last_fail_msg} — showing cached "
+                    f"({int(CACHE_TTL - age)}s)")
+        elif self.error and left > 0:
             self.status_item.title = f"⚠ backing off — retry in {int(left) + 1}s"
 
     # -- profile / scoped limits -------------------------------------------
@@ -617,9 +727,11 @@ class ClaudeLimitsApp(rumps.App):
 
         # success: clear error + backoff state
         self.error = False
+        self.cached = False
         self.fail_count = 0
         self.retry_until = 0.0
         self.last_ok = datetime.now()
+        self.next_allowed_epoch = time.time() + REFRESH_SECS
 
         five = data.get("five_hour") or {}
         week = data.get("seven_day") or {}
@@ -661,6 +773,7 @@ class ClaudeLimitsApp(rumps.App):
         self.status_item.title = (f"✓ sess {sess_rem:.0f}% left  ·  "
                                   f"week {week_rem:.0f}% left")
         self.tick_clock()
+        self._save_state()
 
 
 if __name__ == "__main__":
