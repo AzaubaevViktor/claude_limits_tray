@@ -27,13 +27,14 @@ func (a *App) buildMenu() {
 	a.scopedParent = systray.AddMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.scopedParent.AddSubMenuItem("", "")
+		it.Disable()
 		it.Hide()
 		a.scoped = append(a.scoped, it)
 	}
 
 	a.legendParent = systray.AddMenuItem("Legend (the dial)", "")
 	for _, row := range legendRows() {
-		a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "")
+		a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "").Disable()
 	}
 	systray.AddSeparator()
 
@@ -45,6 +46,15 @@ func (a *App) buildMenu() {
 	a.fail = systray.AddMenuItem("Last failure: —", "")
 	refresh := systray.AddMenuItem("Refresh now", "")
 	quit := systray.AddMenuItem("Quit", "")
+
+	// the info-only rows are display, not buttons — grey them out so they
+	// don't highlight on hover (submenu parents stay active so they open)
+	for _, it := range []*systray.MenuItem{
+		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
+		a.burnSession, a.burnWeekly, a.speed, a.status, a.ok, a.fail,
+	} {
+		it.Disable()
+	}
 
 	a.onClick(refresh, func() {
 		a.nextPoll = time.Time{} // poll on the next tick
