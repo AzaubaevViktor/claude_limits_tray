@@ -38,7 +38,8 @@ gradient along the severity axis:
 - **yellow** — you'd overshoot, but a break of ≤1h makes it last
 - **red** — overshoot needing a break >1h
 
-The menu-bar text shows the session percentage remaining.
+The menu-bar text shows remaining quota as nearest vulgar fractions —
+weekly (left) · session (right), matching the dial sides (e.g. `1 ⅘`).
 
 ## The dropdown
 
@@ -47,7 +48,11 @@ Everything as numbers, plus the account:
 - Account name + email, and plan (e.g. Claude Max 5×)
 - Session (5h): % left · resets in …
 - Weekly: % left · resets in …
-- Forecast @ current rate: the burn projection for the 5h and weekly windows
+- Forecast @ current rate: the burn projection (with %/h rate) for the 5h
+  and weekly windows
+- Working hours: pick start/end in 30-min steps (default 09:00–18:00). The
+  forecast only counts consumption during these hours, so the weekly burn
+  reflects ~9h workdays rather than 24h wall-clock.
 - Weekly by model (scoped limits, when present)
 - Legend explaining each part of the dial (auto-generated from `SEGMENTS`)
 - Time since the last successful and last failed request
