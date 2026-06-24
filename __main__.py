@@ -740,14 +740,11 @@ class ClaudeLimitsApp(rumps.App):
         self.last_fail_msg = self.describe(exc)
         self.fail_count += 1
         base = min(600.0, 15.0 * (2 ** (self.fail_count - 1)))
-        floor = 0.0   # server-mandated minimum wait
         if exc.status == 429:
             server = wait_seconds(exc.reset_at) or exc.retry_after
-            if server and server > 0:
-                base = floor = float(server)
-            else:
-                base = max(60.0, base)
-        backoff = max(floor, base * 0.5 + random.uniform(0.0, base * 0.5))
+            base = float(server) if (server and server > 0) else max(60.0, base)
+        # jitter upward only — never poll sooner than the computed backoff
+        backoff = base * (1.0 + random.uniform(0.0, 0.25))
         self.retry_until = time.monotonic() + backoff
         self.next_allowed_epoch = time.time() + backoff
 
