@@ -135,6 +135,20 @@ def fmt_remaining(seconds):
     return f"{days}d {hours}h"
 
 
+_FRACTIONS = [
+    (0.0, "0"), (1 / 8, "⅛"), (1 / 6, "⅙"), (1 / 5, "⅕"), (1 / 4, "¼"),
+    (1 / 3, "⅓"), (3 / 8, "⅜"), (2 / 5, "⅖"), (1 / 2, "½"), (3 / 5, "⅗"),
+    (5 / 8, "⅝"), (2 / 3, "⅔"), (3 / 4, "¾"), (4 / 5, "⅘"), (5 / 6, "⅚"),
+    (7 / 8, "⅞"), (1.0, "1"),
+]
+
+
+def fmt_fraction(value):
+    """Nearest vulgar fraction for a 0..1 value ('0', '¾', '1')."""
+    value = max(0.0, min(1.0, value))
+    return min(_FRACTIONS, key=lambda f: abs(f[0] - value))[1]
+
+
 def fmt_ago(seconds):
     seconds = int(max(0, seconds))
     if seconds < 60:
@@ -874,7 +888,9 @@ class ClaudeLimitsApp(rumps.App):
             Dial.render(limits, mark_color=worst.color),
             f"{round(sess_pct)}-{round(week_pct)}-"
             f"{round(sess_tf*48)}-{round(week_tf*48)}-{round(worst.pos*60)}")
-        self.title = f"{sess_rem:.0f}%"
+        # tray: remaining quota as fractions — weekly (left) · session (right),
+        # matching the dial sides
+        self.title = f"{fmt_fraction(week_rem / 100)} {fmt_fraction(sess_rem / 100)}"
 
         aligned(self.session_item, "\U0001f550 Session (5h)", f"{sess_rem:.0f}% left")
         aligned(self.session_reset_item, "      resets in", fmt_remaining(sess_secs))
@@ -882,8 +898,10 @@ class ClaudeLimitsApp(rumps.App):
         aligned(self.weekly_reset_item, "      resets in", fmt_remaining(week_secs))
 
         self.burn_parent.title = f"Forecast @ rate  ·  {worst.category}"
-        aligned(self.burn_session_item, "Session (5h)", sess_fc.text)
-        aligned(self.burn_weekly_item, "Weekly", week_fc.text)
+        aligned(self.burn_session_item, "Session (5h)",
+                f"{self.sess_rate * 3600:.1f}%/h  ·  {sess_fc.text}")
+        aligned(self.burn_weekly_item, "Weekly",
+                f"{self.week_rate * 3600:.1f}%/h  ·  {week_fc.text}")
 
         self.render_scoped(data.get("limits") or [])
         self.status_item.title = (f"✓ sess {sess_rem:.0f}% left  ·  "
