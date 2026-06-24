@@ -13,8 +13,11 @@ import atexit
 import json
 import math
 import os
+import queue
 import random
+import signal
 import subprocess
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -33,7 +36,7 @@ WEEK_SECS = 7 * 24 * 3600
 REFRESH_SECS = 30           # how often to poll the usage endpoint
 PROFILE_EVERY = 60          # re-fetch the account profile every N ticks
 FONT_SIZE = 11.0
-CACHE_TTL = 300.0           # keep showing the last good response this long on errors
+CACHE_TTL = 600.0           # keep showing the last good response this long on errors
 SAVE_EVERY_SECS = 300.0     # don't rewrite the poll-state file more often than this
 
 # Remembers, across restarts, when it's safe to poll again — so relaunching
@@ -134,16 +137,6 @@ def fmt_remaining(seconds):
         return f"{hours}h{minutes:02d}m"
     days, hours = divmod(hours, 24)
     return f"{days}d {hours}h"
-
-
-_SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸"
-
-
-def fmt_fraction(value):
-    """A 0..1 value as eighths in 'ⁿ⁄₈' form, so it always reads as a fraction
-    (full = ⁸⁄₈, empty = ⁰⁄₈) — used on both sides of the tray title."""
-    n = round(max(0.0, min(1.0, value)) * 8)
-    return f"{_SUPERSCRIPT[n]}⁄₈"
 
 
 def fmt_ago(seconds):
@@ -363,10 +356,10 @@ class Dial:
     #   time_left      window time remaining same
     #   time_elapsed   time since last reset remaining (inverted: fills/reddens)
     SEGMENTS = [
-        dict(ring="outer", side="right", source="session", metric="percent_left", bright=True,  label="Session left"),
-        dict(ring="inner", side="right", source="session", metric="time_elapsed", bright=False, label="Session since reset"),
-        dict(ring="outer", side="left",  source="weekly",  metric="percent_left", bright=True,  label="Weekly left"),
-        dict(ring="inner", side="left",  source="weekly",  metric="time_elapsed", bright=False, label="Weekly since reset"),
+        dict(ring="outer", side="left",  source="session", metric="percent_left", bright=True,  label="Session left"),
+        dict(ring="inner", side="left",  source="session", metric="time_elapsed", bright=False, label="Session since reset"),
+        dict(ring="outer", side="right", source="weekly",  metric="percent_left", bright=True,  label="Weekly left"),
+        dict(ring="inner", side="right", source="weekly",  metric="time_elapsed", bright=False, label="Weekly since reset"),
     ]
 
     @classmethod
@@ -487,7 +480,7 @@ class ClaudeLimitsApp(rumps.App):
 
         # runtime state
         self.icon_key = None
-        self.tick = 0
+        self.poll_count = 0
         self.font_set = False
         self.error = False
         self.blink = False
@@ -496,9 +489,12 @@ class ClaudeLimitsApp(rumps.App):
         self.last_fail = None
         self.last_fail_msg = None
         self.fail_count = 0
-        self.retry_until = 0.0          # monotonic gate (this process)
+        self.next_poll = 0.0            # monotonic time of the next allowed poll
         self.next_allowed_epoch = 0.0   # wall-clock gate (persisted)
         self._last_save = float("-inf")
+        self._inflight = False          # a request is running on a worker thread
+        self._req_start = 0.0
+        self._results = queue.Queue()
 
         # working hours (local minutes from midnight); the forecast only counts
         # consumption during these hours. Default 09:00–18:00.
@@ -514,15 +510,14 @@ class ClaudeLimitsApp(rumps.App):
             self._apply(self.last_usage)   # restore last known dial + forecast
         else:
             self.set_icon(Dial.render(BLANK_LIMITS), "init")
-        self.refresh()
         self._timers = [
-            rumps.Timer(self.refresh, REFRESH_SECS),
-            rumps.Timer(self.tick_clock, 1),
+            rumps.Timer(self.tick, 1),
             rumps.Timer(self.blink_tick, 0.5),
         ]
         for t in self._timers:
             t.start()
         atexit.register(lambda: self._save_state(force=True))
+        self._signals_installed = False
 
     # -- menu --------------------------------------------------------------
 
@@ -538,6 +533,7 @@ class ClaudeLimitsApp(rumps.App):
         self.burn_weekly_item = rumps.MenuItem("Forecast weekly")
         self.burn_parent.add(self.burn_session_item)
         self.burn_parent.add(self.burn_weekly_item)
+        self.speed_item = rumps.MenuItem("Speed")
         self.scoped_parent = rumps.MenuItem("Weekly by model")
         self.legend_parent = rumps.MenuItem("Legend (the dial)")
         for left, right in Dial.legend_rows():
@@ -553,7 +549,8 @@ class ClaudeLimitsApp(rumps.App):
             self.account_item, self.plan_item, None,
             self.session_item, self.session_reset_item,
             self.weekly_item, self.weekly_reset_item, None,
-            self.burn_parent, self.scoped_parent, self.legend_parent, None,
+            self.speed_item, self.burn_parent,
+            self.scoped_parent, self.legend_parent, None,
             self.work_parent, None,
             self.status_item, self.ok_item, self.fail_item,
             rumps.MenuItem("Refresh now", callback=self.refresh_now),
@@ -655,7 +652,7 @@ class ClaudeLimitsApp(rumps.App):
         if na:
             delay = na - time.time()
             if delay > 0:
-                self.retry_until = time.monotonic() + delay
+                self.next_poll = time.monotonic() + delay
                 self.next_allowed_epoch = na
         for key, attr in (("work_start", "work_start_min"),
                           ("work_end", "work_end_min")):
@@ -692,10 +689,26 @@ class ClaudeLimitsApp(rumps.App):
             pass
 
     def refresh_now(self, _=None):
-        self.retry_until = 0.0   # explicit user action: bypass the backoff gate
-        self.refresh()
+        self.next_poll = 0.0     # explicit user action: bypass the backoff gate
+        if not self._inflight:
+            self._start_request()
 
     def on_quit(self, _=None):
+        self._save_state(force=True)
+        rumps.quit_application()
+
+    def _install_signals(self):
+        """Install our signal handlers from inside the run loop, so rumps'
+        own SIGINT handler (set at run() time) doesn't clobber them."""
+        self._signals_installed = True
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, self._on_signal)
+            except (ValueError, OSError):
+                pass
+
+    def _on_signal(self, signum, frame):
+        """Save on Ctrl-C / SIGTERM (atexit doesn't fire on signals)."""
         self._save_state(force=True)
         rumps.quit_application()
 
@@ -751,7 +764,7 @@ class ClaudeLimitsApp(rumps.App):
             base = float(server) if (server and server > 0) else max(60.0, base)
         # jitter upward only — never poll sooner than the computed backoff
         backoff = base * (1.0 + random.uniform(0.0, 0.25))
-        self.retry_until = time.monotonic() + backoff
+        self.next_poll = time.monotonic() + backoff
         self.next_allowed_epoch = time.time() + backoff
 
         fresh = (self.last_ok is not None
@@ -763,16 +776,27 @@ class ClaudeLimitsApp(rumps.App):
             self.cached = False
             self.show_error(f"{self.last_fail_msg} · retry {int(backoff)}s")
         self._save_state()
-        self.tick_clock()
 
-    # -- relative-time labels (1 s, no network) ----------------------------
+    # -- 1 s heartbeat: drain results, maybe poll, refresh status ----------
 
-    def tick_clock(self, _=None):
+    def tick(self, _=None):
+        if not self._signals_installed:
+            self._install_signals()
+        self.shrink_font()
+        self._drain_results()
+        if not self._inflight and time.monotonic() >= self.next_poll:
+            self._start_request()
+        self._update_status()
+
+    def _update_status(self):
         def ago(ts):
             return fmt_ago((datetime.now() - ts).total_seconds()) if ts else "—"
         aligned(self.ok_item, "✓ Last success", ago(self.last_ok))
         aligned(self.fail_item, "✗ Last failure", ago(self.last_fail))
-        left = self.retry_until - time.monotonic()
+        if self._inflight:
+            elapsed = time.monotonic() - self._req_start
+            self.status_item.title = f"⟳ requesting… {elapsed:.0f}s"
+            return
         if self.cached:
             age = ((datetime.now() - self.last_ok).total_seconds()
                    if self.last_ok else 1e9)
@@ -783,18 +807,15 @@ class ClaudeLimitsApp(rumps.App):
                 self.status_item.title = (
                     f"⚠ {self.last_fail_msg} — showing cached "
                     f"({int(CACHE_TTL - age)}s)")
-        elif self.error and left > 0:
-            self.status_item.title = f"⚠ backing off — retry in {int(left) + 1}s"
+        elif self.error:
+            left = self.next_poll - time.monotonic()
+            if left > 0:
+                self.status_item.title = f"⚠ backing off — retry in {int(left) + 1}s"
 
     # -- profile / scoped limits -------------------------------------------
 
-    def update_profile(self):
-        if self.profile_data is not None and self.tick % PROFILE_EVERY != 0:
-            return
-        try:
-            self.profile_data = self.client.profile()
-        except Exception:
-            pass  # keep the last good profile
+    def _render_profile(self):
+        """Render account/plan from the (already fetched) profile data."""
         prof = self.profile_data or {}
         acct = prof.get("account", {})
         org = prof.get("organization", {})
@@ -829,26 +850,54 @@ class ClaudeLimitsApp(rumps.App):
 
     # -- main poll ---------------------------------------------------------
 
-    def refresh(self, _=None):
-        self.shrink_font()
-        self.tick += 1
-        if time.monotonic() < self.retry_until:
-            return  # still backing off from an earlier failure; don't poll
-        try:
-            data = self.client.usage()
-        except ApiError as exc:
-            self.note_fail(exc)
-            return
-        except Exception as exc:
-            self.note_fail(ApiError(f"Error ({type(exc).__name__})"))
-            return
+    def _start_request(self, _=None):
+        """Kick off the usage (and, when due, profile) request on a worker
+        thread so the run loop — timers, the 'requesting…' counter — stays live."""
+        self._inflight = True
+        self._req_start = time.monotonic()
+        self.poll_count += 1
+        want_profile = (self.profile_data is None
+                        or self.poll_count % PROFILE_EVERY == 0)
+        client, results = self.client, self._results
 
-        # success: clear error + backoff state
+        def worker():
+            try:
+                data = client.usage()
+            except ApiError as exc:
+                results.put(("err", exc))
+                return
+            except Exception as exc:
+                results.put(("err", ApiError(f"Error ({type(exc).__name__})")))
+                return
+            prof = None
+            if want_profile:
+                try:
+                    prof = client.profile()
+                except Exception:
+                    prof = None
+            results.put(("ok", (data, prof)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drain_results(self):
+        """Apply a finished request's result on the main thread."""
+        try:
+            kind, payload = self._results.get_nowait()
+        except queue.Empty:
+            return
+        self._inflight = False
+        if kind == "ok":
+            data, prof = payload
+            self._on_success(data, prof)
+        else:
+            self.note_fail(payload)
+
+    def _on_success(self, data, prof):
         self.error = False
         self.cached = False
         self.fail_count = 0
-        self.retry_until = 0.0
         self.last_ok = datetime.now()
+        self.next_poll = time.monotonic() + REFRESH_SECS
         self.next_allowed_epoch = time.time() + REFRESH_SECS
 
         five = data.get("five_hour") or {}
@@ -860,8 +909,10 @@ class ClaudeLimitsApp(rumps.App):
         if rates is not None:        # keep the last good rate until a fresh one
             self.sess_rate, self.week_rate = rates
         self.last_usage = data
+        if prof is not None:
+            self.profile_data = prof
         self._apply(data)
-        self.update_profile()
+        self._render_profile()
         self._save_state()
 
     def _apply(self, data):
@@ -893,26 +944,29 @@ class ClaudeLimitsApp(rumps.App):
             Dial.render(limits, mark_color=worst.color),
             f"{round(sess_pct)}-{round(week_pct)}-"
             f"{round(sess_tf*48)}-{round(week_tf*48)}-{round(worst.pos*60)}")
-        # tray: remaining quota as fractions — weekly (left) · session (right),
-        # matching the dial sides
-        self.title = f"{fmt_fraction(week_rem / 100)} {fmt_fraction(sess_rem / 100)}"
+        self.title = ""   # icon only; the numbers live in the dropdown
 
         aligned(self.session_item, "\U0001f550 Session (5h)", f"{sess_rem:.0f}% left")
         aligned(self.session_reset_item, "      resets in", fmt_remaining(sess_secs))
         aligned(self.weekly_item, "\U0001f4c5 Weekly", f"{week_rem:.0f}% left")
         aligned(self.weekly_reset_item, "      resets in", fmt_remaining(week_secs))
 
+        aligned(self.speed_item, "⚡ Speed (5m)",
+                f"sess {self.sess_rate * 3600:.1f}%/h  ·  "
+                f"week {self.week_rate * 3600:.1f}%/h")
         self.burn_parent.title = f"Forecast @ rate  ·  {worst.category}"
-        aligned(self.burn_session_item, "Session (5h)",
-                f"{self.sess_rate * 3600:.1f}%/h  ·  {sess_fc.text}")
-        aligned(self.burn_weekly_item, "Weekly",
-                f"{self.week_rate * 3600:.1f}%/h  ·  {week_fc.text}")
+        aligned(self.burn_session_item, "Session (5h)", sess_fc.text)
+        aligned(self.burn_weekly_item, "Weekly", week_fc.text)
 
         self.render_scoped(data.get("limits") or [])
         self.status_item.title = (f"✓ sess {sess_rem:.0f}% left  ·  "
                                   f"week {week_rem:.0f}% left")
-        self.tick_clock()
+        self._update_status()
 
 
 if __name__ == "__main__":
-    ClaudeLimitsApp().run()
+    app = ClaudeLimitsApp()
+    try:
+        app.run()
+    finally:
+        app._save_state(force=True)   # backstop if the run loop unwinds
