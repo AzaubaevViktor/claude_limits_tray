@@ -135,18 +135,14 @@ def fmt_remaining(seconds):
     return f"{days}d {hours}h"
 
 
-_FRACTIONS = [
-    (0.0, "0"), (1 / 8, "⅛"), (1 / 6, "⅙"), (1 / 5, "⅕"), (1 / 4, "¼"),
-    (1 / 3, "⅓"), (3 / 8, "⅜"), (2 / 5, "⅖"), (1 / 2, "½"), (3 / 5, "⅗"),
-    (5 / 8, "⅝"), (2 / 3, "⅔"), (3 / 4, "¾"), (4 / 5, "⅘"), (5 / 6, "⅚"),
-    (7 / 8, "⅞"), (1.0, "1"),
-]
+_SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸"
 
 
 def fmt_fraction(value):
-    """Nearest vulgar fraction for a 0..1 value ('0', '¾', '1')."""
-    value = max(0.0, min(1.0, value))
-    return min(_FRACTIONS, key=lambda f: abs(f[0] - value))[1]
+    """A 0..1 value as eighths in 'ⁿ⁄₈' form, so it always reads as a fraction
+    (full = ⁸⁄₈, empty = ⁰⁄₈) — used on both sides of the tray title."""
+    n = round(max(0.0, min(1.0, value)) * 8)
+    return f"{_SUPERSCRIPT[n]}⁄₈"
 
 
 def fmt_ago(seconds):
