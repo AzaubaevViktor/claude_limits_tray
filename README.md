@@ -1,88 +1,56 @@
 # Claude Limits
 
-A macOS menu-bar app (rumps) that shows your Claude usage limits at a glance.
+<p align="center"><img src="dial.svg" width="160" alt="the dial icon"></p>
 
-## The icon
+A tiny macOS menu-bar app that shows — at a glance — how much of your Claude
+usage is left and whether your current pace will blow through it.
 
-A circular template icon, two concentric rings, each split left/right:
+## What it solves
+
+Claude Code / claude.ai usage runs against a **rolling 5-hour session limit** and
+a **weekly cap**, and you usually only discover you've hit one when you get
+rate-limited in the middle of something. This app keeps both limits in your menu
+bar, projects your current **burn rate** forward — counting only your working
+hours — and colours a warning *before* you run out, so you can pace yourself or
+take a break instead of getting cut off.
+
+## How to read the dial
+
+One circular icon, two concentric rings, split left/right:
 
 ```
-        usage %         time left
-        (left)          (right)
-outer   session (5h)    until 5h reset
-inner   weekly          until weekly reset
+          outer ring          inner ring
+  left     Session % left      Session: time since reset
+  right    Weekly  % left      Weekly:  time since reset
 ```
 
-The exact layout lives in one table — `SEGMENTS` in `__main__.py`. Edit a row
-and both the dial **and** the dropdown legend follow. Current layout:
+- **Percent arcs** (outer) — how much quota is left: green plenty → red low.
+- **Time arcs** (inner) — fill as the window elapses and grow **greener as the
+  reset nears** (fresh quota is coming soon).
+- **Centre spark** — the burn-rate forecast (the worse of the two windows):
+  - 🟣 purple — >10% of quota will still be spare at the reset
+  - 🟢 green — you'll finish right around 0% (on track)
+  - 🟡 yellow — you'd overshoot, but a ≤1h break saves it
+  - 🔴 red — overshoot needing a >1h break
+- On an error the dial goes all-grey with a **red blinking** spark.
 
-```
-        outer ring        inner ring
-right   Session % left    Session: time since reset
-left    Weekly % left     Weekly:  time since reset
-```
+Click it for everything as numbers, plus your account.
 
-- **Percent arcs** show how much quota is *left*; green when plenty, red when low.
-- **Time arcs** fill as the window elapses and grow *greener* toward the reset
-  (the less time left in the window, the greener — a fresh window is near).
-- A small gap separates the left/right halves; the percent arcs are brighter.
+## What it can do
 
-### Centre mark — burn-rate forecast
-
-The little Claude spark in the centre is coloured by projecting your recent
-consumption rate (last 5 min, or since launch) forward to each window's reset,
-taking the **worse** of the 5-hour and weekly windows. The colour is a smooth
-gradient along the severity axis:
-
-- **purple** — >10% of quota would still be spare at the reset
-- **green** — ~0% spare (you'll use almost exactly your quota)
-- **yellow** — you'd overshoot, but a break of ≤1h makes it last
-- **red** — overshoot needing a break >1h
-
-The menu-bar text shows remaining quota as nearest vulgar fractions —
-weekly (left) · session (right), matching the dial sides (e.g. `1 ⅘`).
-
-## The dropdown
-
-Everything as numbers, plus the account:
-
-- Account name + email, and plan (e.g. Claude Max 5×)
-- Session (5h): % left · resets in …
-- Weekly: % left · resets in …
-- Forecast @ current rate: the burn projection (with %/h rate) for the 5h
-  and weekly windows
-- Working hours: pick start/end in 30-min steps (default 09:00–18:00). The
-  forecast only counts consumption during these hours, so the weekly burn
-  reflects ~9h workdays rather than 24h wall-clock.
-- Weekly by model (scoped limits, when present)
-- Legend explaining each part of the dial (auto-generated from `SEGMENTS`)
-- Time since the last successful and last failed request
-- Refresh now · Quit
-
-On errors the dial goes all-grey with a red blinking centre mark, and requests
-back off exponentially. On a 429 the app stops polling until the cooldown passes
-and honours the server's `retry-after` header when it carries a positive value
-(otherwise a 60s floor that grows on repeated failures).
-
-## Code shape
-
-- `UsageClient` — keychain token + curl calls to the OAuth endpoints; raises
-  `ApiError(status, retry_after)`.
-Split into modules:
-
-- `helpers.py` — pure time/format/backoff functions (no GUI deps).
-- `api.py` — `UsageClient` (keychain token + curl) and `ApiError`.
-- `forecast.py` — `Forecast` (burn projection + gradient) and `RateTracker`.
-- `dial.py` — `Dial`, the SVG/NSImage rendered from the `SEGMENTS` table.
-- `ui.py` — `ClaudeLimitsApp(rumps.App)`: menus, timers, polling, persistence.
-- `__main__.py` — thin entry point.
-
-## Data source
-
-It reads the same OAuth endpoint Claude Code's `/usage` screen uses
-(`api.anthropic.com/api/oauth/usage`). The bearer token comes from the
-`Claude Code-credentials` keychain item that Claude Code keeps refreshed —
-so keep Claude Code signed in. Requests go through the system `curl`.
+- Live **session (5h)** and **weekly** limits — % remaining and time to reset.
+- A **burn-rate forecast** per window, projected over your **working hours**
+  (so the weekly burn reflects ~9h workdays, not 24h of wall-clock).
+- Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
+  past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
+- Current consumption **speed** (%/h), and **per-model** weekly limits.
+- Polls in the background with a live "requesting…" indicator; on errors it
+  keeps showing the **last good values for 10 minutes** before going grey.
+- **Backoff that respects the server**: honours `retry-after` / ratelimit-reset
+  headers, otherwise exponential with jitter — and remembers the next-allowed
+  poll time across restarts so relaunching doesn't immediately re-hit a 429.
+- Caches the **account, plan, last quota values and rate**, and saves on quit
+  **and Ctrl-C** — so a restart is populated instantly.
 
 ## Run
 
@@ -109,11 +77,34 @@ PLIST
 launchctl load ~/Library/LaunchAgents/com.local.claude-limits.plist
 ```
 
-## Dev
+## Data source
 
-Python 3.10 venv with `rumps` (pulls pyobjc). Created with:
+It reads the same OAuth endpoint Claude Code's `/usage` screen uses
+(`api.anthropic.com/api/oauth/usage`). The bearer token comes from the
+`Claude Code-credentials` keychain item that Claude Code keeps refreshed — so
+**keep Claude Code signed in**. Requests go through the system `curl`; no
+network or crypto libraries are added.
+
+## Code
+
+Python (the reference) is split into modules:
+
+- `helpers.py` — pure time/format/backoff functions (no GUI deps).
+- `api.py` — `UsageClient` (keychain token + curl) and `ApiError`.
+- `forecast.py` — `Forecast` (burn projection + gradient) and `RateTracker`.
+- `dial.py` — `Dial`, the SVG/NSImage rendered from the `SEGMENTS` table.
+- `ui.py` — `ClaudeLimitsApp(rumps.App)`.
+- `__main__.py` — thin entry point. `gen_svg.py` regenerates `dial.svg`.
 
 ```sh
 uv venv --python 3.10 .venv
-uv pip install --python .venv/bin/python rumps
+uv pip install --python .venv/bin/python rumps pytest
+.venv/bin/python -m pytest -q          # 52 tests
+```
+
+A **Go** port lives in [`go/`](go/) (drawn with `fogleman/gg`, menu bar via
+`getlantern/systray`), mirroring the same behaviour:
+
+```sh
+cd go && go build -o claude-limits . && go test ./...
 ```
