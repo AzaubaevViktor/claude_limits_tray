@@ -531,9 +531,11 @@ class ClaudeLimitsApp(rumps.App):
         self.burn_parent = rumps.MenuItem("Forecast @ current rate")
         self.burn_session_item = rumps.MenuItem("Forecast session")
         self.burn_weekly_item = rumps.MenuItem("Forecast weekly")
+        self.speed_item = rumps.MenuItem("Speed")
         self.burn_parent.add(self.burn_session_item)
         self.burn_parent.add(self.burn_weekly_item)
-        self.speed_item = rumps.MenuItem("Speed")
+        self.burn_parent.add(rumps.separator)
+        self.burn_parent.add(self.speed_item)
         self.scoped_parent = rumps.MenuItem("Weekly by model")
         self.legend_parent = rumps.MenuItem("Legend (the dial)")
         for left, right in Dial.legend_rows():
@@ -549,7 +551,7 @@ class ClaudeLimitsApp(rumps.App):
             self.account_item, self.plan_item, None,
             self.session_item, self.session_reset_item,
             self.weekly_item, self.weekly_reset_item, None,
-            self.speed_item, self.burn_parent,
+            self.burn_parent,
             self.scoped_parent, self.legend_parent, None,
             self.work_parent, None,
             self.status_item, self.ok_item, self.fail_item,
