@@ -335,7 +335,7 @@ class RateTracker:
                 break
         dt = now - base[0]
         if dt < self.MIN_DT:
-            return 0.0, 0.0
+            return None   # not enough history yet — keep the previous rate
         return (max(0.0, (sess_pct - base[1]) / dt),
                 max(0.0, (week_pct - base[2]) / dt))
 
@@ -510,7 +510,10 @@ class ClaudeLimitsApp(rumps.App):
 
         self._load_state()              # may defer the first poll after a restart
         self._build_menu()
-        self.set_icon(Dial.render(BLANK_LIMITS), "init")
+        if self.last_usage:
+            self._apply(self.last_usage)   # restore last known dial + forecast
+        else:
+            self.set_icon(Dial.render(BLANK_LIMITS), "init")
         self.refresh()
         self._timers = [
             rumps.Timer(self.refresh, REFRESH_SECS),
@@ -661,6 +664,12 @@ class ClaudeLimitsApp(rumps.App):
                     setattr(self, attr, self._parse_hhmm(data[key]))
             except Exception:
                 pass
+        try:
+            self.sess_rate = float(data.get("sess_rate") or 0.0)
+            self.week_rate = float(data.get("week_rate") or 0.0)
+            self.last_usage = data.get("usage") or None
+        except Exception:
+            pass
 
     def _save_state(self, force=False):
         """Write the next-allowed poll time, throttled (and forced on quit)."""
@@ -675,6 +684,9 @@ class ClaudeLimitsApp(rumps.App):
                     "next_allowed": self.next_allowed_epoch,
                     "work_start": self._fmt_hhmm(self.work_start_min),
                     "work_end": self._fmt_hhmm(self.work_end_min),
+                    "sess_rate": self.sess_rate,   # last measured %/s, to recompute
+                    "week_rate": self.week_rate,
+                    "usage": self.last_usage,      # last good response, to re-render
                 }, f, indent=2)
         except Exception:
             pass
@@ -841,10 +853,12 @@ class ClaudeLimitsApp(rumps.App):
 
         five = data.get("five_hour") or {}
         week = data.get("seven_day") or {}
-        self.sess_rate, self.week_rate = self.rates.update(
+        rates = self.rates.update(
             time.monotonic(),
             float(five.get("utilization") or 0.0),
             float(week.get("utilization") or 0.0))
+        if rates is not None:        # keep the last good rate until a fresh one
+            self.sess_rate, self.week_rate = rates
         self.last_usage = data
         self._apply(data)
         self.update_profile()
