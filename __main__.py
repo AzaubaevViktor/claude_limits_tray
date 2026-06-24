@@ -82,8 +82,9 @@ def time_fraction(reset_at, window_secs):
 
 def working_seconds_until(reset_at, ws_min, we_min, now=None):
     """Seconds of *working time* between now and the reset — counting only the
-    daily [ws_min, we_min] window (minutes from local midnight). This is the
-    time during which the quota can actually be consumed."""
+    daily working window (minutes from local midnight). The window may wrap past
+    midnight (e.g. 09:00 -> 02:00); end <= start means it runs into the next day.
+    This is the time during which the quota can actually be consumed."""
     dt = parse_iso(reset_at)
     if dt is None:
         return None
@@ -91,15 +92,15 @@ def working_seconds_until(reset_at, ws_min, we_min, now=None):
     now_local = now or datetime.now()
     if reset_local <= now_local:
         return 0.0
-    if we_min <= ws_min:        # misconfigured window; fall back to wall-clock
-        return (reset_local - now_local).total_seconds()
+    duration = (we_min - ws_min) % (24 * 60) or 24 * 60   # 0 -> round the clock
     total = 0.0
-    day = now_local.date()
+    # start a day early so an overnight window opened "yesterday" is counted
+    day = now_local.date() - timedelta(days=1)
     while day <= reset_local.date():
-        ws = datetime.combine(day, dtime(ws_min // 60, ws_min % 60))
-        we = datetime.combine(day, dtime(we_min // 60, we_min % 60))
-        lo = max(ws, now_local)
-        hi = min(we, reset_local)
+        start = datetime.combine(day, dtime(ws_min // 60, ws_min % 60))
+        end = start + timedelta(minutes=duration)
+        lo = max(start, now_local)
+        hi = min(end, reset_local)
         if hi > lo:
             total += (hi - lo).total_seconds()
         day += timedelta(days=1)
@@ -601,15 +602,12 @@ class ClaudeLimitsApp(rumps.App):
             self._apply(self.last_usage)   # re-render forecast with new hours
 
     def on_pick_start(self, sender):
+        # end <= start is allowed: the window wraps past midnight (e.g. 09:00–02:00)
         self.work_start_min = self._parse_hhmm(sender.title)
-        if self.work_end_min <= self.work_start_min:
-            self.work_end_min = min(self.work_start_min + 30, 23 * 60 + 30)
         self._after_work_change()
 
     def on_pick_end(self, sender):
         self.work_end_min = self._parse_hhmm(sender.title)
-        if self.work_start_min >= self.work_end_min:
-            self.work_start_min = max(self.work_end_min - 30, 0)
         self._after_work_change()
 
     # -- status-bar icon ---------------------------------------------------
