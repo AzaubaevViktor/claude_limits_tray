@@ -1,7 +1,7 @@
 # Agent guidelines
 
 A macOS menu-bar app (rumps + pyobjc) that shows Claude usage limits. See
-`README.md` for what it does and `__main__.py` for the implementation.
+`README.md` for what it does.
 
 ## Commits
 
@@ -13,12 +13,13 @@ A macOS menu-bar app (rumps + pyobjc) that shows Claude usage limits. See
 
 ## Working on the code
 
-- Single module, `__main__.py`, organised into classes: `UsageClient`,
-  `Forecast`, `RateTracker`, `Dial`, and `ClaudeLimitsApp(rumps.App)`.
+- Modules: `helpers` (pure time/format/backoff), `api` (`UsageClient`),
+  `forecast` (`Forecast` + `RateTracker`), `dial` (`Dial` icon), `ui`
+  (`ClaudeLimitsApp`), and a thin `__main__.py`. Keep the pure logic in
+  `helpers`/`forecast` free of GUI imports so it stays unit-testable.
 - The dial layout is a declarative table — edit `Dial.SEGMENTS`; the icon and
   the dropdown legend both follow.
-- No third-party deps beyond `rumps` (which pulls pyobjc); HTTP goes through the
-  system `curl`, and the token is read from the `Claude Code-credentials`
-  keychain item. Don't add network/crypto libraries for this.
-- Run it with `./claude_limits.sh`; quick sanity check after edits:
-  `\.venv/bin/python -c "import py_compile; py_compile.compile('__main__.py', doraise=True)"`
+- No third-party runtime deps beyond `rumps` (which pulls pyobjc); HTTP goes
+  through the system `curl`, and the token is read from the
+  `Claude Code-credentials` keychain item. Don't add network/crypto libraries.
+- Run it with `./claude_limits.sh`. After edits: `.venv/bin/python -m pytest -q`.

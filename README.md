@@ -67,10 +67,14 @@ and honours the server's `retry-after` header when it carries a positive value
 
 - `UsageClient` — keychain token + curl calls to the OAuth endpoints; raises
   `ApiError(status, retry_after)`.
-- `Forecast` — projects the burn rate to a reset; gives the gradient colour.
-- `RateTracker` — rolling 5-minute consumption rate.
-- `Dial` — renders the SVG/NSImage from the `SEGMENTS` table.
-- `ClaudeLimitsApp(rumps.App)` — menus, timers, polling, error/backoff.
+Split into modules:
+
+- `helpers.py` — pure time/format/backoff functions (no GUI deps).
+- `api.py` — `UsageClient` (keychain token + curl) and `ApiError`.
+- `forecast.py` — `Forecast` (burn projection + gradient) and `RateTracker`.
+- `dial.py` — `Dial`, the SVG/NSImage rendered from the `SEGMENTS` table.
+- `ui.py` — `ClaudeLimitsApp(rumps.App)`: menus, timers, polling, persistence.
+- `__main__.py` — thin entry point.
 
 ## Data source
 
