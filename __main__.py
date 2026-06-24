@@ -18,7 +18,7 @@ import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Optional
 
 import rumps
@@ -78,6 +78,32 @@ def time_fraction(reset_at, window_secs):
     if remaining is None:
         return 0.0
     return max(0.0, min(1.0, remaining / window_secs))
+
+
+def working_seconds_until(reset_at, ws_min, we_min, now=None):
+    """Seconds of *working time* between now and the reset — counting only the
+    daily [ws_min, we_min] window (minutes from local midnight). This is the
+    time during which the quota can actually be consumed."""
+    dt = parse_iso(reset_at)
+    if dt is None:
+        return None
+    reset_local = dt.astimezone().replace(tzinfo=None)   # UTC -> naive local
+    now_local = now or datetime.now()
+    if reset_local <= now_local:
+        return 0.0
+    if we_min <= ws_min:        # misconfigured window; fall back to wall-clock
+        return (reset_local - now_local).total_seconds()
+    total = 0.0
+    day = now_local.date()
+    while day <= reset_local.date():
+        ws = datetime.combine(day, dtime(ws_min // 60, ws_min % 60))
+        we = datetime.combine(day, dtime(we_min // 60, we_min % 60))
+        lo = max(ws, now_local)
+        hi = min(we, reset_local)
+        if hi > lo:
+            total += (hi - lo).total_seconds()
+        day += timedelta(days=1)
+    return total
 
 
 def wait_seconds(reset_at):
@@ -463,6 +489,14 @@ class ClaudeLimitsApp(rumps.App):
         self.next_allowed_epoch = 0.0   # wall-clock gate (persisted)
         self._last_save = float("-inf")
 
+        # working hours (local minutes from midnight); the forecast only counts
+        # consumption during these hours. Default 09:00–18:00.
+        self.work_start_min = 9 * 60
+        self.work_end_min = 18 * 60
+        self.last_usage = None          # last good response, for re-render
+        self.sess_rate = 0.0
+        self.week_rate = 0.0
+
         self._load_state()              # may defer the first poll after a restart
         self._build_menu()
         self.set_icon(Dial.render(BLANK_LIMITS), "init")
@@ -499,16 +533,74 @@ class ClaudeLimitsApp(rumps.App):
         self.status_item = rumps.MenuItem("Status")
         self.ok_item = rumps.MenuItem("Last success: —")
         self.fail_item = rumps.MenuItem("Last failure: —")
+        self._build_work_menu()
 
         self.menu = [
             self.account_item, self.plan_item, None,
             self.session_item, self.session_reset_item,
             self.weekly_item, self.weekly_reset_item, None,
             self.burn_parent, self.scoped_parent, self.legend_parent, None,
+            self.work_parent, None,
             self.status_item, self.ok_item, self.fail_item,
             rumps.MenuItem("Refresh now", callback=self.refresh_now),
             rumps.MenuItem("Quit", callback=self.on_quit),
         ]
+
+    # -- working-hours settings --------------------------------------------
+
+    @staticmethod
+    def _fmt_hhmm(minutes):
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    @staticmethod
+    def _parse_hhmm(text):
+        h, m = text.split(":")
+        return int(h) * 60 + int(m)
+
+    def _build_work_menu(self):
+        self.work_parent = rumps.MenuItem("Working hours")
+        start_parent = rumps.MenuItem("Start")
+        end_parent = rumps.MenuItem("End")
+        self._start_items = {}
+        self._end_items = {}
+        for m in range(0, 24 * 60, 30):          # every half hour
+            label = self._fmt_hhmm(m)
+            si = rumps.MenuItem(label, callback=self.on_pick_start)
+            ei = rumps.MenuItem(label, callback=self.on_pick_end)
+            self._start_items[m] = si
+            self._end_items[m] = ei
+            start_parent.add(si)
+            end_parent.add(ei)
+        self.work_parent.add(start_parent)
+        self.work_parent.add(end_parent)
+        self._refresh_work_menu()
+
+    def _refresh_work_menu(self):
+        self.work_parent.title = (
+            f"Working hours: {self._fmt_hhmm(self.work_start_min)}–"
+            f"{self._fmt_hhmm(self.work_end_min)}")
+        for m, it in self._start_items.items():
+            it.state = 1 if m == self.work_start_min else 0
+        for m, it in self._end_items.items():
+            it.state = 1 if m == self.work_end_min else 0
+
+    def _after_work_change(self):
+        self._refresh_work_menu()
+        self._save_state(force=True)
+        if self.last_usage and not self.error:
+            self._apply(self.last_usage)   # re-render forecast with new hours
+
+    def on_pick_start(self, sender):
+        self.work_start_min = self._parse_hhmm(sender.title)
+        if self.work_end_min <= self.work_start_min:
+            self.work_end_min = min(self.work_start_min + 30, 23 * 60 + 30)
+        self._after_work_change()
+
+    def on_pick_end(self, sender):
+        self.work_end_min = self._parse_hhmm(sender.title)
+        if self.work_start_min >= self.work_end_min:
+            self.work_start_min = max(self.work_end_min - 30, 0)
+        self._after_work_change()
 
     # -- status-bar icon ---------------------------------------------------
 
@@ -554,6 +646,13 @@ class ClaudeLimitsApp(rumps.App):
             if delay > 0:
                 self.retry_until = time.monotonic() + delay
                 self.next_allowed_epoch = na
+        for key, attr in (("work_start", "work_start_min"),
+                          ("work_end", "work_end_min")):
+            try:
+                if data.get(key):
+                    setattr(self, attr, self._parse_hhmm(data[key]))
+            except Exception:
+                pass
 
     def _save_state(self, force=False):
         """Write the next-allowed poll time, throttled (and forced on quit)."""
@@ -566,7 +665,9 @@ class ClaudeLimitsApp(rumps.App):
                 json.dump({
                     "last_ok": self.last_ok.timestamp() if self.last_ok else None,
                     "next_allowed": self.next_allowed_epoch,
-                }, f)
+                    "work_start": self._fmt_hhmm(self.work_start_min),
+                    "work_end": self._fmt_hhmm(self.work_end_min),
+                }, f, indent=2)
         except Exception:
             pass
 
@@ -735,6 +836,20 @@ class ClaudeLimitsApp(rumps.App):
 
         five = data.get("five_hour") or {}
         week = data.get("seven_day") or {}
+        self.sess_rate, self.week_rate = self.rates.update(
+            time.monotonic(),
+            float(five.get("utilization") or 0.0),
+            float(week.get("utilization") or 0.0))
+        self.last_usage = data
+        self._apply(data)
+        self.update_profile()
+        self._save_state()
+
+    def _apply(self, data):
+        """Render the dial, labels and forecast from a usage response. Pure
+        re-render (no network), so it can also run when settings change."""
+        five = data.get("five_hour") or {}
+        week = data.get("seven_day") or {}
         sess_pct = float(five.get("utilization") or 0.0)
         week_pct = float(week.get("utilization") or 0.0)
         sess_secs = seconds_until(five.get("resets_at"))
@@ -744,10 +859,13 @@ class ClaudeLimitsApp(rumps.App):
         sess_rem = 100.0 - sess_pct
         week_rem = 100.0 - week_pct
 
-        sess_rate, week_rate = self.rates.update(time.monotonic(),
-                                                 sess_pct, week_pct)
-        sess_fc = Forecast.project(sess_pct, sess_rate, sess_secs)
-        week_fc = Forecast.project(week_pct, week_rate, week_secs)
+        # forecast over *working* time until each reset, not raw wall-clock
+        sess_work = working_seconds_until(five.get("resets_at"),
+                                          self.work_start_min, self.work_end_min)
+        week_work = working_seconds_until(week.get("resets_at"),
+                                          self.work_start_min, self.work_end_min)
+        sess_fc = Forecast.project(sess_pct, self.sess_rate, sess_work)
+        week_fc = Forecast.project(week_pct, self.week_rate, week_work)
         worst = max((sess_fc, week_fc), key=lambda f: f.pos)
 
         limits = {"session": {"pct": sess_pct, "time_left": sess_tf},
@@ -768,12 +886,9 @@ class ClaudeLimitsApp(rumps.App):
         aligned(self.burn_weekly_item, "Weekly", week_fc.text)
 
         self.render_scoped(data.get("limits") or [])
-        self.update_profile()
-
         self.status_item.title = (f"✓ sess {sess_rem:.0f}% left  ·  "
                                   f"week {week_rem:.0f}% left")
         self.tick_clock()
-        self._save_state()
 
 
 if __name__ == "__main__":
