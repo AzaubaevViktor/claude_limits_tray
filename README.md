@@ -23,7 +23,8 @@ left    Weekly % left     Weekly:  time since reset
 ```
 
 - **Percent arcs** show how much quota is *left*; green when plenty, red when low.
-- **Time arcs** fill as the window elapses and redden toward the reset.
+- **Time arcs** fill as the window elapses and grow *greener* toward the reset
+  (the less time left in the window, the greener — a fresh window is near).
 - A small gap separates the left/right halves; the percent arcs are brighter.
 
 ### Centre mark — burn-rate forecast

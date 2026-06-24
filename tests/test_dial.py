@@ -6,9 +6,19 @@ from dial import BLANK_LIMITS, Dial
 def test_metric_mapping():
     lim = {"pct": 21, "time_left": 0.55}
     assert Dial._metric("percent_left", lim) == pytest.approx((0.79, 0.79))
-    assert Dial._metric("time_elapsed", lim)[0] == pytest.approx(0.45)
     assert Dial._metric("time_left", lim) == pytest.approx((0.55, 0.55))
     assert Dial._metric("percent_used", lim)[0] == pytest.approx(0.21)
+    # time_elapsed: length = elapsed, and colour greens with elapsed (health =
+    # elapsed too) -> the less time left, the greener
+    assert Dial._metric("time_elapsed", lim) == pytest.approx((0.45, 0.45))
+
+
+def test_time_arc_greener_as_less_time_left():
+    # less time remaining -> higher health -> greener
+    nearly_done = Dial._metric("time_elapsed", {"pct": 0, "time_left": 0.1})[1]
+    just_reset = Dial._metric("time_elapsed", {"pct": 0, "time_left": 0.9})[1]
+    assert nearly_done > just_reset
+    assert Dial._health_color(nearly_done) != Dial._health_color(just_reset)
 
 
 def test_legend_matches_segments():

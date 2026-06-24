@@ -29,7 +29,8 @@ class Dial:
     #   percent_left   % of quota remaining  same  (long green arc = lots left)
     #   percent_used   % of quota used       headroom left (inverted vs arc)
     #   time_left      window time remaining same
-    #   time_elapsed   time since last reset remaining (inverted: fills/reddens)
+    #   time_elapsed   time since last reset elapsed (fills + GREENS toward reset:
+    #                  the less time left in the window, the greener)
     SEGMENTS = [
         dict(ring="outer", side="left",  source="session", metric="percent_left", bright=True,  label="Session left"),
         dict(ring="inner", side="left",  source="session", metric="time_elapsed", bright=False, label="Session since reset"),
@@ -52,7 +53,7 @@ class Dial:
             "percent_left": (pct_left, pct_left),
             "percent_used": (1.0 - pct_left, pct_left),
             "time_left": (t_left, t_left),
-            "time_elapsed": (1.0 - t_left, t_left),
+            "time_elapsed": (1.0 - t_left, 1.0 - t_left),
         }[name]
 
     @classmethod
