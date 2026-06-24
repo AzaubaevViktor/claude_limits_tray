@@ -109,10 +109,16 @@ func strokeArc(dc *gg.Context, ox, r, startDeg, endDeg float64) {
 // renderDial draws the dial and returns PNG bytes. markColor is the centre
 // spark colour; pass hasMark=false to omit it (error blink "off" frame).
 func renderDial(limits map[string]Limit, markColor [3]int, hasMark bool) []byte {
-	scale := float64(pxSize) / 18.0
-	dc := gg.NewContext(pxSize, pxSize)
+	return renderDialPx(limits, markColor, hasMark, pxSize)
+}
+
+func renderDialPx(limits map[string]Limit, markColor [3]int, hasMark bool, px int) []byte {
+	scale := float64(px) / 18.0
+	dc := gg.NewContext(px, px)
 	dc.Scale(scale, scale)
-	dc.SetLineWidth(dialSW)
+	// gg applies line width in device pixels (it ignores the Scale transform),
+	// so scale it ourselves to match the SVG's viewBox-relative stroke.
+	dc.SetLineWidth(dialSW * scale)
 	dc.SetLineCap(gg.LineCapRound)
 	span := 180.0 - 2*endGap
 
@@ -143,7 +149,7 @@ func renderDial(limits map[string]Limit, markColor [3]int, hasMark bool) []byte 
 	}
 
 	if hasMark {
-		drawMark(dc, markColor)
+		drawMark(dc, markColor, scale)
 	}
 
 	var buf bytes.Buffer
@@ -151,18 +157,18 @@ func renderDial(limits map[string]Limit, markColor [3]int, hasMark bool) []byte 
 	return buf.Bytes()
 }
 
-func drawMark(dc *gg.Context, c [3]int) {
+func drawMark(dc *gg.Context, c [3]int, scale float64) {
 	const rays = 12
 	r0, r1 := 0.35, 2.15
 	setRGB(dc, c, 1.0)
-	dc.SetLineWidth(0.82)
+	dc.SetLineWidth(0.82 * scale)
 	for k := 0; k < rays; k++ {
 		ang := float64(k) * 2 * math.Pi / rays
 		dc.DrawLine(dialCX+r0*math.Cos(ang), dialCY+r0*math.Sin(ang),
 			dialCX+r1*math.Cos(ang), dialCY+r1*math.Sin(ang))
 		dc.Stroke()
 	}
-	dc.SetLineWidth(dialSW)
+	dc.SetLineWidth(dialSW * scale)
 }
 
 var blankLimits = map[string]Limit{
