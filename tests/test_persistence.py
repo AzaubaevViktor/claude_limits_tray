@@ -20,6 +20,7 @@ def _bare():
     a.sess_rate = 0.0
     a.week_rate = 0.0
     a.last_usage = None
+    a.profile_data = None
     return a
 
 
@@ -31,6 +32,7 @@ def test_round_trip(tmp_path, monkeypatch):
     a.work_start_min, a.work_end_min = 9 * 60, 2 * 60     # overnight window
     a.sess_rate, a.week_rate = 0.0033, 0.0001
     a.last_usage = {"five_hour": {"utilization": 21}}
+    a.profile_data = {"account": {"full_name": "Vik", "email": "v@x.io"}}
     a._save_state(force=True)
 
     b = _bare()
@@ -39,6 +41,7 @@ def test_round_trip(tmp_path, monkeypatch):
     assert b.sess_rate == pytest.approx(0.0033)
     assert b.week_rate == pytest.approx(0.0001)
     assert b.last_usage is not None          # last quota values cached
+    assert b.profile_data["account"]["full_name"] == "Vik"   # account cached
     assert b.last_ok is not None
     assert b.next_poll > 0.0                 # future gate deferred on restart
 

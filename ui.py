@@ -97,6 +97,8 @@ class ClaudeLimitsApp(rumps.App):
             self._apply(self.last_usage)   # restore last known dial + forecast
         else:
             self.set_icon(Dial.render(BLANK_LIMITS), "init")
+        if self.profile_data:
+            self._render_profile()         # restore account/plan immediately
         self._timers = [
             rumps.Timer(self.tick, 1),
             rumps.Timer(self.blink_tick, 0.5),
@@ -253,6 +255,7 @@ class ClaudeLimitsApp(rumps.App):
             self.sess_rate = float(data.get("sess_rate") or 0.0)
             self.week_rate = float(data.get("week_rate") or 0.0)
             self.last_usage = data.get("usage") or None
+            self.profile_data = data.get("profile") or None
         except Exception:
             pass
 
@@ -272,6 +275,7 @@ class ClaudeLimitsApp(rumps.App):
                     "sess_rate": self.sess_rate,   # last measured %/s, to recompute
                     "week_rate": self.week_rate,
                     "usage": self.last_usage,      # last good response, to re-render
+                    "profile": self.profile_data,  # account/plan, to show on restart
                 }, f, indent=2)
         except Exception:
             pass

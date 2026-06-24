@@ -118,6 +118,9 @@ func (a *App) onReady() {
 	} else {
 		a.setIcon(renderDial(blankLimits, [3]int{}, false), "init")
 	}
+	if a.profile != nil {
+		a.renderProfile() // restore account/plan immediately
+	}
 	go a.tickLoop()
 	go a.blinkLoop()
 	go a.signalLoop()
@@ -422,6 +425,7 @@ type persistState struct {
 	SessRate    float64         `json:"sess_rate"`
 	WeekRate    float64         `json:"week_rate"`
 	Usage       json.RawMessage `json:"usage"`
+	Profile     json.RawMessage `json:"profile"`
 }
 
 func (a *App) loadState() {
@@ -453,6 +457,12 @@ func (a *App) loadState() {
 		a.lastUsageRaw = s.Usage
 		a.lastUsage = parseUsage(s.Usage)
 	}
+	if len(s.Profile) > 0 && string(s.Profile) != "null" {
+		var p Profile
+		if json.Unmarshal(s.Profile, &p) == nil {
+			a.profile = &p
+		}
+	}
 }
 
 func (a *App) saveState(force bool) {
@@ -471,6 +481,11 @@ func (a *App) saveState(force bool) {
 	if !a.lastOk.IsZero() {
 		v := float64(a.lastOk.Unix())
 		s.LastOk = &v
+	}
+	if a.profile != nil {
+		if pb, err := json.Marshal(a.profile); err == nil {
+			s.Profile = pb
+		}
 	}
 	if data, err := json.MarshalIndent(s, "", "  "); err == nil {
 		_ = os.WriteFile(a.statePath, data, 0o644)
