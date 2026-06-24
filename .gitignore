@@ -11,6 +11,9 @@ venv/
 # runtime poll-timing state
 .poll-state.json
 
+# Go build output
+/go/claude-limits
+
 # IDE
 .idea/
 .vscode/
