@@ -7,6 +7,8 @@ A macOS menu-bar app (rumps + pyobjc) that shows Claude usage limits. See
 
 - **Every commit message must start with the `[AI]` prefix.**
   Example: `[AI] honour retry-after on 429 backoff`
+- **Commit every completed step** — don't batch unrelated changes; once a
+  discrete piece of work builds and runs, commit it before moving on.
 - Keep the subject line short and imperative; add a body when the change needs it.
 
 ## Working on the code
