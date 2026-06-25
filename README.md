@@ -87,24 +87,17 @@ network or crypto libraries are added.
 
 ## Code
 
-Python (the reference) is split into modules:
+A single Go program (drawn with `fogleman/gg`, menu bar via
+`getlantern/systray`), split into files:
 
-- `helpers.py` — pure time/format/backoff functions (no GUI deps).
-- `api.py` — `UsageClient` (keychain token + curl) and `ApiError`.
-- `forecast.py` — `Forecast` (burn projection + gradient) and `RateTracker`.
-- `dial.py` — `Dial`, the SVG/NSImage rendered from the `SEGMENTS` table.
-- `ui.py` — `ClaudeLimitsApp(rumps.App)`.
-- `__main__.py` — thin entry point. `gen_svg.py` regenerates `dial.svg`.
-
-```sh
-uv venv --python 3.10 .venv
-uv pip install --python .venv/bin/python rumps pytest
-.venv/bin/python -m pytest -q          # 52 tests
-```
-
-A **Go** port lives in [`go/`](go/) (drawn with `fogleman/gg`, menu bar via
-`getlantern/systray`), mirroring the same behaviour:
+- `helpers.go` — pure time/format/backoff functions (no GUI deps).
+- `api.go` — `Client` (keychain token + curl) and `APIError`.
+- `forecast.go` — `Forecast` (burn projection + gradient) and `RateTracker`.
+- `dial.go` — `renderDial`, the icon drawn from the `SEGMENTS` table.
+- `app.go` — `App`: polling loop, state, and rendering.
+- `menu.go` — menu-bar layout and the working-hours pickers.
+- `main.go` — thin entry point.
 
 ```sh
-cd go && go build -o claude-limits . && go test ./...
+go build -o claude-limits . && go test ./...
 ```

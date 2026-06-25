@@ -1,3 +1,5 @@
 #!/usr/bin/env sh
+# Build (if needed) and run the menu-bar app.
 cd "$(dirname "$0")"
-exec .venv/bin/python3 __main__.py
+go build -o claude-limits . || exit 1
+exec ./claude-limits
