@@ -62,6 +62,7 @@ type App struct {
 	profile          *Profile
 	pollCount        int
 	errorOn          bool
+	codexErrorOn     bool
 	blink            bool
 	cached           bool
 	lastOk           time.Time
@@ -154,9 +155,7 @@ func (a *App) onReady() {
 	if a.lastUsage != nil {
 		a.apply()
 	} else {
-		codexLimits, codexColor, codexHas, codexKey := a.codexDial()
-		a.setIcon(renderDualDial(blankLimits, [3]int{}, false,
-			codexLimits, codexColor, codexHas), "init-"+codexKey)
+		a.renderIcon()
 	}
 	if a.profile != nil {
 		a.renderProfile() // restore account/plan immediately
@@ -188,9 +187,9 @@ func (a *App) tickLoop() {
 func (a *App) blinkLoop() {
 	for range time.Tick(500 * time.Millisecond) {
 		a.mu.Lock()
-		if a.errorOn {
+		if a.errorOn || a.codexErrorOn {
 			a.blink = !a.blink
-			a.renderErrorIcon()
+			a.renderIcon()
 		}
 		a.mu.Unlock()
 	}
@@ -256,7 +255,11 @@ func (a *App) noteCodex(r pollResult) {
 	if r.codexErr != nil {
 		a.lastCodexFail = time.Now()
 		a.lastCodexFailMsg = describe(r.codexErr)
+		// Keep the last good dial while it's still fresh; otherwise blink red.
+		fresh := !a.lastCodexOk.IsZero() && time.Since(a.lastCodexOk).Seconds() < cacheTTL
+		a.codexErrorOn = !fresh
 		a.renderCodex()
+		a.renderIcon()
 		return
 	}
 	if r.codexUsage == nil {
@@ -264,6 +267,7 @@ func (a *App) noteCodex(r pollResult) {
 	}
 	a.lastCodexOk = time.Now()
 	a.lastCodexFailMsg = ""
+	a.codexErrorOn = false
 	if primary, secondary, ok := codexPercents(r.codexUsage); ok {
 		if p, s, ok := a.cRates.Update(nowSecs(), primary, secondary); ok {
 			a.codexPrimaryRate, a.codexSecondRate = p, s
@@ -272,13 +276,7 @@ func (a *App) noteCodex(r pollResult) {
 	a.lastCodexRaw = r.codexRaw
 	a.lastCodex = r.codexUsage
 	a.renderCodex()
-	if a.lastUsage != nil && !a.errorOn {
-		a.apply()
-	} else if !a.errorOn {
-		codexLimits, codexColor, codexHas, codexKey := a.codexDial()
-		a.setIcon(renderDualDial(blankLimits, [3]int{}, false,
-			codexLimits, codexColor, codexHas), "codex-"+codexKey)
-	}
+	a.renderIcon()
 }
 
 func (a *App) onSuccess(r pollResult) {
@@ -362,8 +360,6 @@ func (a *App) apply() {
 	sessPct, weekPct := u.FiveHour.Utilization, u.SevenDay.Utilization
 	sessLeft, sessKnown := secondsUntil(u.FiveHour.ResetsAt)
 	weekLeft, weekKnown := secondsUntil(u.SevenDay.ResetsAt)
-	sessTf := timeFraction(u.FiveHour.ResetsAt, fiveHourSecs)
-	weekTf := timeFraction(u.SevenDay.ResetsAt, weekSecs)
 
 	now := time.Now()
 	sessWork, sw := workingSecondsUntil(u.FiveHour.ResetsAt, a.workStart, a.workEnd, now)
@@ -377,15 +373,7 @@ func (a *App) apply() {
 		worst = weekFc
 	}
 
-	limits := map[string]Limit{
-		"session": {sessPct, sessTf},
-		"weekly":  {weekPct, weekTf},
-	}
-	codexLimits, codexColor, codexHas, codexKey := a.codexDial()
-	key := fmt.Sprintf("%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
-		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60))
-	key += "-" + codexKey
-	a.setIcon(renderDualDial(limits, worst.Color(), true, codexLimits, codexColor, codexHas), key)
+	a.renderIcon()
 	systray.SetTitle("")
 
 	a.session.SetTitle(fmt.Sprintf("🕐 Session (5h):  %.0f%% left", 100-sessPct))
@@ -646,21 +634,59 @@ func (a *App) setIcon(png []byte, key string) {
 	systray.SetIcon(png)
 }
 
-func (a *App) renderErrorIcon() {
-	c := [3]int{}
-	has := a.blink
-	if has {
-		c = burnRed
+// renderIcon paints the paired dial. Each side independently shows either its
+// live dial or, when that side is in error, a red spark that the blink loop
+// toggles on and off — so Claude and Codex can blink red on their own.
+func (a *App) renderIcon() {
+	cl, cc, ch, ck := a.errorOr(a.errorOn, "claude", a.claudeDial)
+	xl, xc, xh, xk := a.errorOr(a.codexErrorOn, "codex", a.codexDial)
+	a.setIcon(renderDualDial(cl, cc, ch, xl, xc, xh), ck+"|"+xk)
+}
+
+// errorOr returns the red-blink error frame for a side that's erroring, or the
+// side's normal dial otherwise.
+func (a *App) errorOr(on bool, name string, dial func() (map[string]Limit, [3]int, bool, string)) (map[string]Limit, [3]int, bool, string) {
+	if !on {
+		return dial()
 	}
-	codexLimits, codexColor, codexHas, codexKey := a.codexDial()
-	a.setIcon(renderDualDial(blankLimits, c, has, codexLimits, codexColor, codexHas),
-		fmt.Sprintf("err-%v-%s", a.blink, codexKey))
+	if a.blink {
+		return blankLimits, burnRed, true, name + "-err-on"
+	}
+	return blankLimits, [3]int{}, false, name + "-err-off"
+}
+
+func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
+	u := a.lastUsage
+	if u == nil {
+		return blankLimits, [3]int{}, false, "claude-empty"
+	}
+	sessPct, weekPct := u.FiveHour.Utilization, u.SevenDay.Utilization
+	sessLeft, sessKnown := secondsUntil(u.FiveHour.ResetsAt)
+	weekLeft, weekKnown := secondsUntil(u.SevenDay.ResetsAt)
+	sessTf := timeFraction(u.FiveHour.ResetsAt, fiveHourSecs)
+	weekTf := timeFraction(u.SevenDay.ResetsAt, weekSecs)
+	now := time.Now()
+	sessWork, sw := workingSecondsUntil(u.FiveHour.ResetsAt, a.workStart, a.workEnd, now)
+	weekWork, ww := workingSecondsUntil(u.SevenDay.ResetsAt, a.workStart, a.workEnd, now)
+	sessFc := projectForecast(sessPct, forecastRate(a.sessRate, sessPct, sessLeft, fiveHourSecs, sessKnown), sessWork, sw)
+	weekFc := projectForecast(weekPct, forecastRate(a.weekRate, weekPct, weekLeft, weekSecs, weekKnown), weekWork, ww)
+	worst := sessFc
+	if weekFc.Pos() > worst.Pos() {
+		worst = weekFc
+	}
+	limits := map[string]Limit{
+		"session": {sessPct, sessTf},
+		"weekly":  {weekPct, weekTf},
+	}
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
+		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60))
+	return limits, worst.Color(), true, key
 }
 
 func (a *App) showError(msg string) {
 	a.errorOn = true
-	a.renderErrorIcon()
-	systray.SetTitle("?")
+	a.renderIcon()
+	systray.SetTitle("")
 	a.status.SetTitle("⚠ " + msg)
 	for _, it := range []*systray.MenuItem{a.account, a.plan, a.session,
 		a.sessionReset, a.weekly, a.weeklyReset} {

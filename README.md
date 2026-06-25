@@ -33,7 +33,8 @@ dial has two concentric rings, split left/right:
   - 🟢 green — you'll finish right around 0% (on track)
   - 🟡 yellow — you'd overshoot, but a ≤1h break saves it
   - 🔴 red — overshoot needing a >1h break
-- On an error the dial goes all-grey with a **red blinking** spark.
+- On an error that side's dial goes all-grey with a **red blinking** spark —
+  Claude and Codex each blink on their own.
 
 Click it for everything as numbers, plus your account.
 
