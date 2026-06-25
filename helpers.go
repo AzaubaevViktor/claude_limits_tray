@@ -189,6 +189,18 @@ func avgRate(pct, leftSecs, windowSecs, perUnitSecs float64, known bool) (float6
 	return pct * perUnitSecs / elapsed, true
 }
 
+// forecastRate picks the worse (faster) of two consumption rates, both in % of
+// quota per second: the recent 5-minute rate and the average since the window
+// opened. A green spark off a quiet last-5-minutes is misleading when the
+// long-run pace since reset is high, so the forecast uses whichever is higher.
+func forecastRate(fiveMin, pct, leftSecs, windowSecs float64, known bool) float64 {
+	rate := fiveMin
+	if since, ok := avgRate(pct, leftSecs, windowSecs, 1, known); ok && since > rate {
+		rate = since
+	}
+	return rate
+}
+
 // fmtRate renders a rate to one decimal, or "—" when it isn't known yet.
 func fmtRate(v float64, ok bool) string {
 	if !ok {

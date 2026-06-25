@@ -1,12 +1,12 @@
 // Command claude-limits is a macOS menu-bar monitor for Claude and Codex usage limits.
 //
-// A circular icon shows two concentric rings (session left, weekly right;
-// outer = % left, inner = time since reset) plus a centre Claude spark whose
-// colour forecasts whether you'll run out of quota at your current rate. The
-// dropdown spells everything out and includes a separate Codex usage block.
+// A paired SVG icon shows Claude on the left and Codex on the right. Each dial
+// has two concentric rings (short window left, long window right; outer = %
+// left, inner = time since reset) plus a centre spark whose colour forecasts
+// whether you'll run out of quota at your current rate.
 //
-// This is a Go port of the Python app; the dial is drawn with fogleman/gg and
-// the menu bar is driven by getlantern/systray.
+// This is a Go port of the Python app; the dial is emitted as SVG and the menu
+// bar is driven by getlantern/systray.
 package main
 
 import "github.com/getlantern/systray"

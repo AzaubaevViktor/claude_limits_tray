@@ -153,7 +153,9 @@ func (a *App) onReady() {
 	if a.lastUsage != nil {
 		a.apply()
 	} else {
-		a.setIcon(renderDial(blankLimits, [3]int{}, false), "init")
+		codexLimits, codexColor, codexHas, codexKey := a.codexDial()
+		a.setIcon(renderDualDial(blankLimits, [3]int{}, false,
+			codexLimits, codexColor, codexHas), "init-"+codexKey)
 	}
 	if a.profile != nil {
 		a.renderProfile() // restore account/plan immediately
@@ -240,6 +242,11 @@ func (a *App) drain() {
 		} else {
 			a.onSuccess(r)
 		}
+		// A rotated refresh token must be saved promptly — losing it would mean
+		// a keychain prompt on the next launch.
+		if a.codex.TakeRefreshDirty() {
+			a.saveState(true)
+		}
 	default:
 	}
 }
@@ -264,6 +271,13 @@ func (a *App) noteCodex(r pollResult) {
 	a.lastCodexRaw = r.codexRaw
 	a.lastCodex = r.codexUsage
 	a.renderCodex()
+	if a.lastUsage != nil && !a.errorOn {
+		a.apply()
+	} else if !a.errorOn {
+		codexLimits, codexColor, codexHas, codexKey := a.codexDial()
+		a.setIcon(renderDualDial(blankLimits, [3]int{}, false,
+			codexLimits, codexColor, codexHas), "codex-"+codexKey)
+	}
 }
 
 func (a *App) onSuccess(r pollResult) {
@@ -353,8 +367,10 @@ func (a *App) apply() {
 	now := time.Now()
 	sessWork, sw := workingSecondsUntil(u.FiveHour.ResetsAt, a.workStart, a.workEnd, now)
 	weekWork, ww := workingSecondsUntil(u.SevenDay.ResetsAt, a.workStart, a.workEnd, now)
-	sessFc := projectForecast(sessPct, a.sessRate, sessWork, sw)
-	weekFc := projectForecast(weekPct, a.weekRate, weekWork, ww)
+	sessFcRate := forecastRate(a.sessRate, sessPct, sessLeft, fiveHourSecs, sessKnown)
+	weekFcRate := forecastRate(a.weekRate, weekPct, weekLeft, weekSecs, weekKnown)
+	sessFc := projectForecast(sessPct, sessFcRate, sessWork, sw)
+	weekFc := projectForecast(weekPct, weekFcRate, weekWork, ww)
 	worst := sessFc
 	if weekFc.Pos() > worst.Pos() {
 		worst = weekFc
@@ -364,9 +380,11 @@ func (a *App) apply() {
 		"session": {sessPct, sessTf},
 		"weekly":  {weekPct, weekTf},
 	}
+	codexLimits, codexColor, codexHas, codexKey := a.codexDial()
 	key := fmt.Sprintf("%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60))
-	a.setIcon(renderDial(limits, worst.Color(), true), key)
+	key += "-" + codexKey
+	a.setIcon(renderDualDial(limits, worst.Color(), true, codexLimits, codexColor, codexHas), key)
 	systray.SetTitle("")
 
 	a.session.SetTitle(fmt.Sprintf("🕐 Session (5h):  %.0f%% left", 100-sessPct))
@@ -450,6 +468,46 @@ func (a *App) renderCodexEmpty() {
 	a.renderCodexScoped(nil)
 }
 
+func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
+	u := a.lastCodex
+	if u == nil {
+		return blankLimits, [3]int{}, false, "codex-empty"
+	}
+	primary := u.primary()
+	secondary := u.secondary()
+	limits := map[string]Limit{
+		"session": codexLimitForDial(primary),
+		"weekly":  codexLimitForDial(secondary),
+	}
+	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
+	secondaryFc := a.codexForecast(secondary, a.codexSecondRate)
+	worst := primaryFc
+	if secondaryFc.Pos() > worst.Pos() {
+		worst = secondaryFc
+	}
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d",
+		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
+		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
+		iround(worst.Pos()*60))
+	return limits, worst.Color(), true, key
+}
+
+func codexLimitForDial(w *CodexWindow) Limit {
+	if w == nil {
+		return Limit{Pct: 100, TimeLeft: 1}
+	}
+	return Limit{Pct: w.UsedPercent, TimeLeft: codexTimeFraction(w)}
+}
+
+func codexTimeFraction(w *CodexWindow) float64 {
+	if w == nil || w.ResetsAt <= 0 || w.WindowSeconds <= 0 {
+		return 0
+	}
+	return clamp(time.Until(time.Unix(w.ResetsAt, 0)).Seconds()/float64(w.WindowSeconds), 0, 1)
+}
+
+func limitPct(l Limit) float64 { return l.Pct }
+
 func (a *App) renderCodexWindow(row, reset *systray.MenuItem, name string, w *CodexWindow) {
 	if w == nil {
 		row.SetTitle(name + ":  —")
@@ -467,6 +525,8 @@ func (a *App) codexForecast(w *CodexWindow, rate float64) Forecast {
 	}
 	reset := time.Unix(w.ResetsAt, 0).Format(time.RFC3339)
 	work, known := workingSecondsUntil(reset, a.workStart, a.workEnd, time.Now())
+	left, lknown := codexSecondsUntil(w)
+	rate = forecastRate(rate, w.UsedPercent, left, float64(w.WindowSeconds), lknown)
 	return projectForecast(w.UsedPercent, rate, work, known)
 }
 
@@ -590,7 +650,9 @@ func (a *App) renderErrorIcon() {
 	if has {
 		c = burnRed
 	}
-	a.setIcon(renderDial(blankLimits, c, has), fmt.Sprintf("err-%v", a.blink))
+	codexLimits, codexColor, codexHas, codexKey := a.codexDial()
+	a.setIcon(renderDualDial(blankLimits, c, has, codexLimits, codexColor, codexHas),
+		fmt.Sprintf("err-%v-%s", a.blink, codexKey))
 }
 
 func (a *App) showError(msg string) {
@@ -643,6 +705,7 @@ type persistState struct {
 	WeekRate         float64         `json:"week_rate"`
 	CodexPrimaryRate float64         `json:"codex_primary_rate"`
 	CodexSecondRate  float64         `json:"codex_secondary_rate"`
+	CodexRefresh     string          `json:"codex_refresh_token"`
 	Usage            json.RawMessage `json:"usage"`
 	Profile          json.RawMessage `json:"profile"`
 	CodexUsage       json.RawMessage `json:"codex_usage"`
@@ -679,6 +742,7 @@ func (a *App) loadState() {
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
+	a.codex.LoadRefresh(s.CodexRefresh)
 	if len(s.Usage) > 0 && string(s.Usage) != "null" {
 		a.lastUsageRaw = s.Usage
 		a.lastUsage = parseUsage(s.Usage)
@@ -709,6 +773,7 @@ func (a *App) saveState(force bool) {
 		WeekRate:         a.weekRate,
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,
+		CodexRefresh:     a.codex.RefreshToken(),
 		Usage:            json.RawMessage(a.lastUsageRaw),
 		CodexUsage:       json.RawMessage(a.lastCodexRaw),
 	}
@@ -722,7 +787,10 @@ func (a *App) saveState(force bool) {
 		}
 	}
 	if data, err := json.MarshalIndent(s, "", "  "); err == nil {
-		_ = os.WriteFile(a.statePath, data, 0o644)
+		// 0600: the file holds the Codex refresh token (a long-lived secret).
+		// Chmod too, since WriteFile leaves an existing file's mode unchanged.
+		_ = os.WriteFile(a.statePath, data, 0o600)
+		_ = os.Chmod(a.statePath, 0o600)
 	}
 }
 

@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -57,15 +56,31 @@ func TestLegendMatchesSegments(t *testing.T) {
 	}
 }
 
-func TestRenderDialProducesPNG(t *testing.T) {
+func TestRenderDialProducesSVG(t *testing.T) {
 	data := renderDial(blankLimits, [3]int{1, 2, 3}, true)
-	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("not a valid PNG: %v", err)
+	s := string(data)
+	if !strings.HasPrefix(s, `<svg `) {
+		t.Fatalf("not an SVG: %q", s[:min(len(s), 32)])
 	}
-	if img.Bounds().Dx() != pxSize || img.Bounds().Dy() != pxSize {
-		t.Errorf("size = %v, want %dx%d", img.Bounds(), pxSize, pxSize)
+	if !strings.Contains(s, `viewBox="0 0 18.00 18"`) {
+		t.Errorf("single dial viewBox missing: %s", s)
+	}
+}
+
+func TestRenderDualDialProducesWideSVG(t *testing.T) {
+	data := renderDualDial(blankLimits, [3]int{1, 2, 3}, true,
+		blankLimits, [3]int{4, 5, 6}, true)
+	s := string(data)
+	if !strings.Contains(s, `viewBox="0 0 38.00 18"`) {
+		t.Errorf("dual dial viewBox missing: %s", s)
 	}
 }
 
 func nearly(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

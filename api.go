@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,12 +36,24 @@ const (
 	codexUserAgent    = "codex-cli"
 	codexAccessEnvVar = "CODEX_ACCESS_TOKEN"
 	codexHomeEnvVar   = "CODEX_HOME"
+	codexOAuthClient  = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexTokenURL     = "https://auth.openai.com/oauth/token"
 	metaMark          = "\n__META__"
 )
 
-type Client struct{}
+type Client struct {
+	mu          sync.Mutex
+	cachedToken string
+}
 
 func (c *Client) token() (string, error) {
+	c.mu.Lock()
+	if c.cachedToken != "" {
+		tok := c.cachedToken
+		c.mu.Unlock()
+		return tok, nil
+	}
+	c.mu.Unlock()
 	out, err := exec.Command("security", "find-generic-password",
 		"-s", keychain, "-w").Output()
 	if err == nil {
@@ -50,11 +65,24 @@ func (c *Client) token() (string, error) {
 			}
 			var tok string
 			if json.Unmarshal(obj["accessToken"], &tok) == nil && tok != "" {
+				c.cacheToken(tok)
 				return tok, nil
 			}
 		}
 	}
 	return "", &APIError{Msg: "No credentials — sign in to Claude Code"}
+}
+
+func (c *Client) cacheToken(tok string) {
+	c.mu.Lock()
+	c.cachedToken = tok
+	c.mu.Unlock()
+}
+
+func (c *Client) clearToken() {
+	c.mu.Lock()
+	c.cachedToken = ""
+	c.mu.Unlock()
 }
 
 func (c *Client) get(path string) ([]byte, error) {
@@ -102,6 +130,9 @@ func (c *Client) get(path string) ([]byte, error) {
 		}
 		if len(fields) > 2 {
 			e.ResetAt = strings.TrimSpace(fields[2])
+		}
+		if status == 401 || status == 403 {
+			c.clearToken()
 		}
 		return nil, e
 	}
@@ -183,7 +214,12 @@ func parseUsage(raw []byte) *Usage {
 // --- Codex usage API --------------------------------------------------------
 
 type CodexClient struct {
-	CodexHome string
+	CodexHome    string
+	mu           sync.Mutex
+	cachedToken  string    // current access token (in memory)
+	tokenExp     time.Time // when cachedToken expires (zero = unknown)
+	refreshToken string    // long-lived; lets us mint access tokens without the keychain
+	refreshDirty bool      // refreshToken changed since the last persist
 }
 
 type CodexWindow struct {
@@ -213,16 +249,53 @@ type CodexUsage struct {
 	Limits       []CodexLimit
 }
 
+// token returns a usable access token. It prefers a still-valid cached token,
+// then mints a fresh one from the refresh token (no keychain, no password), and
+// only falls back to reading the keychain/auth.json/env when there's no working
+// refresh token to bootstrap from.
 func (c *CodexClient) token() (string, error) {
+	c.mu.Lock()
+	if c.cachedToken != "" && (c.tokenExp.IsZero() || time.Now().Before(c.tokenExp)) {
+		tok := c.cachedToken
+		c.mu.Unlock()
+		return tok, nil
+	}
+	rt := c.refreshToken
+	c.mu.Unlock()
+
+	if rt != "" {
+		tok, err := c.refresh(rt)
+		if err == nil {
+			return tok, nil
+		}
+		log.Printf("codex token refresh failed: %v", err)
+		if ae, ok := err.(*APIError); ok && ae.Status >= 400 && ae.Status < 500 {
+			// The refresh token was rejected (e.g. you signed out and back in) —
+			// re-read the keychain to bootstrap a new one.
+			return c.bootstrap()
+		}
+		// Transient failure (offline / 5xx / malformed): keep the refresh token
+		// and surface the error so we retry later, rather than prompting.
+		return "", err
+	}
+	return c.bootstrap()
+}
+
+// bootstrap reads credentials the slow way — env var, auth.json, then keychain
+// (which is the one that can prompt). Whatever it finds (access + refresh) is
+// cached so the next poll refreshes silently instead of hitting the keychain.
+func (c *CodexClient) bootstrap() (string, error) {
 	if tok := strings.TrimSpace(os.Getenv(codexAccessEnvVar)); tok != "" {
+		c.storeTokens(tok, "", 0)
 		return tok, nil
 	}
 	home, err := c.codexHome()
 	if err != nil {
 		return "", err
 	}
-	if tok, err := codexTokenFromFile(filepath.Join(home, "auth.json")); err == nil && tok != "" {
-		return tok, nil
+	if access, refresh, err := codexTokensFromFile(filepath.Join(home, "auth.json")); err == nil && access != "" {
+		c.storeTokens(access, refresh, 0)
+		return access, nil
 	}
 	key, err := codexStoreKey(home)
 	if err != nil {
@@ -231,11 +304,132 @@ func (c *CodexClient) token() (string, error) {
 	out, err := exec.Command("security", "find-generic-password",
 		"-s", codexAuthService, "-a", key, "-w").Output()
 	if err == nil {
-		if tok, err := codexTokenFromJSON(out); err == nil && tok != "" {
-			return tok, nil
+		if access, refresh, err := codexTokensFromJSON(out); err == nil && access != "" {
+			c.storeTokens(access, refresh, 0)
+			return access, nil
 		}
 	}
 	return "", &APIError{Msg: "No Codex ChatGPT credentials — run codex login"}
+}
+
+// refresh exchanges the refresh token for a new access token via OpenAI's OAuth
+// endpoint — the same flow the Codex CLI uses. The refresh token is sent on
+// stdin, never argv, so it can't leak into the process list.
+func (c *CodexClient) refresh(rt string) (string, error) {
+	body, _ := json.Marshal(map[string]string{
+		"client_id":     codexOAuthClient,
+		"grant_type":    "refresh_token",
+		"refresh_token": rt,
+		"scope":         "openid profile email",
+	})
+	log.Printf("codex token refresh")
+	cmd := exec.Command("curl", "-sS", "--max-time", "15", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"-w", metaMark+"%{http_code}",
+		"--data-binary", "@-", codexTokenURL)
+	cmd.Stdin = bytes.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", &APIError{Msg: "Offline — can't refresh Codex token"}
+	}
+	s := string(out)
+	idx := strings.LastIndex(s, metaMark)
+	if idx < 0 {
+		return "", &APIError{Msg: "Malformed Codex refresh response"}
+	}
+	status, _ := strconv.Atoi(strings.TrimSpace(s[idx+len(metaMark):]))
+	if status >= 400 {
+		return "", &APIError{Msg: fmt.Sprintf("Codex refresh HTTP %d", status), Status: status}
+	}
+	var d struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if json.Unmarshal([]byte(s[:idx]), &d) != nil || d.AccessToken == "" {
+		return "", &APIError{Msg: "Malformed Codex refresh JSON"}
+	}
+	c.storeTokens(d.AccessToken, d.RefreshToken, d.ExpiresIn)
+	return d.AccessToken, nil
+}
+
+// storeTokens caches the access token (with an expiry derived from its JWT, or
+// expires_in, minus a minute of slack) and records a rotated refresh token.
+func (c *CodexClient) storeTokens(access, refresh string, expiresIn int) {
+	c.mu.Lock()
+	c.cachedToken = access
+	switch {
+	case !jwtExp(access).IsZero():
+		c.tokenExp = jwtExp(access).Add(-time.Minute)
+	case expiresIn > 0:
+		c.tokenExp = time.Now().Add(time.Duration(expiresIn)*time.Second - time.Minute)
+	default:
+		c.tokenExp = time.Time{}
+	}
+	if refresh != "" && refresh != c.refreshToken {
+		c.refreshToken = refresh
+		c.refreshDirty = true
+	}
+	c.mu.Unlock()
+}
+
+// invalidateAccess drops only the access token (keeping the refresh token), so a
+// rejected token triggers a refresh on the next call rather than a keychain read.
+func (c *CodexClient) invalidateAccess() {
+	c.mu.Lock()
+	c.cachedToken = ""
+	c.tokenExp = time.Time{}
+	c.mu.Unlock()
+}
+
+// LoadRefresh seeds the refresh token from persisted state (without marking it
+// dirty); it won't clobber a token already learned this run.
+func (c *CodexClient) LoadRefresh(rt string) {
+	rt = strings.TrimSpace(rt)
+	if rt == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.refreshToken == "" {
+		c.refreshToken = rt
+	}
+	c.mu.Unlock()
+}
+
+// RefreshToken returns the current refresh token for persistence.
+func (c *CodexClient) RefreshToken() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refreshToken
+}
+
+// TakeRefreshDirty reports whether the refresh token rotated since the last call
+// and clears the flag, so the caller can persist it promptly.
+func (c *CodexClient) TakeRefreshDirty() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d := c.refreshDirty
+	c.refreshDirty = false
+	return d
+}
+
+// jwtExp extracts the exp claim from a JWT access token, or zero if absent.
+func jwtExp(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}
+	}
+	var d struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &d) != nil || d.Exp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(d.Exp, 0)
 }
 
 func (c *CodexClient) codexHome() (string, error) {
@@ -270,32 +464,34 @@ func codexStoreKey(codexHome string) (string, error) {
 	return fmt.Sprintf("cli|%x", sum)[:20], nil
 }
 
-func codexTokenFromFile(path string) (string, error) {
+func codexTokensFromFile(path string) (string, string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return codexTokenFromJSON(raw)
+	return codexTokensFromJSON(raw)
 }
 
-func codexTokenFromJSON(raw []byte) (string, error) {
+func codexTokensFromJSON(raw []byte) (string, string, error) {
 	var d struct {
 		AuthMode     string `json:"auth_mode"`
 		OpenAIAPIKey string `json:"OPENAI_API_KEY"`
 		Tokens       *struct {
-			AccessToken string `json:"access_token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
 		} `json:"tokens"`
 	}
 	if err := json.Unmarshal(raw, &d); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if d.Tokens != nil && strings.TrimSpace(d.Tokens.AccessToken) != "" {
-		return strings.TrimSpace(d.Tokens.AccessToken), nil
+		return strings.TrimSpace(d.Tokens.AccessToken),
+			strings.TrimSpace(d.Tokens.RefreshToken), nil
 	}
 	if d.OpenAIAPIKey != "" || d.AuthMode == "apiKey" || d.AuthMode == "api_key" {
-		return "", &APIError{Msg: "Codex uses API-key auth — ChatGPT login is required for limits"}
+		return "", "", &APIError{Msg: "Codex uses API-key auth — ChatGPT login is required for limits"}
 	}
-	return "", &APIError{Msg: "No Codex ChatGPT access token"}
+	return "", "", &APIError{Msg: "No Codex ChatGPT access token"}
 }
 
 func (c *CodexClient) Usage() ([]byte, *CodexUsage, error) {
@@ -316,6 +512,20 @@ func (c *CodexClient) get(path string) ([]byte, error) {
 		log.Printf("GET codex %s -> %v", path, err)
 		return nil, err
 	}
+	body, err := c.do(path, tok)
+	// A rejected token usually just means ours expired — drop it and try once
+	// more, which mints a fresh one from the refresh token (or, failing that,
+	// re-reads the keychain).
+	if ae, ok := err.(*APIError); ok && (ae.Status == 401 || ae.Status == 403) {
+		c.invalidateAccess()
+		if tok, err2 := c.token(); err2 == nil {
+			body, err = c.do(path, tok)
+		}
+	}
+	return body, err
+}
+
+func (c *CodexClient) do(path, tok string) ([]byte, error) {
 	wfmt := metaMark + "%{http_code}|%header{retry-after}"
 	log.Printf("GET codex %s", path)
 	start := time.Now()

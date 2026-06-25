@@ -16,12 +16,13 @@ take a break instead of getting cut off.
 
 ## How to read the dial
 
-One circular icon, two concentric rings, split left/right:
+Two circular dials side-by-side: Claude on the left, Codex on the right. Each
+dial has two concentric rings, split left/right:
 
 ```
           outer ring          inner ring
-  left     Session % left      Session: time since reset
-  right    Weekly  % left      Weekly:  time since reset
+  left     Short-window % left      Short window: time since reset
+  right    Long-window  % left      Long window:  time since reset
 ```
 
 - **Percent arcs** (outer) — how much quota is left: green plenty → red low.
@@ -100,21 +101,26 @@ It reads the same OAuth endpoint Claude Code's `/usage` screen uses
 **keep Claude Code signed in**.
 
 For Codex it reads the ChatGPT-authenticated Codex usage endpoint
-(`chatgpt.com/backend-api/wham/usage`). The token is loaded the same way the
-Codex CLI stores it: `CODEX_ACCESS_TOKEN`, `~/.codex/auth.json`, or the macOS
-keychain item `Codex Auth`. Keep Codex signed in with ChatGPT (`codex login`);
-API-key auth does not expose ChatGPT plan limits. Requests go through the
-system `curl`; no network or crypto libraries are added.
+(`chatgpt.com/backend-api/wham/usage`). On first run the token is bootstrapped
+the same way the Codex CLI stores it: `CODEX_ACCESS_TOKEN`, `~/.codex/auth.json`,
+or the macOS keychain item `Codex Auth`. From then on it keeps the **refresh
+token** in its state file and mints fresh access tokens itself (OpenAI's OAuth
+endpoint, the same flow the Codex CLI uses) — so the keychain is touched at most
+once and you won't be re-prompted for a password on every launch. It only falls
+back to the keychain if refreshing fails (e.g. you signed out and back in). Keep
+Codex signed in with ChatGPT (`codex login`); API-key auth does not expose
+ChatGPT plan limits. Requests go through the system `curl`; no network or crypto
+libraries are added.
 
 ## Code
 
-A single Go program (drawn with `fogleman/gg`, menu bar via
+A single Go program (SVG icon rendering, menu bar via a repo-local patched
 `getlantern/systray`), split into files:
 
 - `helpers.go` — pure time/format/backoff functions (no GUI deps).
 - `api.go` — `Client` (keychain token + curl) and `APIError`.
 - `forecast.go` — `Forecast` (burn projection + gradient) and `RateTracker`.
-- `dial.go` — `renderDial`, the icon drawn from the `SEGMENTS` table.
+- `dial.go` — `renderDial`, the SVG icon drawn from the `SEGMENTS` table.
 - `app.go` — `App`: polling loop, state, and rendering.
 - `menu.go` — menu-bar layout and the working-hours pickers.
 - `main.go` — thin entry point.

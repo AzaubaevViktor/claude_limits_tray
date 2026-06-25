@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -82,9 +83,31 @@ func TestCodexStoreKeyShape(t *testing.T) {
 	}
 }
 
-func TestCodexTokenFromJSONRejectsAPIKeyOnly(t *testing.T) {
-	_, err := codexTokenFromJSON([]byte(`{"auth_mode":"apiKey","OPENAI_API_KEY":"sk-test"}`))
+func TestCodexTokensFromJSONRejectsAPIKeyOnly(t *testing.T) {
+	_, _, err := codexTokensFromJSON([]byte(`{"auth_mode":"apiKey","OPENAI_API_KEY":"sk-test"}`))
 	if err == nil || !strings.Contains(err.Error(), "API-key") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCodexTokensFromJSONReturnsRefresh(t *testing.T) {
+	access, refresh, err := codexTokensFromJSON(
+		[]byte(`{"tokens":{"access_token":" a ","refresh_token":" r "}}`))
+	if err != nil || access != "a" || refresh != "r" {
+		t.Fatalf("access=%q refresh=%q err=%v", access, refresh, err)
+	}
+}
+
+func TestJWTExp(t *testing.T) {
+	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+	tok := enc(`{"alg":"none"}`) + "." + enc(`{"exp":1700000000}`) + ".sig"
+	if got := jwtExp(tok); got.Unix() != 1700000000 {
+		t.Fatalf("exp = %v", got)
+	}
+	if got := jwtExp("not-a-jwt"); !got.IsZero() {
+		t.Fatalf("non-jwt should be zero, got %v", got)
+	}
+	if got := jwtExp(enc(`{"alg":"none"}`) + "." + enc(`{"sub":"x"}`) + ".s"); !got.IsZero() {
+		t.Fatalf("missing exp should be zero, got %v", got)
 	}
 }

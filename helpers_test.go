@@ -121,6 +121,21 @@ func TestAvgRate(t *testing.T) {
 	}
 }
 
+func TestForecastRate(t *testing.T) {
+	// 20% used 1h into the 5h window -> 20 %/h since reset ≈ 0.005556 %/s.
+	since := 20.0 / 3600
+	left, win := fiveHourSecs-3600, fiveHourSecs
+	// A calmer last-5m rate is overridden by the faster since-reset pace.
+	approx(t, forecastRate(since/4, 20, left, win, true), since, 1e-9,
+		"since-reset wins when 5m is calmer")
+	// A hotter last-5m rate is kept.
+	approx(t, forecastRate(since*4, 20, left, win, true), since*4, 1e-9,
+		"5m wins when it's hotter")
+	// Unknown reset -> the 5m rate is used as-is.
+	approx(t, forecastRate(0.01, 20, 0, win, false), 0.01, 1e-9,
+		"unknown reset falls back to 5m")
+}
+
 func TestBackoff(t *testing.T) {
 	if backoffSeconds(1, 500, 0, "", 0) != 15 {
 		t.Error("fail1 -> 15")

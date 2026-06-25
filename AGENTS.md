@@ -1,6 +1,6 @@
 # Agent guidelines
 
-A macOS menu-bar app (Go: `fogleman/gg` + `getlantern/systray`) that shows
+A macOS menu-bar app (Go: SVG rendering + `getlantern/systray`) that shows
 Claude usage limits. See `README.md` for what it does.
 
 ## Commits

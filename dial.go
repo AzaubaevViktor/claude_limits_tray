@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"image/png"
+	"fmt"
 	"math"
-
-	"github.com/fogleman/gg"
+	"strings"
 )
 
 // Limit is the per-window input to the dial.
@@ -94,45 +92,59 @@ func healthColor(health float64) [3]int {
 	return out
 }
 
-// phi converts a "clockwise from the top" angle (degrees) to gg's angle (rad).
+// phi converts a "clockwise from the top" angle (degrees) to SVG's angle (rad).
 func phi(deg float64) float64 { return deg*math.Pi/180 - math.Pi/2 }
 
-func setRGB(dc *gg.Context, c [3]int, alpha float64) {
-	dc.SetRGBA(float64(c[0])/255, float64(c[1])/255, float64(c[2])/255, alpha)
-}
-
-func strokeArc(dc *gg.Context, ox, r, startDeg, endDeg float64) {
-	dc.DrawArc(ox, dialCY, r, phi(startDeg), phi(endDeg))
-	dc.Stroke()
-}
-
-// renderDial draws the dial and returns PNG bytes. markColor is the centre
+// renderDial draws the dial and returns SVG bytes. markColor is the centre
 // spark colour; pass hasMark=false to omit it (error blink "off" frame).
 func renderDial(limits map[string]Limit, markColor [3]int, hasMark bool) []byte {
-	return renderDialPx(limits, markColor, hasMark, pxSize)
+	return renderDialSVG([]dialRenderInput{{limits: limits, markColor: markColor, hasMark: hasMark}})
 }
 
-func renderDialPx(limits map[string]Limit, markColor [3]int, hasMark bool, px int) []byte {
-	scale := float64(px) / 18.0
-	dc := gg.NewContext(px, px)
-	dc.Scale(scale, scale)
-	// gg applies line width in device pixels (it ignores the Scale transform),
-	// so scale it ourselves to match the SVG's viewBox-relative stroke.
-	dc.SetLineWidth(dialSW * scale)
-	dc.SetLineCap(gg.LineCapRound)
+func renderDualDial(claudeLimits map[string]Limit, claudeMark [3]int, claudeHasMark bool,
+	codexLimits map[string]Limit, codexMark [3]int, codexHasMark bool) []byte {
+	return renderDialSVG([]dialRenderInput{
+		{limits: claudeLimits, markColor: claudeMark, hasMark: claudeHasMark},
+		{limits: codexLimits, markColor: codexMark, hasMark: codexHasMark},
+	})
+}
+
+type dialRenderInput struct {
+	limits    map[string]Limit
+	markColor [3]int
+	hasMark   bool
+}
+
+func renderDialSVG(inputs []dialRenderInput) []byte {
+	if len(inputs) == 0 {
+		inputs = []dialRenderInput{{limits: blankLimits}}
+	}
+	const gap = 2.0
+	width := 18.0*float64(len(inputs)) + gap*float64(len(inputs)-1)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %.2f 18">`,
+		pxSize*len(inputs), pxSize, width))
+	for i, input := range inputs {
+		renderDialGroup(&b, input, float64(i)*(18+gap))
+	}
+	b.WriteString(`</svg>`)
+	return []byte(b.String())
+}
+
+func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 	span := 180.0 - 2*endGap
 
 	// faint tracks, one per ring/side, so the centre gap stays empty
 	for _, sign := range sideSign {
-		ox := dialCX + sign*halfShift
+		ox := xoff + dialCX + sign*halfShift
 		for _, r := range rings {
-			setRGB(dc, dialTrack, 0.45)
-			strokeArc(dc, ox, r, sign*endGap, sign*(180-endGap))
+			writeArc(b, ox, r, sign*endGap, sign*(180-endGap), dialTrack, 0.45, dialSW)
 		}
 	}
 
 	for _, seg := range segments {
-		length, health := metricFor(seg.metric, limits[seg.source])
+		length, health := metricFor(seg.metric, input.limits[seg.source])
 		length = clamp(length, 0, 1)
 		if length <= 0.004 {
 			continue
@@ -144,31 +156,53 @@ func renderDialPx(limits map[string]Limit, markColor [3]int, hasMark bool, px in
 		if seg.bright {
 			alpha = 1.0
 		}
-		setRGB(dc, healthColor(health), alpha)
-		strokeArc(dc, ox, r, sign*endGap, sign*(endGap+length*span))
+		writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
+			healthColor(health), alpha, dialSW)
 	}
 
-	if hasMark {
-		drawMark(dc, markColor, scale)
+	if input.hasMark {
+		writeMark(b, xoff, input.markColor)
 	}
-
-	var buf bytes.Buffer
-	_ = png.Encode(&buf, dc.Image())
-	return buf.Bytes()
 }
 
-func drawMark(dc *gg.Context, c [3]int, scale float64) {
+func writeArc(b *strings.Builder, ox, r, startDeg, endDeg float64, c [3]int, alpha, width float64) {
+	sx, sy := arcPoint(ox, r, startDeg)
+	ex, ey := arcPoint(ox, r, endDeg)
+	large := 0
+	if math.Abs(endDeg-startDeg) > 180 {
+		large = 1
+	}
+	sweep := 0
+	if endDeg > startDeg {
+		sweep = 1
+	}
+	b.WriteString(fmt.Sprintf(
+		`<path d="M%.2f,%.2f A%.2f,%.2f 0 %d %d %.2f,%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f" stroke-linecap="round"/>`,
+		sx, sy, r, r, large, sweep, ex, ey, svgRGB(c), width, alpha))
+}
+
+func arcPoint(ox, r, deg float64) (float64, float64) {
+	p := phi(deg)
+	return ox + r*math.Cos(p), dialCY + r*math.Sin(p)
+}
+
+func svgRGB(c [3]int) string {
+	return fmt.Sprintf("rgb(%d,%d,%d)", c[0], c[1], c[2])
+}
+
+func writeMark(b *strings.Builder, xoff float64, c [3]int) {
 	const rays = 12
 	r0, r1 := 0.35, 2.15
-	setRGB(dc, c, 1.0)
-	dc.SetLineWidth(0.82 * scale)
 	for k := 0; k < rays; k++ {
 		ang := float64(k) * 2 * math.Pi / rays
-		dc.DrawLine(dialCX+r0*math.Cos(ang), dialCY+r0*math.Sin(ang),
-			dialCX+r1*math.Cos(ang), dialCY+r1*math.Sin(ang))
-		dc.Stroke()
+		x0 := xoff + dialCX + r0*math.Cos(ang)
+		y0 := dialCY + r0*math.Sin(ang)
+		x1 := xoff + dialCX + r1*math.Cos(ang)
+		y1 := dialCY + r1*math.Sin(ang)
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.82" stroke-linecap="round"/>`,
+			x0, y0, x1, y1, svgRGB(c)))
 	}
-	dc.SetLineWidth(dialSW * scale)
 }
 
 var blankLimits = map[string]Limit{
