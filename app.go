@@ -86,7 +86,8 @@ type App struct {
 	// menu items
 	account, plan                             *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
-	burn, burnSession, burnWeekly, speed       *systray.MenuItem
+	burn, burnSession, burnWeekly              *systray.MenuItem
+	speed, speedAvg                            *systray.MenuItem
 	scopedParent                              *systray.MenuItem
 	scoped                                    []*systray.MenuItem
 	legendParent                              *systray.MenuItem
@@ -310,8 +311,12 @@ func (a *App) apply() {
 	a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
 	a.weeklyReset.SetTitle("      resets in " + fmtRemaining(weekLeft, weekKnown))
 
-	a.speed.SetTitle(fmt.Sprintf("⚡ Speed (5m):  sess %.1f%%/h · week %.1f%%/h",
-		a.sessRate*3600, a.weekRate*3600))
+	avgSessH, asOk := avgRate(sessPct, sessLeft, fiveHourSecs, 3600, sessKnown)
+	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
+	a.speed.SetTitle(fmt.Sprintf("⚡ Last 5m:  sess %.1f%%/h · week %.1f%%/d",
+		a.sessRate*3600, a.weekRate*86400))
+	a.speedAvg.SetTitle(fmt.Sprintf("⚡ Since reset:  sess %s%%/h · week %s%%/d",
+		fmtRate(avgSessH, asOk), fmtRate(avgWeekD, awOk)))
 	a.burn.SetTitle("Forecast @ rate · " + worst.Category)
 	a.burnSession.SetTitle("Session (5h):  " + sessFc.Text())
 	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())

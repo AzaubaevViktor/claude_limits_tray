@@ -22,7 +22,8 @@ func (a *App) buildMenu() {
 	a.burn = systray.AddMenuItem("Forecast @ current rate", "")
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
-	a.speed = a.burn.AddSubMenuItem("Speed", "")
+	a.speed = a.burn.AddSubMenuItem("Speed (5m)", "")
+	a.speedAvg = a.burn.AddSubMenuItem("Speed (since reset)", "")
 
 	a.scopedParent = systray.AddMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
@@ -51,7 +52,7 @@ func (a *App) buildMenu() {
 	// don't highlight on hover (submenu parents stay active so they open)
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
-		a.burnSession, a.burnWeekly, a.speed, a.status, a.ok, a.fail,
+		a.burnSession, a.burnWeekly, a.speed, a.speedAvg, a.status, a.ok, a.fail,
 	} {
 		it.Disable()
 	}

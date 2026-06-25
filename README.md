@@ -43,7 +43,9 @@ Click it for everything as numbers, plus your account.
   (so the weekly burn reflects ~9h workdays, not 24h of wall-clock).
 - Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
   past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
-- Current consumption **speed** (%/h), and **per-model** weekly limits.
+- Consumption **speed** two ways — the **last 5 minutes** and the **average
+  since the window opened** — with session in **%/h** and weekly in **%/d**.
+- **Per-model** weekly limits.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —

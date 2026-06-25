@@ -172,3 +172,27 @@ func fmtAgo(seconds float64) string {
 	h, m := m/60, m%60
 	return fmt.Sprintf("%dh %dm ago", h, m)
 }
+
+// avgRate is the average consumption since the window opened: the pct used so
+// far spread over the elapsed time, expressed per perUnitSecs (3600 -> %/h,
+// 86400 -> %/d). leftSecs/known come from the reset time; windowSecs is the
+// window length. ok is false when the reset is unknown or less than a minute
+// has elapsed (which would blow the rate up right after a reset).
+func avgRate(pct, leftSecs, windowSecs, perUnitSecs float64, known bool) (float64, bool) {
+	if !known {
+		return 0, false
+	}
+	elapsed := windowSecs - clamp(leftSecs, 0, windowSecs)
+	if elapsed < 60 {
+		return 0, false
+	}
+	return pct * perUnitSecs / elapsed, true
+}
+
+// fmtRate renders a rate to one decimal, or "—" when it isn't known yet.
+func fmtRate(v float64, ok bool) string {
+	if !ok {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f", v)
+}

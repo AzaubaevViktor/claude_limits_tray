@@ -95,6 +95,32 @@ func TestWorkingSeconds(t *testing.T) {
 	}
 }
 
+func TestAvgRate(t *testing.T) {
+	// 4% used, 1h into the 5h session -> 4 %/h.
+	if r, ok := avgRate(4, fiveHourSecs-3600, fiveHourSecs, 3600, true); !ok {
+		t.Error("session avg should be known")
+	} else {
+		approx(t, r, 4, 1e-9, "session %/h since reset")
+	}
+	// 12% used, 3.5 days into the 7-day week -> 12/3.5 ≈ 3.43 %/d.
+	if r, ok := avgRate(12, weekSecs/2, weekSecs, 86400, true); !ok {
+		t.Error("weekly avg should be known")
+	} else {
+		approx(t, r, 12.0/3.5, 1e-6, "weekly %/d since reset")
+	}
+	// Unknown reset -> not known.
+	if _, ok := avgRate(5, 0, fiveHourSecs, 3600, false); ok {
+		t.Error("unknown reset -> not ok")
+	}
+	// Just reset (full window remaining -> ~0 elapsed) -> not known yet.
+	if _, ok := avgRate(0, fiveHourSecs, fiveHourSecs, 3600, true); ok {
+		t.Error("fresh window -> not ok")
+	}
+	if fmtRate(0, false) != "—" || fmtRate(4.25, true) != "4.2" {
+		t.Error("fmtRate formatting")
+	}
+}
+
 func TestBackoff(t *testing.T) {
 	if backoffSeconds(1, 500, 0, "", 0) != 15 {
 		t.Error("fail1 -> 15")
