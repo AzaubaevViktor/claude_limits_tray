@@ -46,9 +46,20 @@ Click it for everything as numbers, plus your account.
 - Current consumption **speed** (%/h), and **per-model** weekly limits.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
-- **Backoff that respects the server**: honours `retry-after` / ratelimit-reset
-  headers, otherwise exponential with jitter — and remembers the next-allowed
-  poll time across restarts so relaunching doesn't immediately re-hit a 429.
+- **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
+  each `429` grows the interval (×1.5, up to 10 min) and a run of clean polls
+  shrinks it back — so it converges on a rate the usage endpoint accepts instead
+  of hammering it every 30 s. The interval is remembered across restarts.
+- **Backoff that respects the server**: on `429` it honours `retry-after` /
+  ratelimit-reset headers, otherwise exponential with jitter capped at **10
+  minutes** — and remembers the next-allowed poll time across restarts so
+  relaunching doesn't immediately re-hit a 429. Failures that only clear when
+  something external recovers — a **network outage** or an **expired token**
+  (401/403, waiting for Claude Code to refresh it) — don't back off: they retry
+  **once a minute** until they recover.
+- **Request/response logging**: each call to the usage API — its status,
+  duration, and body — is logged to **stderr**; the bearer token is never
+  logged.
 - Caches the **account, plan, last quota values and rate**, and saves on quit
   **and Ctrl-C** — so a restart is populated instantly.
 

@@ -14,11 +14,19 @@ import (
 )
 
 const (
-	refreshSecs    = 30
 	profileEvery   = 60
 	cacheTTL       = 600.0
 	saveEverySecs  = 300.0
 	scopedPoolSize = 4
+
+	// Adaptive polling. The usage endpoint rate-limits well below once-per-30s
+	// (and shares that budget with Claude Code itself), so we start slow and
+	// self-tune: every 429 grows the steady-state interval, a run of clean
+	// successes shrinks it back toward the floor.
+	basePollSecs      = 120.0 // floor / starting interval
+	maxPollSecs       = 600.0 // ceiling (also the backoff cap)
+	pollGrowth        = 1.5   // multiply on 429, divide after a success streak
+	okStreakToSpeedUp = 3     // clean successes before we poll faster again
 )
 
 var planNames = map[string]string{
@@ -55,6 +63,8 @@ type App struct {
 	lastFail         time.Time
 	lastFailMsg      string
 	failCount        int
+	pollInterval     float64 // adaptive steady-state poll interval (seconds)
+	okStreak         int     // consecutive successes since the last 429
 	nextPoll         time.Time
 	nextAllowedEpoch float64
 	lastSave         time.Time
@@ -87,13 +97,14 @@ type App struct {
 
 func newApp() *App {
 	a := &App{
-		client:    &Client{},
-		rates:     &RateTracker{},
-		results:   make(chan pollResult, 1),
-		workStart: 9 * 60,
-		workEnd:   18 * 60,
-		lastSave:  time.Time{},
-		statePath: defaultStatePath(),
+		client:       &Client{},
+		rates:        &RateTracker{},
+		results:      make(chan pollResult, 1),
+		workStart:    9 * 60,
+		workEnd:      18 * 60,
+		pollInterval: basePollSecs,
+		lastSave:     time.Time{},
+		statePath:    defaultStatePath(),
 	}
 	a.loadState()
 	return a
@@ -196,8 +207,13 @@ func (a *App) onSuccess(r pollResult) {
 	a.cached = false
 	a.failCount = 0
 	a.lastOk = time.Now()
-	a.nextPoll = time.Now().Add(refreshSecs * time.Second)
-	a.nextAllowedEpoch = float64(time.Now().Unix()) + refreshSecs
+	// A run of clean successes earns a faster poll, down to the floor.
+	a.okStreak++
+	if a.okStreak >= okStreakToSpeedUp && a.pollInterval > basePollSecs {
+		a.pollInterval = math.Max(basePollSecs, a.pollInterval/pollGrowth)
+		a.okStreak = 0
+	}
+	a.scheduleNext(a.pollInterval)
 
 	if s, w, ok := a.rates.Update(nowSecs(), r.usage.FiveHour.Utilization,
 		r.usage.SevenDay.Utilization); ok {
@@ -217,13 +233,18 @@ func (a *App) noteFail(err error) {
 	a.lastFail = time.Now()
 	a.lastFailMsg = describe(err)
 	a.failCount++
+	a.okStreak = 0
 	status, retryAfter, resetAt := 0, 0, ""
 	if ae, ok := err.(*APIError); ok {
 		status, retryAfter, resetAt = ae.Status, ae.RetryAfter, ae.ResetAt
 	}
+	// A 429 means we're polling too fast — grow the steady-state interval so we
+	// keep the slower pace after recovery instead of snapping back to the floor.
+	if status == 429 {
+		a.pollInterval = math.Min(maxPollSecs, a.pollInterval*pollGrowth)
+	}
 	backoff := backoffSeconds(a.failCount, status, retryAfter, resetAt, rand.Float64()*0.25)
-	a.nextPoll = time.Now().Add(time.Duration(backoff) * time.Second)
-	a.nextAllowedEpoch = float64(time.Now().Unix()) + backoff
+	a.scheduleNext(backoff)
 
 	fresh := !a.lastOk.IsZero() && time.Since(a.lastOk).Seconds() < cacheTTL
 	if fresh {
@@ -419,13 +440,14 @@ func (a *App) updateStatus() {
 
 type persistState struct {
 	LastOk      *float64        `json:"last_ok"`
-	NextAllowed float64         `json:"next_allowed"`
-	WorkStart   string          `json:"work_start"`
-	WorkEnd     string          `json:"work_end"`
-	SessRate    float64         `json:"sess_rate"`
-	WeekRate    float64         `json:"week_rate"`
-	Usage       json.RawMessage `json:"usage"`
-	Profile     json.RawMessage `json:"profile"`
+	NextAllowed  float64         `json:"next_allowed"`
+	PollInterval float64         `json:"poll_interval"`
+	WorkStart    string          `json:"work_start"`
+	WorkEnd      string          `json:"work_end"`
+	SessRate     float64         `json:"sess_rate"`
+	WeekRate     float64         `json:"week_rate"`
+	Usage        json.RawMessage `json:"usage"`
+	Profile      json.RawMessage `json:"profile"`
 }
 
 func (a *App) loadState() {
@@ -442,8 +464,10 @@ func (a *App) loadState() {
 	}
 	if s.NextAllowed > 0 {
 		if delay := s.NextAllowed - float64(time.Now().Unix()); delay > 0 {
-			a.nextPoll = time.Now().Add(time.Duration(delay) * time.Second)
-			a.nextAllowedEpoch = s.NextAllowed
+			// Don't let a stale value defer the first poll beyond the ceiling.
+			delay = math.Min(delay, maxPollSecs)
+			a.nextPoll = time.Now().Add(time.Duration(delay * float64(time.Second)))
+			a.nextAllowedEpoch = float64(time.Now().Unix()) + delay
 		}
 	}
 	if m, ok := parseHHMM(s.WorkStart); ok {
@@ -451,6 +475,9 @@ func (a *App) loadState() {
 	}
 	if m, ok := parseHHMM(s.WorkEnd); ok {
 		a.workEnd = m
+	}
+	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
+		a.pollInterval = s.PollInterval
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
 	if len(s.Usage) > 0 && string(s.Usage) != "null" {
@@ -471,12 +498,13 @@ func (a *App) saveState(force bool) {
 	}
 	a.lastSave = time.Now()
 	s := persistState{
-		NextAllowed: a.nextAllowedEpoch,
-		WorkStart:   fmtHHMM(a.workStart),
-		WorkEnd:     fmtHHMM(a.workEnd),
-		SessRate:    a.sessRate,
-		WeekRate:    a.weekRate,
-		Usage:       json.RawMessage(a.lastUsageRaw),
+		NextAllowed:  a.nextAllowedEpoch,
+		PollInterval: a.pollInterval,
+		WorkStart:    fmtHHMM(a.workStart),
+		WorkEnd:      fmtHHMM(a.workEnd),
+		SessRate:     a.sessRate,
+		WeekRate:     a.weekRate,
+		Usage:        json.RawMessage(a.lastUsageRaw),
 	}
 	if !a.lastOk.IsZero() {
 		v := float64(a.lastOk.Unix())
@@ -493,6 +521,14 @@ func (a *App) saveState(force bool) {
 }
 
 // --- helpers ----------------------------------------------------------------
+
+// scheduleNext sets the next poll (and the persisted next-allowed epoch) secs
+// from now.
+func (a *App) scheduleNext(secs float64) {
+	now := time.Now()
+	a.nextPoll = now.Add(time.Duration(secs * float64(time.Second)))
+	a.nextAllowedEpoch = float64(now.Unix()) + secs
+}
 
 func nowSecs() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
