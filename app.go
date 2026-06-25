@@ -97,6 +97,7 @@ type App struct {
 	statePath string
 
 	// menu items
+	claudeParent                               *systray.MenuItem
 	account, plan                              *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
@@ -601,6 +602,7 @@ func (a *App) renderProfile() {
 		plan = "—"
 	}
 	a.plan.SetTitle("🎗 " + plan)
+	a.claudeParent.SetTitle("Claude · " + plan)
 }
 
 func (a *App) renderScoped(limits []ScopedLimit) {

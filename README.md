@@ -47,8 +47,9 @@ Click it for everything as numbers, plus your account.
 - Consumption **speed** two ways — the **last 5 minutes** and the **average
   since the window opened** — with session in **%/h** and weekly in **%/d**.
 - **Per-model** weekly limits.
-- A separate **Codex** dropdown block with plan, primary/secondary usage
-  windows, forecast, speed, credits, and additional Codex limits.
+- Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
+  both usage windows, forecast, speed, and per-model/additional limits (Codex
+  also shows credits).
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —

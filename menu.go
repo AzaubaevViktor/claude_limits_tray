@@ -10,29 +10,25 @@ import (
 )
 
 func (a *App) buildMenu() {
-	a.account = systray.AddMenuItem("Account", "")
-	a.plan = systray.AddMenuItem("Plan", "")
-	systray.AddSeparator()
-	a.session = systray.AddMenuItem("Session", "")
-	a.sessionReset = systray.AddMenuItem("Session resets", "")
-	a.weekly = systray.AddMenuItem("Weekly", "")
-	a.weeklyReset = systray.AddMenuItem("Weekly resets", "")
-	systray.AddSeparator()
-
-	a.burn = systray.AddMenuItem("Forecast @ current rate", "")
+	a.claudeParent = systray.AddMenuItem("Claude · —", "")
+	a.account = a.claudeParent.AddSubMenuItem("Account", "")
+	a.plan = a.claudeParent.AddSubMenuItem("Plan", "")
+	a.session = a.claudeParent.AddSubMenuItem("Session", "")
+	a.sessionReset = a.claudeParent.AddSubMenuItem("Session resets", "")
+	a.weekly = a.claudeParent.AddSubMenuItem("Weekly", "")
+	a.weeklyReset = a.claudeParent.AddSubMenuItem("Weekly resets", "")
+	a.burn = a.claudeParent.AddSubMenuItem("Forecast @ current rate", "")
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
 	a.speed = a.burn.AddSubMenuItem("Speed (5m)", "")
 	a.speedAvg = a.burn.AddSubMenuItem("Speed (since reset)", "")
-
-	a.scopedParent = systray.AddMenuItem("Weekly by model: —", "")
+	a.scopedParent = a.claudeParent.AddSubMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.scopedParent.AddSubMenuItem("", "")
 		it.Disable()
 		it.Hide()
 		a.scoped = append(a.scoped, it)
 	}
-	systray.AddSeparator()
 
 	a.codexParent = systray.AddMenuItem("Codex · —", "")
 	a.codexPlan = a.codexParent.AddSubMenuItem("Plan: —", "")
