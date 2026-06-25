@@ -37,10 +37,13 @@ var planNames = map[string]string{
 }
 
 type pollResult struct {
-	raw   []byte
-	usage *Usage
-	prof  *Profile
-	err   error
+	raw        []byte
+	usage      *Usage
+	prof       *Profile
+	codexRaw   []byte
+	codexUsage *CodexUsage
+	codexErr   error
+	err        error
 }
 
 type hourItem struct {
@@ -51,7 +54,9 @@ type hourItem struct {
 type App struct {
 	mu     sync.Mutex
 	client *Client
+	codex  *CodexClient
 	rates  *RateTracker
+	cRates *RateTracker
 
 	// runtime state
 	profile          *Profile
@@ -81,25 +86,45 @@ type App struct {
 	sessRate     float64
 	weekRate     float64
 
+	lastCodexRaw     []byte
+	lastCodex        *CodexUsage
+	lastCodexOk      time.Time
+	lastCodexFail    time.Time
+	lastCodexFailMsg string
+	codexPrimaryRate float64
+	codexSecondRate  float64
+
 	statePath string
 
 	// menu items
-	account, plan                             *systray.MenuItem
+	account, plan                              *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedAvg                            *systray.MenuItem
-	scopedParent                              *systray.MenuItem
-	scoped                                    []*systray.MenuItem
-	legendParent                              *systray.MenuItem
-	work                                      *systray.MenuItem
-	startItems, endItems                      []hourItem
-	status, ok, fail                          *systray.MenuItem
+	scopedParent                               *systray.MenuItem
+	scoped                                     []*systray.MenuItem
+	codexParent                                *systray.MenuItem
+	codexPlan                                  *systray.MenuItem
+	codexPrimary, codexPrimaryReset            *systray.MenuItem
+	codexSecondary, codexSecondaryReset        *systray.MenuItem
+	codexBurn, codexBurnPrimary                *systray.MenuItem
+	codexBurnSecondary                         *systray.MenuItem
+	codexSpeed, codexSpeedAvg                  *systray.MenuItem
+	codexCredits, codexStatus                  *systray.MenuItem
+	codexScopedParent                          *systray.MenuItem
+	codexScoped                                []*systray.MenuItem
+	legendParent                               *systray.MenuItem
+	work                                       *systray.MenuItem
+	startItems, endItems                       []hourItem
+	status, ok, fail                           *systray.MenuItem
 }
 
 func newApp() *App {
 	a := &App{
 		client:       &Client{},
+		codex:        &CodexClient{},
 		rates:        &RateTracker{},
+		cRates:       &RateTracker{},
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
@@ -123,7 +148,7 @@ func defaultStatePath() string {
 
 func (a *App) onReady() {
 	systray.SetTitle("…")
-	systray.SetTooltip("Claude limits")
+	systray.SetTooltip("Claude and Codex limits")
 	a.buildMenu()
 	if a.lastUsage != nil {
 		a.apply()
@@ -133,6 +158,7 @@ func (a *App) onReady() {
 	if a.profile != nil {
 		a.renderProfile() // restore account/plan immediately
 	}
+	a.renderCodex()
 	go a.tickLoop()
 	go a.blinkLoop()
 	go a.signalLoop()
@@ -175,18 +201,32 @@ func (a *App) startRequest() {
 	a.pollCount++
 	wantProfile := a.profile == nil || a.pollCount%profileEvery == 0
 	client := a.client
+	codex := a.codex
 	results := a.results
 	go func() {
+		codexRaw, codexUsage, codexErr := codex.Usage()
 		raw, usage, err := client.Usage()
 		if err != nil {
-			results <- pollResult{err: err}
+			results <- pollResult{
+				codexRaw:   codexRaw,
+				codexUsage: codexUsage,
+				codexErr:   codexErr,
+				err:        err,
+			}
 			return
 		}
 		var prof *Profile
 		if wantProfile {
 			prof, _ = client.Profile()
 		}
-		results <- pollResult{raw: raw, usage: usage, prof: prof}
+		results <- pollResult{
+			raw:        raw,
+			usage:      usage,
+			prof:       prof,
+			codexRaw:   codexRaw,
+			codexUsage: codexUsage,
+			codexErr:   codexErr,
+		}
 	}()
 }
 
@@ -194,6 +234,7 @@ func (a *App) drain() {
 	select {
 	case r := <-a.results:
 		a.inflight = false
+		a.noteCodex(r)
 		if r.err != nil {
 			a.noteFail(r.err)
 		} else {
@@ -201,6 +242,28 @@ func (a *App) drain() {
 		}
 	default:
 	}
+}
+
+func (a *App) noteCodex(r pollResult) {
+	if r.codexErr != nil {
+		a.lastCodexFail = time.Now()
+		a.lastCodexFailMsg = describe(r.codexErr)
+		a.renderCodex()
+		return
+	}
+	if r.codexUsage == nil {
+		return
+	}
+	a.lastCodexOk = time.Now()
+	a.lastCodexFailMsg = ""
+	if primary, secondary, ok := codexPercents(r.codexUsage); ok {
+		if p, s, ok := a.cRates.Update(nowSecs(), primary, secondary); ok {
+			a.codexPrimaryRate, a.codexSecondRate = p, s
+		}
+	}
+	a.lastCodexRaw = r.codexRaw
+	a.lastCodex = r.codexUsage
+	a.renderCodex()
 }
 
 func (a *App) onSuccess(r pollResult) {
@@ -326,6 +389,133 @@ func (a *App) apply() {
 		100-sessPct, 100-weekPct))
 }
 
+func (a *App) renderCodex() {
+	if a.codexParent == nil {
+		return
+	}
+	u := a.lastCodex
+	if u == nil {
+		a.renderCodexEmpty()
+		return
+	}
+	primary := u.primary()
+	secondary := u.secondary()
+	plan := codexPlanLabel(u.PlanType)
+	a.codexParent.SetTitle("Codex · " + plan)
+	a.codexPlan.SetTitle("Plan: " + plan)
+	a.renderCodexWindow(a.codexPrimary, a.codexPrimaryReset, "Primary", primary)
+	a.renderCodexWindow(a.codexSecondary, a.codexSecondaryReset, "Secondary", secondary)
+
+	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
+	secondaryFc := a.codexForecast(secondary, a.codexSecondRate)
+	worst := primaryFc
+	if secondaryFc.Pos() > worst.Pos() {
+		worst = secondaryFc
+	}
+	a.codexBurn.SetTitle("Forecast @ rate · " + worst.Category)
+	a.codexBurnPrimary.SetTitle("Primary:  " + primaryFc.Text())
+	a.codexBurnSecondary.SetTitle("Secondary:  " + secondaryFc.Text())
+
+	a.codexSpeed.SetTitle(fmt.Sprintf("Last 5m:  primary %.1f%%/h · secondary %.1f%%/h",
+		a.codexPrimaryRate*3600, a.codexSecondRate*3600))
+	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s%%/h · secondary %s%%/h",
+		a.codexAvgRate(primary), a.codexAvgRate(secondary)))
+	a.codexCredits.SetTitle(codexCreditsText(u))
+	status := "Last success: " + agoOf(a.lastCodexOk)
+	if a.lastCodexFailMsg != "" {
+		status += " · last failure: " + a.lastCodexFailMsg
+	}
+	a.codexStatus.SetTitle(status)
+	a.renderCodexScoped(u.Limits)
+}
+
+func (a *App) renderCodexEmpty() {
+	a.codexParent.SetTitle("Codex · —")
+	a.codexPlan.SetTitle("Plan: —")
+	a.codexPrimary.SetTitle("Primary:  —")
+	a.codexPrimaryReset.SetTitle("      resets in —")
+	a.codexSecondary.SetTitle("Secondary:  —")
+	a.codexSecondaryReset.SetTitle("      resets in —")
+	a.codexBurn.SetTitle("Forecast @ rate · —")
+	a.codexBurnPrimary.SetTitle("Primary:  —")
+	a.codexBurnSecondary.SetTitle("Secondary:  —")
+	a.codexSpeed.SetTitle("Last 5m:  —")
+	a.codexSpeedAvg.SetTitle("Since reset:  —")
+	a.codexCredits.SetTitle("Credits: —")
+	msg := "Last success: " + agoOf(a.lastCodexOk)
+	if a.lastCodexFailMsg != "" {
+		msg += " · last failure: " + a.lastCodexFailMsg
+	}
+	a.codexStatus.SetTitle(msg)
+	a.renderCodexScoped(nil)
+}
+
+func (a *App) renderCodexWindow(row, reset *systray.MenuItem, name string, w *CodexWindow) {
+	if w == nil {
+		row.SetTitle(name + ":  —")
+		reset.SetTitle("      resets in —")
+		return
+	}
+	left, known := codexSecondsUntil(w)
+	row.SetTitle(fmt.Sprintf("%s:  %.0f%% left", name, 100-w.UsedPercent))
+	reset.SetTitle("      resets in " + fmtRemaining(left, known))
+}
+
+func (a *App) codexForecast(w *CodexWindow, rate float64) Forecast {
+	if w == nil {
+		return projectForecast(0, 0, 0, false)
+	}
+	reset := time.Unix(w.ResetsAt, 0).Format(time.RFC3339)
+	work, known := workingSecondsUntil(reset, a.workStart, a.workEnd, time.Now())
+	return projectForecast(w.UsedPercent, rate, work, known)
+}
+
+func (a *App) codexAvgRate(w *CodexWindow) string {
+	if w == nil {
+		return "—"
+	}
+	left, known := codexSecondsUntil(w)
+	r, ok := avgRate(w.UsedPercent, left, float64(w.WindowSeconds), 3600, known)
+	return fmtRate(r, ok)
+}
+
+func (a *App) renderCodexScoped(limits []CodexLimit) {
+	shown := 0
+	for _, l := range limits {
+		if l.ID == "codex" {
+			continue
+		}
+		if l.Primary == nil && l.Secondary == nil {
+			continue
+		}
+		if shown >= len(a.codexScoped) {
+			break
+		}
+		name := l.Name
+		if name == "" {
+			name = l.ID
+		}
+		w := l.Primary
+		if w == nil {
+			w = l.Secondary
+		}
+		left, known := codexSecondsUntil(w)
+		it := a.codexScoped[shown]
+		it.SetTitle(fmt.Sprintf("%s:  %.0f%% left · %s", name, 100-w.UsedPercent,
+			fmtRemaining(left, known)))
+		it.Show()
+		shown++
+	}
+	for i := shown; i < len(a.codexScoped); i++ {
+		a.codexScoped[i].Hide()
+	}
+	if shown == 0 {
+		a.codexScopedParent.SetTitle("Additional limits: —")
+	} else {
+		a.codexScopedParent.SetTitle("Additional limits")
+	}
+}
+
 func (a *App) renderProfile() {
 	if a.profile == nil {
 		return
@@ -444,15 +634,18 @@ func (a *App) updateStatus() {
 // --- persistence ------------------------------------------------------------
 
 type persistState struct {
-	LastOk      *float64        `json:"last_ok"`
-	NextAllowed  float64         `json:"next_allowed"`
-	PollInterval float64         `json:"poll_interval"`
-	WorkStart    string          `json:"work_start"`
-	WorkEnd      string          `json:"work_end"`
-	SessRate     float64         `json:"sess_rate"`
-	WeekRate     float64         `json:"week_rate"`
-	Usage        json.RawMessage `json:"usage"`
-	Profile      json.RawMessage `json:"profile"`
+	LastOk           *float64        `json:"last_ok"`
+	NextAllowed      float64         `json:"next_allowed"`
+	PollInterval     float64         `json:"poll_interval"`
+	WorkStart        string          `json:"work_start"`
+	WorkEnd          string          `json:"work_end"`
+	SessRate         float64         `json:"sess_rate"`
+	WeekRate         float64         `json:"week_rate"`
+	CodexPrimaryRate float64         `json:"codex_primary_rate"`
+	CodexSecondRate  float64         `json:"codex_secondary_rate"`
+	Usage            json.RawMessage `json:"usage"`
+	Profile          json.RawMessage `json:"profile"`
+	CodexUsage       json.RawMessage `json:"codex_usage"`
 }
 
 func (a *App) loadState() {
@@ -485,9 +678,14 @@ func (a *App) loadState() {
 		a.pollInterval = s.PollInterval
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
+	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	if len(s.Usage) > 0 && string(s.Usage) != "null" {
 		a.lastUsageRaw = s.Usage
 		a.lastUsage = parseUsage(s.Usage)
+	}
+	if len(s.CodexUsage) > 0 && string(s.CodexUsage) != "null" {
+		a.lastCodexRaw = s.CodexUsage
+		a.lastCodex = parseCodexUsageCached(s.CodexUsage)
 	}
 	if len(s.Profile) > 0 && string(s.Profile) != "null" {
 		var p Profile
@@ -503,13 +701,16 @@ func (a *App) saveState(force bool) {
 	}
 	a.lastSave = time.Now()
 	s := persistState{
-		NextAllowed:  a.nextAllowedEpoch,
-		PollInterval: a.pollInterval,
-		WorkStart:    fmtHHMM(a.workStart),
-		WorkEnd:      fmtHHMM(a.workEnd),
-		SessRate:     a.sessRate,
-		WeekRate:     a.weekRate,
-		Usage:        json.RawMessage(a.lastUsageRaw),
+		NextAllowed:      a.nextAllowedEpoch,
+		PollInterval:     a.pollInterval,
+		WorkStart:        fmtHHMM(a.workStart),
+		WorkEnd:          fmtHHMM(a.workEnd),
+		SessRate:         a.sessRate,
+		WeekRate:         a.weekRate,
+		CodexPrimaryRate: a.codexPrimaryRate,
+		CodexSecondRate:  a.codexSecondRate,
+		Usage:            json.RawMessage(a.lastUsageRaw),
+		CodexUsage:       json.RawMessage(a.lastCodexRaw),
 	}
 	if !a.lastOk.IsZero() {
 		v := float64(a.lastOk.Unix())
@@ -553,6 +754,89 @@ func orElse(s, def string) string {
 		return def
 	}
 	return s
+}
+
+func (u *CodexUsage) primary() *CodexWindow {
+	if u == nil || len(u.Limits) == 0 {
+		return nil
+	}
+	return u.Limits[0].Primary
+}
+
+func (u *CodexUsage) secondary() *CodexWindow {
+	if u == nil || len(u.Limits) == 0 {
+		return nil
+	}
+	return u.Limits[0].Secondary
+}
+
+func codexPercents(u *CodexUsage) (float64, float64, bool) {
+	primary, secondary := u.primary(), u.secondary()
+	if primary == nil && secondary == nil {
+		return 0, 0, false
+	}
+	pctPrimary, pctSecondary := 0.0, 0.0
+	if primary != nil {
+		pctPrimary = primary.UsedPercent
+	}
+	if secondary != nil {
+		pctSecondary = secondary.UsedPercent
+	}
+	return pctPrimary, pctSecondary, true
+}
+
+func codexSecondsUntil(w *CodexWindow) (float64, bool) {
+	if w == nil || w.ResetsAt <= 0 {
+		return 0, false
+	}
+	return time.Until(time.Unix(w.ResetsAt, 0)).Seconds(), true
+}
+
+func codexPlanLabel(plan string) string {
+	switch plan {
+	case "free":
+		return "Free"
+	case "go":
+		return "Go"
+	case "plus":
+		return "Plus"
+	case "pro":
+		return "Pro"
+	case "prolite":
+		return "Pro Lite"
+	case "team":
+		return "Team"
+	case "business":
+		return "Business"
+	case "enterprise":
+		return "Enterprise"
+	case "edu", "education":
+		return "Edu"
+	case "", "unknown":
+		return "—"
+	default:
+		return plan
+	}
+}
+
+func codexCreditsText(u *CodexUsage) string {
+	if u == nil || len(u.Limits) == 0 || u.Limits[0].Credits == nil {
+		if u != nil && u.ResetCredits > 0 {
+			return fmt.Sprintf("Credits: %d reset", u.ResetCredits)
+		}
+		return "Credits: —"
+	}
+	c := u.Limits[0].Credits
+	switch {
+	case c.Unlimited:
+		return "Credits: unlimited"
+	case c.Balance != nil && *c.Balance != "":
+		return "Credits: " + *c.Balance
+	case c.HasCredits:
+		return "Credits: available"
+	default:
+		return "Credits: none"
+	}
 }
 
 func fmtHHMM(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }

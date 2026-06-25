@@ -32,6 +32,28 @@ func (a *App) buildMenu() {
 		it.Hide()
 		a.scoped = append(a.scoped, it)
 	}
+	systray.AddSeparator()
+
+	a.codexParent = systray.AddMenuItem("Codex · —", "")
+	a.codexPlan = a.codexParent.AddSubMenuItem("Plan: —", "")
+	a.codexPrimary = a.codexParent.AddSubMenuItem("Primary", "")
+	a.codexPrimaryReset = a.codexParent.AddSubMenuItem("Primary resets", "")
+	a.codexSecondary = a.codexParent.AddSubMenuItem("Secondary", "")
+	a.codexSecondaryReset = a.codexParent.AddSubMenuItem("Secondary resets", "")
+	a.codexBurn = a.codexParent.AddSubMenuItem("Forecast @ current rate", "")
+	a.codexBurnPrimary = a.codexBurn.AddSubMenuItem("Forecast primary", "")
+	a.codexBurnSecondary = a.codexBurn.AddSubMenuItem("Forecast secondary", "")
+	a.codexSpeed = a.codexBurn.AddSubMenuItem("Speed (5m)", "")
+	a.codexSpeedAvg = a.codexBurn.AddSubMenuItem("Speed (since reset)", "")
+	a.codexCredits = a.codexParent.AddSubMenuItem("Credits: —", "")
+	a.codexScopedParent = a.codexParent.AddSubMenuItem("Additional limits: —", "")
+	for i := 0; i < scopedPoolSize; i++ {
+		it := a.codexScopedParent.AddSubMenuItem("", "")
+		it.Disable()
+		it.Hide()
+		a.codexScoped = append(a.codexScoped, it)
+	}
+	a.codexStatus = a.codexParent.AddSubMenuItem("Last success: —", "")
 
 	a.legendParent = systray.AddMenuItem("Legend (the dial)", "")
 	for _, row := range legendRows() {
@@ -53,6 +75,9 @@ func (a *App) buildMenu() {
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
 		a.burnSession, a.burnWeekly, a.speed, a.speedAvg, a.status, a.ok, a.fail,
+		a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
+		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
+		a.codexSpeed, a.codexSpeedAvg, a.codexCredits, a.codexStatus,
 	} {
 		it.Disable()
 	}

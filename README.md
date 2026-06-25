@@ -3,7 +3,7 @@
 <p align="center"><img src="dial.svg" width="160" alt="the dial icon"></p>
 
 A tiny macOS menu-bar app that shows — at a glance — how much of your Claude
-usage is left and whether your current pace will blow through it.
+and Codex usage is left and whether your current pace will blow through it.
 
 ## What it solves
 
@@ -46,6 +46,8 @@ Click it for everything as numbers, plus your account.
 - Consumption **speed** two ways — the **last 5 minutes** and the **average
   since the window opened** — with session in **%/h** and weekly in **%/d**.
 - **Per-model** weekly limits.
+- A separate **Codex** dropdown block with plan, primary/secondary usage
+  windows, forecast, speed, credits, and additional Codex limits.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
@@ -95,8 +97,14 @@ launchctl load ~/Library/LaunchAgents/com.local.claude-limits.plist
 It reads the same OAuth endpoint Claude Code's `/usage` screen uses
 (`api.anthropic.com/api/oauth/usage`). The bearer token comes from the
 `Claude Code-credentials` keychain item that Claude Code keeps refreshed — so
-**keep Claude Code signed in**. Requests go through the system `curl`; no
-network or crypto libraries are added.
+**keep Claude Code signed in**.
+
+For Codex it reads the ChatGPT-authenticated Codex usage endpoint
+(`chatgpt.com/backend-api/wham/usage`). The token is loaded the same way the
+Codex CLI stores it: `CODEX_ACCESS_TOKEN`, `~/.codex/auth.json`, or the macOS
+keychain item `Codex Auth`. Keep Codex signed in with ChatGPT (`codex login`);
+API-key auth does not expose ChatGPT plan limits. Requests go through the
+system `curl`; no network or crypto libraries are added.
 
 ## Code
 
