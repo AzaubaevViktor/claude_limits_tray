@@ -118,8 +118,15 @@ func waitSeconds(resetAt string) (float64, bool) {
 }
 
 // backoffSeconds: ratelimit-reset header, then retry-after, then an exponential
-// floor; jitter (0..0.25) only adds on top, never below the base.
+// floor (capped at 10 min); jitter (0..0.25) only adds on top, never below the
+// base. Failures that clear only when something outside us recovers don't back
+// off exponentially — they retry once a minute: transport/credential errors
+// (status 0 — network down, no token) and auth errors (401/403, waiting for
+// Claude Code to refresh the access token).
 func backoffSeconds(failCount, status, retryAfter int, resetAt string, jitter float64) float64 {
+	if status == 0 || status == 401 || status == 403 {
+		return 60
+	}
 	base := math.Min(600, 15*math.Pow(2, float64(failCount-1)))
 	if status == 429 {
 		if s, ok := waitSeconds(resetAt); ok && s > 0 {

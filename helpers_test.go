@@ -105,6 +105,17 @@ func TestBackoff(t *testing.T) {
 	if backoffSeconds(99, 500, 0, "", 0) != 600 {
 		t.Error("cap 600")
 	}
+	// Network/credential failures (status 0): flat 60s, no exponential, no jitter.
+	if backoffSeconds(1, 0, 0, "", 0.25) != 60 {
+		t.Error("network fail1 -> 60")
+	}
+	if backoffSeconds(50, 0, 0, "", 0.25) != 60 {
+		t.Error("network never escalates -> 60")
+	}
+	// Auth errors (401/403): flat 60s too — wait for Claude Code to refresh.
+	if backoffSeconds(1, 401, 0, "", 0.25) != 60 || backoffSeconds(9, 403, 0, "", 0.25) != 60 {
+		t.Error("auth errors -> 60")
+	}
 	if backoffSeconds(1, 429, 0, "", 0) != 60 {
 		t.Error("429 floor 60")
 	}
