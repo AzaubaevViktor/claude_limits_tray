@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // APIError is an HTTP/transport failure talking to the OAuth API.
@@ -50,30 +52,39 @@ func (c *Client) token() (string, error) {
 func (c *Client) get(path string) ([]byte, error) {
 	tok, err := c.token()
 	if err != nil {
+		log.Printf("GET %s -> %v", path, err)
 		return nil, err
 	}
 	wfmt := metaMark + "%{http_code}|%header{retry-after}" +
 		"|%header{anthropic-ratelimit-unified-reset}"
+	// Log the request — never the Authorization header / token.
+	log.Printf("GET %s", path)
+	start := time.Now()
 	out, err := exec.Command("curl", "-sS", "--max-time", "15",
 		"-H", "Authorization: Bearer "+tok,
 		"-H", "anthropic-beta: "+oauthBeta,
 		"-H", "User-Agent: "+userAgent,
 		"-H", "Accept: application/json",
 		"-w", wfmt, apiBase+path).Output()
+	took := time.Since(start).Round(time.Millisecond)
 	if err != nil {
+		log.Printf("GET %s -> transport error in %s: %v", path, took, err)
 		return nil, &APIError{Msg: "Offline — can't reach Claude API"}
 	}
 	s := string(out)
 	idx := strings.LastIndex(s, metaMark)
 	if idx < 0 {
+		log.Printf("GET %s -> malformed response in %s: %q", path, took, s)
 		return nil, &APIError{Msg: "Malformed curl response"}
 	}
 	body := s[:idx]
 	fields := strings.Split(s[idx+len(metaMark):], "|")
 	status, convErr := strconv.Atoi(strings.TrimSpace(fields[0]))
 	if convErr != nil {
+		log.Printf("GET %s -> malformed status in %s: %q", path, took, s)
 		return nil, &APIError{Msg: "Malformed curl response"}
 	}
+	log.Printf("GET %s -> %d in %s (%d bytes): %s", path, status, took, len(body), body)
 	if status >= 400 {
 		e := &APIError{Msg: fmt.Sprintf("HTTP %d", status), Status: status}
 		if len(fields) > 1 {
