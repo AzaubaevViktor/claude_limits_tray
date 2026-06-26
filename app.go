@@ -243,9 +243,11 @@ func (a *App) drain() {
 		} else {
 			a.onSuccess(r)
 		}
-		// A rotated refresh token must be saved promptly — losing it would mean
-		// a keychain prompt on the next launch.
-		if a.codex.TakeRefreshDirty() {
+		// A rotated refresh token must be saved promptly — losing it would force
+		// a re-bootstrap (Codex keychain prompt / Claude re-read) next launch.
+		codexDirty := a.codex.TakeRefreshDirty()
+		claudeDirty := a.client.TakeRefreshDirty()
+		if codexDirty || claudeDirty {
 			a.saveState(true)
 		}
 	default:
@@ -344,7 +346,7 @@ func describe(err error) string {
 	case ae.Status == 429:
 		return "Rate-limited (429)"
 	case ae.Status == 401 || ae.Status == 403:
-		return "Auth expired — run any Claude command"
+		return "Auth expired — open Claude Code to refresh the token"
 	case ae.Status != 0:
 		return fmt.Sprintf("Usage API error %d", ae.Status)
 	}
@@ -770,6 +772,7 @@ type persistState struct {
 	CodexPrimaryRate float64         `json:"codex_primary_rate"`
 	CodexSecondRate  float64         `json:"codex_secondary_rate"`
 	CodexRefresh     string          `json:"codex_refresh_token"`
+	ClaudeRefresh    string          `json:"claude_refresh_token"`
 	Usage            json.RawMessage `json:"usage"`
 	Profile          json.RawMessage `json:"profile"`
 	CodexUsage       json.RawMessage `json:"codex_usage"`
@@ -807,6 +810,7 @@ func (a *App) loadState() {
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	a.codex.LoadRefresh(s.CodexRefresh)
+	a.client.LoadRefresh(s.ClaudeRefresh)
 	if len(s.Usage) > 0 && string(s.Usage) != "null" {
 		a.lastUsageRaw = s.Usage
 		a.lastUsage = parseUsage(s.Usage)
@@ -838,6 +842,7 @@ func (a *App) saveState(force bool) {
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,
 		CodexRefresh:     a.codex.RefreshToken(),
+		ClaudeRefresh:    a.client.RefreshToken(),
 		Usage:            json.RawMessage(a.lastUsageRaw),
 		CodexUsage:       json.RawMessage(a.lastCodexRaw),
 	}

@@ -98,6 +98,18 @@ func TestCodexTokensFromJSONReturnsRefresh(t *testing.T) {
 	}
 }
 
+func TestClaudeCredsFromJSON(t *testing.T) {
+	raw := []byte(`{"claudeAiOauth":{"accessToken":"acc","refreshToken":"ref","expiresAt":1782531116490},"organizationUuid":"x"}`)
+	a, r, ms := claudeCredsFromJSON(raw)
+	if a != "acc" || r != "ref" || ms != 1782531116490 {
+		t.Fatalf("wrapped: a=%q r=%q ms=%d", a, r, ms)
+	}
+	// Flat shape (no claudeAiOauth wrapper).
+	if a2, r2, _ := claudeCredsFromJSON([]byte(`{"accessToken":"x","refreshToken":"y"}`)); a2 != "x" || r2 != "y" {
+		t.Fatalf("flat: a=%q r=%q", a2, r2)
+	}
+}
+
 func TestJWTExp(t *testing.T) {
 	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 	tok := enc(`{"alg":"none"}`) + "." + enc(`{"exp":1700000000}`) + ".sig"

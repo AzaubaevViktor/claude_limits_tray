@@ -100,8 +100,12 @@ launchctl load ~/Library/LaunchAgents/com.local.claude-limits.plist
 
 It reads the same OAuth endpoint Claude Code's `/usage` screen uses
 (`api.anthropic.com/api/oauth/usage`). The bearer token comes from the
-`Claude Code-credentials` keychain item that Claude Code keeps refreshed — so
-**keep Claude Code signed in**.
+`Claude Code-credentials` keychain item, which Claude Code keeps fresh while you
+work. When that token is still valid the app just uses it (never interfering);
+when it's expired and Claude Code is idle (e.g. overnight) the app mints a fresh
+one itself from the refresh token, the same way Claude Code would — so
+monitoring keeps working. If even that fails the token is dead until you reopen
+Claude Code, and the status says so.
 
 For Codex it reads the ChatGPT-authenticated Codex usage endpoint
 (`chatgpt.com/backend-api/wham/usage`). On first run the token is bootstrapped

@@ -153,9 +153,10 @@ func TestBackoff(t *testing.T) {
 	if backoffSeconds(50, 0, 0, "", 0.25) != 60 {
 		t.Error("network never escalates -> 60")
 	}
-	// Auth errors (401/403): flat 60s too — wait for Claude Code to refresh.
-	if backoffSeconds(1, 401, 0, "", 0.25) != 60 || backoffSeconds(9, 403, 0, "", 0.25) != 60 {
-		t.Error("auth errors -> 60")
+	// Auth errors (401/403): back off exponentially (after a failed self-refresh
+	// the token is dead until Claude Code is reopened — hammering only risks 429).
+	if backoffSeconds(1, 401, 0, "", 0) != 15 || backoffSeconds(99, 403, 0, "", 0) != 600 {
+		t.Error("auth errors -> exponential")
 	}
 	if backoffSeconds(1, 429, 0, "", 0) != 60 {
 		t.Error("429 floor 60")
