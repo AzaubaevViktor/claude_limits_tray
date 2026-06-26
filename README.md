@@ -46,7 +46,8 @@ Click it for everything as numbers, plus your account.
 - Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
   past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
 - Consumption **speed** two ways — the **last 5 minutes** and the **average
-  since the window opened** — with session in **%/h** and weekly in **%/d**.
+  since the window opened** — with session in **%/h** and weekly in **%/d**,
+  each with the **spare left at reset** if that pace holds.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex

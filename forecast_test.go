@@ -54,6 +54,21 @@ func TestForecastText(t *testing.T) {
 	}
 }
 
+func TestSpareText(t *testing.T) {
+	// 50% used, burning 25%/h for 2h -> 50% used + 50% burned = 0% spare.
+	if got := spareText(50, 25.0/3600, 2*3600, true); got != "0%" {
+		t.Errorf("on-track spare = %q, want 0%%", got)
+	}
+	// 60% used, burning 30%/h for 2h -> 40% left, 60% projected = -20% spare.
+	if got := spareText(60, 30.0/3600, 2*3600, true); got != "-20%" {
+		t.Errorf("overshoot spare = %q, want -20%%", got)
+	}
+	// Idle at 20% used -> all 80% remaining is spare.
+	if got := spareText(20, 0, 3600, true); got != "80%" {
+		t.Errorf("idle spare = %q, want 80%%", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

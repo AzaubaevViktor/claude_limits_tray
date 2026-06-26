@@ -21,7 +21,9 @@ func (a *App) buildMenu() {
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
 	a.speed = a.burn.AddSubMenuItem("Speed (5m)", "")
+	a.speedLeft = a.burn.AddSubMenuItem("Spare at reset (5m)", "")
 	a.speedAvg = a.burn.AddSubMenuItem("Speed (since reset)", "")
+	a.speedAvgLeft = a.burn.AddSubMenuItem("Spare at reset (since reset)", "")
 	a.scopedParent = a.claudeParent.AddSubMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.scopedParent.AddSubMenuItem("", "")
@@ -40,7 +42,9 @@ func (a *App) buildMenu() {
 	a.codexBurnPrimary = a.codexBurn.AddSubMenuItem("Forecast primary", "")
 	a.codexBurnSecondary = a.codexBurn.AddSubMenuItem("Forecast secondary", "")
 	a.codexSpeed = a.codexBurn.AddSubMenuItem("Speed (5m)", "")
+	a.codexSpeedLeft = a.codexBurn.AddSubMenuItem("Spare at reset (5m)", "")
 	a.codexSpeedAvg = a.codexBurn.AddSubMenuItem("Speed (since reset)", "")
+	a.codexSpeedAvgLeft = a.codexBurn.AddSubMenuItem("Spare at reset (since reset)", "")
 	a.codexCredits = a.codexParent.AddSubMenuItem("Credits: —", "")
 	a.codexScopedParent = a.codexParent.AddSubMenuItem("Additional limits: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
@@ -70,10 +74,12 @@ func (a *App) buildMenu() {
 	// don't highlight on hover (submenu parents stay active so they open)
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
-		a.burnSession, a.burnWeekly, a.speed, a.speedAvg, a.status, a.ok, a.fail,
+		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
+		a.status, a.ok, a.fail,
 		a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
-		a.codexSpeed, a.codexSpeedAvg, a.codexCredits, a.codexStatus,
+		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
+		a.codexCredits, a.codexStatus,
 	} {
 		it.Disable()
 	}

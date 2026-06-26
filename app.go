@@ -102,7 +102,7 @@ type App struct {
 	account, plan                              *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
-	speed, speedAvg                            *systray.MenuItem
+	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
 	codexParent                                *systray.MenuItem
@@ -111,7 +111,8 @@ type App struct {
 	codexSecondary, codexSecondaryReset        *systray.MenuItem
 	codexBurn, codexBurnPrimary                *systray.MenuItem
 	codexBurnSecondary                         *systray.MenuItem
-	codexSpeed, codexSpeedAvg                  *systray.MenuItem
+	codexSpeed, codexSpeedLeft                 *systray.MenuItem
+	codexSpeedAvg, codexSpeedAvgLeft           *systray.MenuItem
 	codexCredits, codexStatus                  *systray.MenuItem
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
@@ -383,10 +384,18 @@ func (a *App) apply() {
 
 	avgSessH, asOk := avgRate(sessPct, sessLeft, fiveHourSecs, 3600, sessKnown)
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
+	sinceSess, _ := avgRate(sessPct, sessLeft, fiveHourSecs, 1, sessKnown)
+	sinceWeek, _ := avgRate(weekPct, weekLeft, weekSecs, 1, weekKnown)
 	a.speed.SetTitle(fmt.Sprintf("⚡ Last 5m:  sess %.1f%%/h · week %.1f%%/d",
 		a.sessRate*3600, a.weekRate*86400))
+	a.speedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  sess %s · week %s",
+		spareText(sessPct, a.sessRate, sessWork, sw),
+		spareText(weekPct, a.weekRate, weekWork, ww)))
 	a.speedAvg.SetTitle(fmt.Sprintf("⚡ Since reset:  sess %s%%/h · week %s%%/d",
 		fmtRate(avgSessH, asOk), fmtRate(avgWeekD, awOk)))
+	a.speedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  sess %s · week %s",
+		spareText(sessPct, sinceSess, sessWork, sw),
+		spareText(weekPct, sinceWeek, weekWork, ww)))
 	a.burn.SetTitle("Forecast @ rate · " + worst.Category)
 	a.burnSession.SetTitle("Session (5h):  " + sessFc.Text())
 	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())
@@ -425,8 +434,12 @@ func (a *App) renderCodex() {
 
 	a.codexSpeed.SetTitle(fmt.Sprintf("Last 5m:  primary %.1f%%/h · secondary %.1f%%/h",
 		a.codexPrimaryRate*3600, a.codexSecondRate*3600))
+	a.codexSpeedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
+		a.codexSpare(primary, a.codexPrimaryRate), a.codexSpare(secondary, a.codexSecondRate)))
 	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s%%/h · secondary %s%%/h",
 		a.codexAvgRate(primary), a.codexAvgRate(secondary)))
+	a.codexSpeedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
+		a.codexSpare(primary, codexSinceRate(primary)), a.codexSpare(secondary, codexSinceRate(secondary))))
 	a.codexCredits.SetTitle(codexCreditsText(u))
 	status := "Last success: " + agoOf(a.lastCodexOk)
 	if a.lastCodexFailMsg != "" {
@@ -447,7 +460,9 @@ func (a *App) renderCodexEmpty() {
 	a.codexBurnPrimary.SetTitle("Primary:  —")
 	a.codexBurnSecondary.SetTitle("Secondary:  —")
 	a.codexSpeed.SetTitle("Last 5m:  —")
+	a.codexSpeedLeft.SetTitle("      ↳ spare at reset:  —")
 	a.codexSpeedAvg.SetTitle("Since reset:  —")
+	a.codexSpeedAvgLeft.SetTitle("      ↳ spare at reset:  —")
 	a.codexCredits.SetTitle("Credits: —")
 	msg := "Last success: " + agoOf(a.lastCodexOk)
 	if a.lastCodexFailMsg != "" {
@@ -526,6 +541,27 @@ func (a *App) codexAvgRate(w *CodexWindow) string {
 	left, known := codexSecondsUntil(w)
 	r, ok := avgRate(w.UsedPercent, left, float64(w.WindowSeconds), 3600, known)
 	return fmtRate(r, ok)
+}
+
+// codexSpare is the projected % left at the window's reset at the given rate.
+func (a *App) codexSpare(w *CodexWindow, rate float64) string {
+	if w == nil {
+		return "—"
+	}
+	reset := time.Unix(w.ResetsAt, 0).Format(time.RFC3339)
+	work, known := workingSecondsUntil(reset, a.workStart, a.workEnd, time.Now())
+	return spareText(w.UsedPercent, rate, work, known)
+}
+
+// codexSinceRate is the average consumption since the window opened, in % per
+// second (0 when too little has elapsed to measure).
+func codexSinceRate(w *CodexWindow) float64 {
+	if w == nil {
+		return 0
+	}
+	left, known := codexSecondsUntil(w)
+	r, _ := avgRate(w.UsedPercent, left, float64(w.WindowSeconds), 1, known)
+	return r
 }
 
 func (a *App) renderCodexScoped(limits []CodexLimit) {

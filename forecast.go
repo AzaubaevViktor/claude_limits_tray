@@ -39,6 +39,12 @@ func projectForecast(pct, rate, ttr float64, ttrKnown bool) Forecast {
 	return Forecast{cat, spare, brk, true}
 }
 
+// spareText is the projected % of quota still spare at the reset for a single
+// rate (negative = you'd overshoot), as a compact "12%" / "-8%" label.
+func spareText(pct, rate, ttr float64, ttrKnown bool) string {
+	return fmt.Sprintf("%.0f%%", projectForecast(pct, rate, ttr, ttrKnown).Spare)
+}
+
 var burnRed = [3]int{255, 69, 58}
 
 // gradient stops along the continuous severity axis (pos 0..1).
