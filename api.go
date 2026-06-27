@@ -275,8 +275,9 @@ func (c *Client) do(path, tok string) ([]byte, error) {
 		log.Printf("GET %s -> malformed status in %s: %q", path, took, s)
 		return nil, &APIError{Msg: "Malformed curl response"}
 	}
-	log.Printf("GET %s -> %d in %s (%d bytes): %s", path, status, took, len(body), body)
 	if status >= 400 {
+		// Dump the body only on an error — it carries the server's reason.
+		log.Printf("GET %s -> %d in %s (%d bytes): %s", path, status, took, len(body), body)
 		e := &APIError{Msg: fmt.Sprintf("HTTP %d", status), Status: status}
 		if len(fields) > 1 {
 			if ra, err := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64); err == nil {
@@ -288,6 +289,7 @@ func (c *Client) do(path, tok string) ([]byte, error) {
 		}
 		return nil, e
 	}
+	log.Printf("GET %s -> %d in %s (%d bytes)", path, status, took, len(body))
 	return []byte(body), nil
 }
 
@@ -704,8 +706,9 @@ func (c *CodexClient) do(path, tok string) ([]byte, error) {
 		log.Printf("GET codex %s -> malformed status in %s: %q", path, took, s)
 		return nil, &APIError{Msg: "Malformed Codex curl response"}
 	}
-	log.Printf("GET codex %s -> %d in %s (%d bytes): %s", path, status, took, len(body), body)
 	if status >= 400 {
+		// Dump the body only on an error — it carries the server's reason.
+		log.Printf("GET codex %s -> %d in %s (%d bytes): %s", path, status, took, len(body), body)
 		e := &APIError{Msg: fmt.Sprintf("HTTP %d", status), Status: status}
 		if len(fields) > 1 {
 			if ra, err := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64); err == nil {
@@ -714,6 +717,7 @@ func (c *CodexClient) do(path, tok string) ([]byte, error) {
 		}
 		return nil, e
 	}
+	log.Printf("GET codex %s -> %d in %s (%d bytes)", path, status, took, len(body))
 	return []byte(body), nil
 }
 
