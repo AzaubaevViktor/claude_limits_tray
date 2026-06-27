@@ -239,11 +239,13 @@ void setIcon(const char* iconBytes, int length, bool template) {
   NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
   NSImage *image = [[NSImage alloc] initWithData:buffer];
   NSSize imageSize = [image size];
-  CGFloat width = 16;
+  // Menu-bar icon height in points. 21 ≈ 16 × 1.3 — a 30% bigger dial.
+  CGFloat height = 21;
+  CGFloat width = height;
   if (imageSize.height > 0) {
-    width = MAX(16, 16 * imageSize.width / imageSize.height);
+    width = MAX(height, height * imageSize.width / imageSize.height);
   }
-  [image setSize:NSMakeSize(width, 16)];
+  [image setSize:NSMakeSize(width, height)];
   image.template = template;
   runInMainThread(@selector(setIcon:), (id)image);
 }
