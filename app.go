@@ -27,6 +27,11 @@ const (
 	maxPollSecs       = 600.0 // ceiling (also the backoff cap)
 	pollGrowth        = 1.5   // multiply on 429, divide after a success streak
 	okStreakToSpeedUp = 3     // clean successes before we poll faster again
+
+	// Menu-bar icon height (points). 16 is the system default; 21 ≈ +30%.
+	defaultIconHeight = 21.0
+	minIconHeight     = 14.0
+	maxIconHeight     = 32.0
 )
 
 var planNames = map[string]string{
@@ -79,6 +84,9 @@ type App struct {
 	results          chan pollResult
 	iconKey          string
 
+	// menu-bar icon height in points (user-adjustable, persisted)
+	iconHeight float64
+
 	// working hours (local minutes from midnight) and last data
 	workStart    int
 	workEnd      int
@@ -120,6 +128,8 @@ type App struct {
 	legendItems                                []*systray.MenuItem
 	timeFillParent                             *systray.MenuItem
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
+	iconSizeParent                             *systray.MenuItem
+	iconSizeItems                              []hourItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
 	status, ok, fail                           *systray.MenuItem
@@ -134,6 +144,7 @@ func newApp() *App {
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
+		iconHeight:   defaultIconHeight,
 		pollInterval: basePollSecs,
 		lastSave:     time.Time{},
 		statePath:    defaultStatePath(),
@@ -155,6 +166,7 @@ func defaultStatePath() string {
 func (a *App) onReady() {
 	systray.SetTitle("…")
 	systray.SetTooltip("Claude and Codex limits")
+	systray.SetIconHeight(a.iconHeight)
 	a.buildMenu()
 	if a.lastUsage != nil {
 		a.apply()
@@ -771,6 +783,7 @@ type persistState struct {
 	WorkStart        string          `json:"work_start"`
 	WorkEnd          string          `json:"work_end"`
 	TimeFill         string          `json:"time_fill"`
+	IconHeight       float64         `json:"icon_height"`
 	SessRate         float64         `json:"sess_rate"`
 	WeekRate         float64         `json:"week_rate"`
 	CodexPrimaryRate float64         `json:"codex_primary_rate"`
@@ -809,6 +822,9 @@ func (a *App) loadState() {
 		a.workEnd = m
 	}
 	setTimeFillFromString(s.TimeFill)
+	if s.IconHeight >= minIconHeight && s.IconHeight <= maxIconHeight {
+		a.iconHeight = s.IconHeight
+	}
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
@@ -843,6 +859,7 @@ func (a *App) saveState(force bool) {
 		WorkStart:        fmtHHMM(a.workStart),
 		WorkEnd:          fmtHHMM(a.workEnd),
 		TimeFill:         timeFillString(),
+		IconHeight:       a.iconHeight,
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
 		CodexPrimaryRate: a.codexPrimaryRate,

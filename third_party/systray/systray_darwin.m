@@ -235,12 +235,21 @@ void runInMainThread(SEL method, id object) {
                   waitUntilDone: YES];
 }
 
+// Menu-bar icon height in points; user-adjustable via setIconHeight. 21 ≈ 16 ×
+// 1.3 (a 30% bigger dial) is the default.
+static CGFloat gIconHeight = 21;
+
+void setIconHeight(double h) {
+  if (h > 0) {
+    gIconHeight = (CGFloat)h;
+  }
+}
+
 void setIcon(const char* iconBytes, int length, bool template) {
   NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
   NSImage *image = [[NSImage alloc] initWithData:buffer];
   NSSize imageSize = [image size];
-  // Menu-bar icon height in points. 21 ≈ 16 × 1.3 — a 30% bigger dial.
-  CGFloat height = 21;
+  CGFloat height = gIconHeight;
   CGFloat width = height;
   if (imageSize.height > 0) {
     width = MAX(height, height * imageSize.width / imageSize.height);

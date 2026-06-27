@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -69,6 +70,8 @@ func (a *App) buildMenu() {
 		"Fill = time elapsed", "", timeFill == fillElapsed)
 	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
 	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
+
+	a.buildIconSizeMenu()
 	systray.AddSeparator()
 
 	a.buildWorkMenu()
@@ -107,6 +110,47 @@ func (a *App) buildMenu() {
 		a.mu.Unlock()
 		systray.Quit()
 	}()
+}
+
+// iconSizeChoices are the selectable menu-bar icon heights (points). 16 is the
+// system default; 21 is +30%.
+var iconSizeChoices = []struct {
+	pt    int
+	label string
+}{
+	{16, "16 pt · default"},
+	{18, "18 pt"},
+	{21, "21 pt · +30%"},
+	{24, "24 pt"},
+	{28, "28 pt · huge"},
+}
+
+func (a *App) buildIconSizeMenu() {
+	a.iconSizeParent = systray.AddMenuItem("Icon size", "")
+	for _, c := range iconSizeChoices {
+		pt := c.pt
+		it := a.iconSizeParent.AddSubMenuItemCheckbox(c.label, "", pt == iround(a.iconHeight))
+		a.iconSizeItems = append(a.iconSizeItems, hourItem{it, pt})
+		a.onClick(it, func() { a.setIconHeight(float64(pt)) })
+	}
+	a.refreshIconSizeMenu()
+}
+
+func (a *App) refreshIconSizeMenu() {
+	a.iconSizeParent.SetTitle(fmt.Sprintf("Icon size: %d pt", iround(a.iconHeight)))
+	for _, hi := range a.iconSizeItems {
+		setCheck(hi.item, hi.min == iround(a.iconHeight))
+	}
+}
+
+// setIconHeight changes the menu-bar icon height and repaints immediately.
+func (a *App) setIconHeight(h float64) {
+	a.iconHeight = h
+	systray.SetIconHeight(h)
+	a.refreshIconSizeMenu()
+	a.iconKey = "" // force a repaint — the SVG is unchanged, only its scale
+	a.renderIcon()
+	a.saveState(true)
 }
 
 func (a *App) buildWorkMenu() {

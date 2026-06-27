@@ -21,6 +21,12 @@ func SetTemplateIcon(templateIconBytes []byte, regularIconBytes []byte) {
 	C.setIcon(cstr, (C.int)(len(templateIconBytes)), true)
 }
 
+// SetIconHeight sets the menu-bar icon height in points (macOS only). Takes
+// effect on the next SetIcon call.
+func SetIconHeight(h float64) {
+	C.setIconHeight(C.double(h))
+}
+
 // SetIcon sets the icon of a menu item. Only works on macOS and Windows.
 // iconBytes should be the content of .ico/.jpg/.png
 func (item *MenuItem) SetIcon(iconBytes []byte) {
