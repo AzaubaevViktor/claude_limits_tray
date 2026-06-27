@@ -102,6 +102,62 @@ func (f Forecast) Text() string {
 	return fmt.Sprintf("%.0f%% spare at reset%s", f.Spare, tight)
 }
 
+// WeeklyCalibrator learns how many weekly-% one 1% of the 5-hour session costs,
+// so the weekly dial can be sliced into "one full 5-hour session" blocks.
+//
+// Between two polls the session climbs by Δs (% of the 5-hour quota) and the
+// week climbs by Δw (% of the weekly quota); their ratio k = Δw/Δs is the price,
+// in weekly-%, of 1% of a session. A full session (100% of the 5-hour limit)
+// therefore costs k*100 weekly %. We keep the single largest-spend sample (the
+// biggest Δs with Δw>0): a big jump carries the least quantisation noise, so it
+// is the most trustworthy estimate, and it only sharpens as bigger spends land.
+type WeeklyCalibrator struct {
+	havePrev           bool
+	prevSess, prevWeek float64
+	bestDs, bestDw     float64 // the largest-spend sample kept so far
+}
+
+// calibMinDs is the smallest session jump (in %) we trust as a calibration
+// sample; below it Δw is mostly rounding noise.
+const calibMinDs = 1.0
+
+// Observe feeds the latest poll's session/weekly utilisation (both 0..100). A
+// window reset (either counter dropping) is skipped — the next poll re-seeds
+// prev. The best sample survives resets: the price is a property of usage, not
+// of the window.
+func (c *WeeklyCalibrator) Observe(sess, week float64) {
+	prevS, prevW, had := c.prevSess, c.prevWeek, c.havePrev
+	c.prevSess, c.prevWeek, c.havePrev = sess, week, true
+	if !had {
+		return
+	}
+	ds, dw := sess-prevS, week-prevW
+	if ds < calibMinDs || dw <= 0 { // a reset, idle, or too small to trust
+		return
+	}
+	if ds > c.bestDs { // largest spend wins — least quantisation noise
+		c.bestDs, c.bestDw = ds, dw
+	}
+}
+
+// BlockPct is the weekly % consumed by one full 5-hour session, and whether it
+// has been measured yet. Callers that need separators before any data can fall
+// back to the time-based 33.6 blocks/week.
+func (c *WeeklyCalibrator) BlockPct() (float64, bool) {
+	if c.bestDs <= 0 || c.bestDw <= 0 {
+		return 0, false
+	}
+	return clamp(c.bestDw/c.bestDs*100, 0, 100), true
+}
+
+// Snapshot/Restore persist the best sample across restarts (in the config file).
+func (c *WeeklyCalibrator) Snapshot() (float64, float64) { return c.bestDs, c.bestDw }
+func (c *WeeklyCalibrator) Restore(ds, dw float64) {
+	if ds > 0 && dw > 0 {
+		c.bestDs, c.bestDw = ds, dw
+	}
+}
+
 // RateTracker derives a consumption rate over the last WINDOW seconds.
 type rateSample struct{ t, sess, week float64 }
 

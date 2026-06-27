@@ -4,11 +4,11 @@ import "testing"
 
 func TestForecastCategories(t *testing.T) {
 	cases := []struct {
-		name             string
-		pct, rate, ttr   float64
-		known            bool
-		wantCat          string
-		wantBreak        bool
+		name           string
+		pct, rate, ttr float64
+		known          bool
+		wantCat        string
+		wantBreak      bool
 	}{
 		{"idle", 20, 0, 2 * 3600, true, "purple", false},
 		{"plenty", 20, 10.0 / 3600, 2 * 3600, true, "purple", false},
@@ -101,4 +101,70 @@ func TestRateTracker(t *testing.T) {
 	if len(rt2.history) != 1 {
 		t.Errorf("history should be 1 after reset, got %d", len(rt2.history))
 	}
+}
+
+func TestWeeklyCalibratorLargestSpendWins(t *testing.T) {
+	var c WeeklyCalibrator
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("uncalibrated should report not-ok")
+	}
+	c.Observe(0, 0)   // seed prev
+	c.Observe(2, 0.4) // Δs=2, Δw=0.4  -> k=0.20 -> 20%/session
+	bp, ok := c.BlockPct()
+	if !ok || !near(bp, 20, 0.001) {
+		t.Fatalf("after small spend want 20%%, got %v ok=%v", bp, ok)
+	}
+	// A bigger spend with a different ratio must replace the estimate.
+	c.Observe(12, 1.4) // Δs=10, Δw=1.0 -> k=0.10 -> 10%/session
+	bp, _ = c.BlockPct()
+	if !near(bp, 10, 0.001) {
+		t.Fatalf("largest spend should win: want 10%%, got %v", bp)
+	}
+	// A later smaller spend must NOT override the largest-spend estimate.
+	c.Observe(15, 2.0) // Δs=3, Δw=0.6 -> k=0.20, but Δs<10 so ignored
+	bp, _ = c.BlockPct()
+	if !near(bp, 10, 0.001) {
+		t.Fatalf("smaller spend should not override: want 10%%, got %v", bp)
+	}
+}
+
+func TestWeeklyCalibratorSkipsResetsAndNoise(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Observe(80, 50)
+	c.Observe(5, 50) // session reset (Δs<0) -> skip
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("a reset must not register a sample")
+	}
+	c.Observe(5.5, 50) // Δs=0.5 < calibMinDs -> noise, skip
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("sub-threshold jump must not register a sample")
+	}
+}
+
+func TestWeeklyBlockSeparatorsRendered(t *testing.T) {
+	limits := map[string]Limit{
+		"session": {Pct: 10, TimeLeft: 0.5},
+		"weekly":  {Pct: 10, TimeLeft: 0.5, BlockPct: 10}, // 10 blocks -> 9 ticks
+	}
+	svg := string(renderDial(limits, [3]int{0, 0, 0}, false))
+	if got := countSubstr(svg, "<line"); got != 9 {
+		t.Fatalf("want 9 block separators for 10%% blocks, got %d", got)
+	}
+	// No BlockPct -> no separators.
+	limits["weekly"] = Limit{Pct: 10, TimeLeft: 0.5}
+	if got := countSubstr(string(renderDial(limits, [3]int{0, 0, 0}, false)), "<line"); got != 0 {
+		t.Fatalf("want 0 separators without BlockPct, got %d", got)
+	}
+}
+
+func near(a, b, eps float64) bool { return a-b < eps && b-a < eps }
+
+func countSubstr(s, sub string) int {
+	n := 0
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			n++
+		}
+	}
+	return n
 }

@@ -62,6 +62,7 @@ type App struct {
 	codex  *CodexClient
 	rates  *RateTracker
 	cRates *RateTracker
+	calib  *WeeklyCalibrator // learns weekly-% per 5-hour session, for dial blocks
 
 	// runtime state
 	profile          *Profile
@@ -141,6 +142,7 @@ func newApp() *App {
 		codex:        &CodexClient{},
 		rates:        &RateTracker{},
 		cRates:       &RateTracker{},
+		calib:        &WeeklyCalibrator{},
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
@@ -314,6 +316,7 @@ func (a *App) onSuccess(r pollResult) {
 		r.usage.SevenDay.Utilization); ok {
 		a.sessRate, a.weekRate = s, w
 	}
+	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
 	a.lastUsageRaw = r.raw
 	a.lastUsage = r.usage
 	if r.prof != nil {
@@ -397,7 +400,8 @@ func (a *App) apply() {
 	a.session.SetTitle(fmt.Sprintf("🕐 Session (5h):  %.0f%% left", 100-sessPct))
 	a.sessionReset.SetTitle("      resets in " + fmtRemaining(sessLeft, sessKnown))
 	a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
-	a.weeklyReset.SetTitle("      resets in " + fmtRemaining(weekLeft, weekKnown))
+	a.weeklyReset.SetTitle("      resets in " + fmtRemaining(weekLeft, weekKnown) +
+		"  ·  " + a.weekBlocksText(weekPct))
 
 	avgSessH, asOk := avgRate(sessPct, sessLeft, fiveHourSecs, 3600, sessKnown)
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
@@ -727,13 +731,39 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 	if weekFc.Pos() > worst.Pos() {
 		worst = weekFc
 	}
+	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
-		"session": {sessPct, sessTf},
-		"weekly":  {weekPct, weekTf},
+		"session": {Pct: sessPct, TimeLeft: sessTf},
+		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
-		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill))
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
+		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
+		iround(weekBlock*10))
 	return limits, worst.Color(), true, key
+}
+
+// weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the
+// dial's separators stay countable (<= maxWeekTicks). 0 until the calibrator has
+// seen a real spend — no separators are drawn before then.
+func (a *App) weeklyBlockPct() float64 {
+	bp, ok := a.calib.BlockPct()
+	if !ok {
+		return 0
+	}
+	return math.Max(bp, 100.0/maxWeekTicks)
+}
+
+// weekBlocksText summarises the weekly limit in 5-hour-session blocks for the
+// menu, using the un-clamped estimate (the text isn't size-limited like the
+// dial). weekPct is the weekly % already used.
+func (a *App) weekBlocksText(weekPct float64) string {
+	bp, ok := a.calib.BlockPct()
+	if !ok {
+		return "5h blocks: calibrating…"
+	}
+	total := 100.0 / bp
+	left := math.Max(0, 100-weekPct) / bp
+	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk)", left, total, bp)
 }
 
 func (a *App) showError(msg string) {
@@ -786,6 +816,8 @@ type persistState struct {
 	IconHeight       float64         `json:"icon_height"`
 	SessRate         float64         `json:"sess_rate"`
 	WeekRate         float64         `json:"week_rate"`
+	CalibDs          float64         `json:"calib_ds"` // largest session-spend sample (%)
+	CalibDw          float64         `json:"calib_dw"` // matching weekly spend (%)
 	CodexPrimaryRate float64         `json:"codex_primary_rate"`
 	CodexSecondRate  float64         `json:"codex_secondary_rate"`
 	CodexRefresh     string          `json:"codex_refresh_token"`
@@ -829,6 +861,7 @@ func (a *App) loadState() {
 		a.pollInterval = s.PollInterval
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
+	a.calib.Restore(s.CalibDs, s.CalibDw)
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	a.codex.LoadRefresh(s.CodexRefresh)
 	a.client.LoadRefresh(s.ClaudeRefresh)
@@ -853,6 +886,7 @@ func (a *App) saveState(force bool) {
 		return
 	}
 	a.lastSave = time.Now()
+	calibDs, calibDw := a.calib.Snapshot()
 	s := persistState{
 		NextAllowed:      a.nextAllowedEpoch,
 		PollInterval:     a.pollInterval,
@@ -862,6 +896,8 @@ func (a *App) saveState(force bool) {
 		IconHeight:       a.iconHeight,
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
+		CalibDs:          calibDs,
+		CalibDw:          calibDw,
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,
 		CodexRefresh:     a.codex.RefreshToken(),

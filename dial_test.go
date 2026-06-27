@@ -21,8 +21,8 @@ func TestMetricMapping(t *testing.T) {
 }
 
 func TestTimeArcGreenerAsLessTimeLeft(t *testing.T) {
-	_, nearlyDone := metricFor("time_elapsed", Limit{0, 0.1}) // little left
-	_, justReset := metricFor("time_elapsed", Limit{0, 0.9})  // lots left
+	_, nearlyDone := metricFor("time_elapsed", Limit{Pct: 0, TimeLeft: 0.1}) // little left
+	_, justReset := metricFor("time_elapsed", Limit{Pct: 0, TimeLeft: 0.9})  // lots left
 	if !(nearlyDone > justReset) {
 		t.Errorf("less time left should be higher health: %v vs %v", nearlyDone, justReset)
 	}

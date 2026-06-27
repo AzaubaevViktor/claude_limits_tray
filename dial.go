@@ -10,7 +10,12 @@ import (
 type Limit struct {
 	Pct      float64 // used 0..100
 	TimeLeft float64 // fraction of window remaining 0..1
+	BlockPct float64 // weekly % per 5-hour-session block; 0 = no separators
 }
+
+// maxWeekTicks caps how many 5-hour-block separators the weekly semicircle can
+// show, so a cheap-per-session estimate can't draw an unreadable comb.
+const maxWeekTicks = 40
 
 type segment struct {
 	ring, side, source, metric string
@@ -212,8 +217,37 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 			healthColor(health), alpha, dialSW)
 	}
 
+	// Thin separators slicing the weekly (right) semicircle into "one full
+	// 5-hour session" blocks. They sit on the outer weekly ring (the quota arc),
+	// one every BlockPct of the weekly quota; notches over the lit arc read as
+	// "this many full sessions of weekly budget left".
+	if wl, ok := input.limits["weekly"]; ok {
+		writeBlockTicks(b, xoff, wl.BlockPct)
+	}
+
 	if input.hasMark {
 		writeMark(b, xoff, input.markColor)
+	}
+}
+
+// writeBlockTicks draws radial notches across the outer weekly ring, one at each
+// blockPct boundary of the weekly quota (right semicircle). blockPct <= 0 draws
+// nothing.
+func writeBlockTicks(b *strings.Builder, xoff, blockPct float64) {
+	if blockPct <= 0 {
+		return
+	}
+	const sign = +1.0 // weekly lives on the right side
+	span := 180.0 - 2*endGap
+	ox := xoff + dialCX + sign*halfShift
+	r := rings["outer"]
+	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
+	for p := blockPct; p < 100-1e-6; p += blockPct {
+		ph := phi(sign * (endGap + p/100*span))
+		c, s := math.Cos(ph), math.Sin(ph)
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,
+			ox+in*c, dialCY+in*s, ox+out*c, dialCY+out*s))
 	}
 }
 
@@ -258,6 +292,6 @@ func writeMark(b *strings.Builder, xoff float64, c [3]int) {
 }
 
 var blankLimits = map[string]Limit{
-	"session": {100, 1},
-	"weekly":  {100, 1},
+	"session": {Pct: 100, TimeLeft: 1},
+	"weekly":  {Pct: 100, TimeLeft: 1},
 }
