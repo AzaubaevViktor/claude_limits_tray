@@ -57,8 +57,18 @@ func (a *App) buildMenu() {
 
 	a.legendParent = systray.AddMenuItem("Legend (the dial)", "")
 	for _, row := range legendRows() {
-		a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "").Disable()
+		it := a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "")
+		it.Disable()
+		a.legendItems = append(a.legendItems, it)
 	}
+
+	a.timeFillParent = systray.AddMenuItem("Time ring: "+timeFillString(), "")
+	a.timeFillRemaining = a.timeFillParent.AddSubMenuItemCheckbox(
+		"Fill = time left", "", timeFill == fillRemaining)
+	a.timeFillElapsed = a.timeFillParent.AddSubMenuItemCheckbox(
+		"Fill = time elapsed", "", timeFill == fillElapsed)
+	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
+	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
 	systray.AddSeparator()
 
 	a.buildWorkMenu()
@@ -130,6 +140,30 @@ func (a *App) afterWorkChange() {
 	a.saveState(true)
 	if a.lastUsage != nil && !a.errorOn {
 		a.apply()
+	}
+}
+
+// setTimeFill switches the inner (time) ring between filling with elapsed and
+// remaining time. The colour is unchanged either way; only the arc differs.
+func (a *App) setTimeFill(m fillMode) {
+	timeFill = m
+	a.timeFillParent.SetTitle("Time ring: " + timeFillString())
+	setCheck(a.timeFillRemaining, timeFill == fillRemaining)
+	setCheck(a.timeFillElapsed, timeFill == fillElapsed)
+	a.renderLegend()
+	a.saveState(true)
+	a.renderIcon()
+	if a.lastUsage != nil && !a.errorOn {
+		a.apply()
+	}
+}
+
+func (a *App) renderLegend() {
+	rows := legendRows()
+	for i, it := range a.legendItems {
+		if i < len(rows) {
+			it.SetTitle(rows[i][0] + ":  " + rows[i][1])
+		}
 	}
 }
 

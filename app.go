@@ -117,6 +117,9 @@ type App struct {
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
 	legendParent                               *systray.MenuItem
+	legendItems                                []*systray.MenuItem
+	timeFillParent                             *systray.MenuItem
+	timeFillRemaining, timeFillElapsed         *systray.MenuItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
 	status, ok, fail                           *systray.MenuItem
@@ -491,10 +494,10 @@ func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
 	if secondaryFc.Pos() > worst.Pos() {
 		worst = secondaryFc
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d",
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
-		iround(worst.Pos()*60))
+		iround(worst.Pos()*60), int(timeFill))
 	return limits, worst.Color(), true, key
 }
 
@@ -716,8 +719,8 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 		"session": {sessPct, sessTf},
 		"weekly":  {weekPct, weekTf},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
-		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60))
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
+		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill))
 	return limits, worst.Color(), true, key
 }
 
@@ -767,6 +770,7 @@ type persistState struct {
 	PollInterval     float64         `json:"poll_interval"`
 	WorkStart        string          `json:"work_start"`
 	WorkEnd          string          `json:"work_end"`
+	TimeFill         string          `json:"time_fill"`
 	SessRate         float64         `json:"sess_rate"`
 	WeekRate         float64         `json:"week_rate"`
 	CodexPrimaryRate float64         `json:"codex_primary_rate"`
@@ -804,6 +808,7 @@ func (a *App) loadState() {
 	if m, ok := parseHHMM(s.WorkEnd); ok {
 		a.workEnd = m
 	}
+	setTimeFillFromString(s.TimeFill)
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
@@ -837,6 +842,7 @@ func (a *App) saveState(force bool) {
 		PollInterval:     a.pollInterval,
 		WorkStart:        fmtHHMM(a.workStart),
 		WorkEnd:          fmtHHMM(a.workEnd),
+		TimeFill:         timeFillString(),
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
 		CodexPrimaryRate: a.codexPrimaryRate,

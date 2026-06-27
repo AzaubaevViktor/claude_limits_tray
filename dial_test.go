@@ -31,6 +31,37 @@ func TestTimeArcGreenerAsLessTimeLeft(t *testing.T) {
 	}
 }
 
+func TestTimeFillTogglesArcNotColour(t *testing.T) {
+	defer func() { timeFill = fillElapsed }()
+	l := Limit{Pct: 0, TimeLeft: 0.3} // 30% of the window left
+
+	timeFill = fillElapsed
+	elapsedLen, elapsedHealth := metricFor("time", l)
+	timeFill = fillRemaining
+	remainingLen, remainingHealth := metricFor("time", l)
+
+	// Arc length flips between elapsed (0.7) and remaining (0.3)...
+	if !nearly(elapsedLen, 0.7) || !nearly(remainingLen, 0.3) {
+		t.Errorf("arc lengths = elapsed %v, remaining %v", elapsedLen, remainingLen)
+	}
+	// ...but the colour (greener as less time is left) is identical.
+	if !nearly(elapsedHealth, remainingHealth) || !nearly(elapsedHealth, 0.7) {
+		t.Errorf("health should match and be 1-tLeft: %v vs %v", elapsedHealth, remainingHealth)
+	}
+}
+
+func TestTimeFillRoundTrips(t *testing.T) {
+	defer func() { timeFill = fillElapsed }()
+	setTimeFillFromString("remaining")
+	if timeFill != fillRemaining || timeFillString() != "remaining" {
+		t.Errorf("remaining did not round-trip: %v", timeFillString())
+	}
+	setTimeFillFromString("elapsed")
+	if timeFill != fillElapsed || timeFillString() != "elapsed" {
+		t.Errorf("elapsed did not round-trip: %v", timeFillString())
+	}
+}
+
 func TestSidesSessionLeftWeeklyRight(t *testing.T) {
 	sides := map[string]string{}
 	for _, s := range segments {

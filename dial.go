@@ -37,26 +37,70 @@ var dialYellow = [3]int{255, 204, 0}
 var dialRed = [3]int{255, 69, 58}
 var dialTrack = [3]int{150, 150, 150}
 
+// timeFill selects how the inner (time) ring fills. The colour is the same
+// either way — greener the less time is left in the window — only the arc
+// length differs. User-toggled from the menu and persisted.
+type fillMode int
+
+const (
+	fillElapsed   fillMode = iota // arc grows as the window elapses (default)
+	fillRemaining                 // arc shrinks as the window elapses
+)
+
+var timeFill = fillElapsed
+
+func timeFillString() string {
+	if timeFill == fillRemaining {
+		return "remaining"
+	}
+	return "elapsed"
+}
+
+func setTimeFillFromString(s string) {
+	switch s {
+	case "remaining":
+		timeFill = fillRemaining
+	case "elapsed":
+		timeFill = fillElapsed
+	}
+}
+
 // SEGMENTS: edit this table; the icon and the legend both follow.
 //
 //	metric         arc length            colour (green plenty -> red low)
 //	percent_left   % of quota remaining  same  (long green arc = lots left)
-//	time_elapsed   time since last reset elapsed (fills + GREENS toward reset:
-//	               the less time left in the window, the greener)
+//	time           time within window    GREENS toward reset (the less time
+//	               left, the greener); the arc fills with elapsed or remaining
+//	               time per the timeFill toggle, but the colour is unchanged
 var segments = []segment{
 	{"outer", "left", "session", "percent_left", true, "Session left"},
-	{"inner", "left", "session", "time_elapsed", false, "Session since reset"},
+	{"inner", "left", "session", "time", false, "Session time"},
 	{"outer", "right", "weekly", "percent_left", true, "Weekly left"},
-	{"inner", "right", "weekly", "time_elapsed", false, "Weekly since reset"},
+	{"inner", "right", "weekly", "time", false, "Weekly time"},
 }
 
 func legendRows() [][2]string {
 	rows := make([][2]string, 0, len(segments)+1)
 	for _, s := range segments {
-		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], s.label})
+		label := s.label
+		if s.metric == "time" {
+			label = timeSegLabel(s.source)
+		}
+		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
 	rows = append(rows, [2]string{"Colour", "green plenty → red low"})
 	return rows
+}
+
+func timeSegLabel(source string) string {
+	name := map[string]string{"session": "Session", "weekly": "Weekly"}[source]
+	if name == "" {
+		name = source
+	}
+	if timeFill == fillRemaining {
+		return name + " time left (fills with time left)"
+	}
+	return name + " since reset (fills with elapsed)"
 }
 
 // metric returns (arc length, health) in 0..1.
@@ -72,6 +116,14 @@ func metricFor(name string, l Limit) (float64, float64) {
 		return tLeft, tLeft
 	case "time_elapsed":
 		return 1 - tLeft, 1 - tLeft
+	case "time":
+		// Colour always greens as the window drains (redder with more time
+		// left); only the arc length follows the fill toggle.
+		health := 1 - tLeft
+		if timeFill == fillRemaining {
+			return tLeft, health
+		}
+		return 1 - tLeft, health
 	}
 	return 0, 0
 }

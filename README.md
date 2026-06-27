@@ -26,8 +26,9 @@ dial has two concentric rings, split left/right:
 ```
 
 - **Percent arcs** (outer) — how much quota is left: green plenty → red low.
-- **Time arcs** (inner) — fill as the window elapses and grow **greener as the
-  reset nears** (fresh quota is coming soon).
+- **Time arcs** (inner) — grow **greener as the reset nears** (fresh quota is
+  coming soon). Pick how they *fill* from **Time ring** in the menu — either by
+  time *elapsed* (default) or by time *left*; the colour is the same either way.
 - **Centre spark** — the burn-rate forecast (the worse of the two windows):
   - 🟣 purple — >10% of quota will still be spare at the reset
   - 🟢 green — you'll finish right around 0% (on track)
