@@ -112,28 +112,28 @@ func (a *App) buildMenu() {
 	}()
 }
 
-// iconSizeChoices are the selectable menu-bar icon heights (points). 16 is the
-// system default; 21 is +30%.
-var iconSizeChoices = []struct {
-	pt    int
-	label string
-}{
-	{16, "16 pt · default"},
-	{18, "18 pt"},
-	{21, "21 pt · +30%"},
-	{24, "24 pt"},
-	{28, "28 pt · huge"},
-}
-
 func (a *App) buildIconSizeMenu() {
 	a.iconSizeParent = systray.AddMenuItem("Icon size", "")
-	for _, c := range iconSizeChoices {
-		pt := c.pt
-		it := a.iconSizeParent.AddSubMenuItemCheckbox(c.label, "", pt == iround(a.iconHeight))
+	for pt := int(minIconHeight); pt <= int(maxIconHeight); pt++ {
+		pt := pt
+		it := a.iconSizeParent.AddSubMenuItemCheckbox(iconSizeLabel(pt), "", pt == iround(a.iconHeight))
 		a.iconSizeItems = append(a.iconSizeItems, hourItem{it, pt})
 		a.onClick(it, func() { a.setIconHeight(float64(pt)) })
 	}
 	a.refreshIconSizeMenu()
+}
+
+// iconSizeLabel annotates the notable heights: 16 is the system default, 21 is
+// the +30% size.
+func iconSizeLabel(pt int) string {
+	switch pt {
+	case 16:
+		return "16 pt · default"
+	case 21:
+		return "21 pt · +30%"
+	default:
+		return fmt.Sprintf("%d pt", pt)
+	}
 }
 
 func (a *App) refreshIconSizeMenu() {
