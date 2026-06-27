@@ -16,7 +16,7 @@ import (
 const (
 	profileEvery   = 60
 	cacheTTL       = 600.0
-	saveEverySecs  = 300.0
+	saveEverySecs  = 3600.0 // steady-state throttle; exit/quit/SIGINT force a flush
 	scopedPoolSize = 4
 
 	// Adaptive polling. The usage endpoint rate-limits well below once-per-30s
@@ -63,6 +63,9 @@ type App struct {
 	rates  *RateTracker
 	cRates *RateTracker
 	calib  *WeeklyCalibrator // learns weekly-% per 5-hour session, for dial blocks
+	// per-model calibrators, keyed by model display name (the "Weekly by model"
+	// rows): each learns weekly-% per session for its own scoped weekly limit.
+	calibByModel map[string]*WeeklyCalibrator
 
 	// runtime state
 	profile          *Profile
@@ -143,6 +146,7 @@ func newApp() *App {
 		rates:        &RateTracker{},
 		cRates:       &RateTracker{},
 		calib:        &WeeklyCalibrator{},
+		calibByModel: map[string]*WeeklyCalibrator{},
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
@@ -317,6 +321,12 @@ func (a *App) onSuccess(r pollResult) {
 		a.sessRate, a.weekRate = s, w
 	}
 	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
+	for _, l := range r.usage.Limits {
+		if l.Kind != "weekly_scoped" || l.Scope == nil {
+			continue
+		}
+		a.modelCalib(scopedModelName(l)).Observe(r.usage.FiveHour.Utilization, l.Percent)
+	}
 	a.lastUsageRaw = r.raw
 	a.lastUsage = r.usage
 	if r.prof != nil {
@@ -650,6 +660,41 @@ func (a *App) renderProfile() {
 	a.claudeParent.SetTitle("Claude · " + plan)
 }
 
+// scopedModelName is the display name for a weekly_scoped limit (its calibrator
+// key), falling back to "model" when the scope carries no name.
+func scopedModelName(l ScopedLimit) string {
+	if l.Scope != nil && l.Scope.Model != nil && l.Scope.Model.DisplayName != "" {
+		return l.Scope.Model.DisplayName
+	}
+	return "model"
+}
+
+// modelCalib returns the calibrator for a model, creating it on first sight.
+func (a *App) modelCalib(name string) *WeeklyCalibrator {
+	c := a.calibByModel[name]
+	if c == nil {
+		c = &WeeklyCalibrator{}
+		a.calibByModel[name] = c
+	}
+	return c
+}
+
+// modelBlockText is the per-model calibration suffix: how much weekly the
+// model's full 5-hour session costs, and the Δsession % basis it was measured
+// from (or "(default)" until a real spend lands).
+func (a *App) modelBlockText(name string) string {
+	c := a.calibByModel[name]
+	if c == nil {
+		return fmt.Sprintf("  ·  5h-block ≈ %.0f%%/wk (default)", defaultBlockPct)
+	}
+	bp, measured := c.BlockPct()
+	if !measured {
+		return fmt.Sprintf("  ·  5h-block ≈ %.0f%%/wk (default)", bp)
+	}
+	ds, _ := c.Snapshot()
+	return fmt.Sprintf("  ·  5h-block ≈ %.1f%%/wk (basis %.0f%% sess)", bp, ds)
+}
+
 func (a *App) renderScoped(limits []ScopedLimit) {
 	shown := 0
 	for _, l := range limits {
@@ -662,14 +707,11 @@ func (a *App) renderScoped(limits []ScopedLimit) {
 		if shown >= len(a.scoped) {
 			break
 		}
-		model := "model"
-		if l.Scope.Model != nil && l.Scope.Model.DisplayName != "" {
-			model = l.Scope.Model.DisplayName
-		}
+		model := scopedModelName(l)
 		left, known := secondsUntil(l.ResetsAt)
 		it := a.scoped[shown]
-		it.SetTitle(fmt.Sprintf("%s:  %.0f%% left · %s", model, 100-l.Percent,
-			fmtRemaining(left, known)))
+		it.SetTitle(fmt.Sprintf("%s:  %.0f%% left · %s%s", model, 100-l.Percent,
+			fmtRemaining(left, known), a.modelBlockText(model)))
 		it.Show()
 		shown++
 	}
@@ -743,27 +785,27 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 }
 
 // weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the
-// dial's separators stay countable (<= maxWeekTicks). 0 until the calibrator has
-// seen a real spend — no separators are drawn before then.
+// dial's separators stay countable (<= maxWeekTicks). It always returns a usable
+// value — the default seed before measurement — so separators show from the
+// first paint and only get refined.
 func (a *App) weeklyBlockPct() float64 {
-	bp, ok := a.calib.BlockPct()
-	if !ok {
-		return 0
-	}
+	bp, _ := a.calib.BlockPct()
 	return math.Max(bp, 100.0/maxWeekTicks)
 }
 
 // weekBlocksText summarises the weekly limit in 5-hour-session blocks for the
 // menu, using the un-clamped estimate (the text isn't size-limited like the
-// dial). weekPct is the weekly % already used.
+// dial). weekPct is the weekly % already used; a "(default)" tag flags the
+// un-measured seed.
 func (a *App) weekBlocksText(weekPct float64) string {
-	bp, ok := a.calib.BlockPct()
-	if !ok {
-		return "5h blocks: calibrating…"
-	}
+	bp, measured := a.calib.BlockPct()
 	total := 100.0 / bp
 	left := math.Max(0, 100-weekPct) / bp
-	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk)", left, total, bp)
+	tag := ""
+	if !measured {
+		tag = " (default)"
+	}
+	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk%s)", left, total, bp, tag)
 }
 
 func (a *App) showError(msg string) {
@@ -807,24 +849,32 @@ func (a *App) updateStatus() {
 // --- persistence ------------------------------------------------------------
 
 type persistState struct {
-	LastOk           *float64        `json:"last_ok"`
-	NextAllowed      float64         `json:"next_allowed"`
-	PollInterval     float64         `json:"poll_interval"`
-	WorkStart        string          `json:"work_start"`
-	WorkEnd          string          `json:"work_end"`
-	TimeFill         string          `json:"time_fill"`
-	IconHeight       float64         `json:"icon_height"`
-	SessRate         float64         `json:"sess_rate"`
-	WeekRate         float64         `json:"week_rate"`
-	CalibDs          float64         `json:"calib_ds"` // largest session-spend sample (%)
-	CalibDw          float64         `json:"calib_dw"` // matching weekly spend (%)
-	CodexPrimaryRate float64         `json:"codex_primary_rate"`
-	CodexSecondRate  float64         `json:"codex_secondary_rate"`
-	CodexRefresh     string          `json:"codex_refresh_token"`
-	ClaudeRefresh    string          `json:"claude_refresh_token"`
-	Usage            json.RawMessage `json:"usage"`
-	Profile          json.RawMessage `json:"profile"`
-	CodexUsage       json.RawMessage `json:"codex_usage"`
+	LastOk       *float64 `json:"last_ok"`
+	NextAllowed  float64  `json:"next_allowed"`
+	PollInterval float64  `json:"poll_interval"`
+	WorkStart    string   `json:"work_start"`
+	WorkEnd      string   `json:"work_end"`
+	TimeFill     string   `json:"time_fill"`
+	IconHeight   float64  `json:"icon_height"`
+	SessRate     float64  `json:"sess_rate"`
+	WeekRate     float64  `json:"week_rate"`
+	CalibDs      float64  `json:"calib_ds"` // largest session-spend sample (%)
+	CalibDw      float64  `json:"calib_dw"` // matching weekly spend (%)
+	// per-model best samples, keyed by model display name
+	CalibModels      map[string]calibSample `json:"calib_models,omitempty"`
+	CodexPrimaryRate float64                `json:"codex_primary_rate"`
+	CodexSecondRate  float64                `json:"codex_secondary_rate"`
+	CodexRefresh     string                 `json:"codex_refresh_token"`
+	ClaudeRefresh    string                 `json:"claude_refresh_token"`
+	Usage            json.RawMessage        `json:"usage"`
+	Profile          json.RawMessage        `json:"profile"`
+	CodexUsage       json.RawMessage        `json:"codex_usage"`
+}
+
+// calibSample is one persisted largest-spend calibration sample.
+type calibSample struct {
+	Ds float64 `json:"ds"`
+	Dw float64 `json:"dw"`
 }
 
 func (a *App) loadState() {
@@ -862,6 +912,11 @@ func (a *App) loadState() {
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
 	a.calib.Restore(s.CalibDs, s.CalibDw)
+	for name, cs := range s.CalibModels {
+		c := &WeeklyCalibrator{}
+		c.Restore(cs.Ds, cs.Dw)
+		a.calibByModel[name] = c
+	}
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	a.codex.LoadRefresh(s.CodexRefresh)
 	a.client.LoadRefresh(s.ClaudeRefresh)
@@ -887,6 +942,15 @@ func (a *App) saveState(force bool) {
 	}
 	a.lastSave = time.Now()
 	calibDs, calibDw := a.calib.Snapshot()
+	var calibModels map[string]calibSample
+	for name, c := range a.calibByModel {
+		if ds, dw := c.Snapshot(); ds > 0 && dw > 0 {
+			if calibModels == nil {
+				calibModels = map[string]calibSample{}
+			}
+			calibModels[name] = calibSample{Ds: ds, Dw: dw}
+		}
+	}
 	s := persistState{
 		NextAllowed:      a.nextAllowedEpoch,
 		PollInterval:     a.pollInterval,
@@ -898,6 +962,7 @@ func (a *App) saveState(force bool) {
 		WeekRate:         a.weekRate,
 		CalibDs:          calibDs,
 		CalibDw:          calibDw,
+		CalibModels:      calibModels,
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,
 		CodexRefresh:     a.codex.RefreshToken(),
