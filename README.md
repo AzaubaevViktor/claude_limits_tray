@@ -46,7 +46,7 @@ Click it for everything as numbers, plus your account.
   (so the weekly burn reflects ~9h workdays, not 24h of wall-clock).
 - Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
   past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
-- Adjustable **icon size** (16–28 pt, default 21) and **Time ring** fill
+- Adjustable **icon size** (14–24 pt, default 19) and **Time ring** fill
   direction — both picked from the dropdown and saved to disk.
 - Consumption **speed** two ways — the **last 5 minutes** and the **average
   since the window opened** — with session in **%/h** and weekly in **%/d**,

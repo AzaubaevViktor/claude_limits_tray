@@ -235,9 +235,9 @@ void runInMainThread(SEL method, id object) {
                   waitUntilDone: YES];
 }
 
-// Menu-bar icon height in points; user-adjustable via setIconHeight. 21 ≈ 16 ×
-// 1.3 (a 30% bigger dial) is the default.
-static CGFloat gIconHeight = 21;
+// Menu-bar icon height in points; user-adjustable via setIconHeight. The Go
+// side sets it on launch; 19 is the default.
+static CGFloat gIconHeight = 19;
 
 void setIconHeight(double h) {
   if (h > 0) {

@@ -28,10 +28,10 @@ const (
 	pollGrowth        = 1.5   // multiply on 429, divide after a success streak
 	okStreakToSpeedUp = 3     // clean successes before we poll faster again
 
-	// Menu-bar icon height (points). 16 is the system default; 21 ≈ +30%.
-	defaultIconHeight = 21.0
+	// Menu-bar icon height (points). Default 19, adjustable ±5.
+	defaultIconHeight = 19.0
 	minIconHeight     = 14.0
-	maxIconHeight     = 32.0
+	maxIconHeight     = 24.0
 )
 
 var planNames = map[string]string{

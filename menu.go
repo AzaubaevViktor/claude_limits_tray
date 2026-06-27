@@ -123,17 +123,12 @@ func (a *App) buildIconSizeMenu() {
 	a.refreshIconSizeMenu()
 }
 
-// iconSizeLabel annotates the notable heights: 16 is the system default, 21 is
-// the +30% size.
+// iconSizeLabel marks the default height.
 func iconSizeLabel(pt int) string {
-	switch pt {
-	case 16:
-		return "16 pt · default"
-	case 21:
-		return "21 pt · +30%"
-	default:
-		return fmt.Sprintf("%d pt", pt)
+	if pt == int(defaultIconHeight) {
+		return fmt.Sprintf("%d pt · default", pt)
 	}
+	return fmt.Sprintf("%d pt", pt)
 }
 
 func (a *App) refreshIconSizeMenu() {
