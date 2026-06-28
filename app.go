@@ -681,15 +681,15 @@ func (a *App) modelCalib(name string) *WeeklyCalibrator {
 
 // modelBlockText is the per-model calibration suffix: how much weekly the
 // model's full 5-hour session costs, and the Δsession % basis it was measured
-// from (or "(default)" until a real spend lands).
+// from. Empty until a real spend lands — no synthetic default.
 func (a *App) modelBlockText(name string) string {
 	c := a.calibByModel[name]
 	if c == nil {
-		return fmt.Sprintf("  ·  5h-block ≈ %.0f%%/wk (default)", defaultBlockPct)
+		return ""
 	}
 	bp, measured := c.BlockPct()
 	if !measured {
-		return fmt.Sprintf("  ·  5h-block ≈ %.0f%%/wk (default)", bp)
+		return ""
 	}
 	ds, _ := c.Snapshot()
 	return fmt.Sprintf("  ·  5h-block ≈ %.1f%%/wk (basis %.0f%% sess)", bp, ds)
@@ -785,27 +785,27 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 }
 
 // weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the
-// dial's separators stay countable (<= maxWeekTicks). It always returns a usable
-// value — the default seed before measurement — so separators show from the
-// first paint and only get refined.
+// dial's separators stay countable (<= maxWeekTicks). 0 until a real spend is
+// measured — no separators are drawn before then.
 func (a *App) weeklyBlockPct() float64 {
-	bp, _ := a.calib.BlockPct()
+	bp, ok := a.calib.BlockPct()
+	if !ok {
+		return 0
+	}
 	return math.Max(bp, 100.0/maxWeekTicks)
 }
 
 // weekBlocksText summarises the weekly limit in 5-hour-session blocks for the
 // menu, using the un-clamped estimate (the text isn't size-limited like the
-// dial). weekPct is the weekly % already used; a "(default)" tag flags the
-// un-measured seed.
+// dial). weekPct is the weekly % already used.
 func (a *App) weekBlocksText(weekPct float64) string {
-	bp, measured := a.calib.BlockPct()
+	bp, ok := a.calib.BlockPct()
+	if !ok {
+		return "5h blocks: calibrating…"
+	}
 	total := 100.0 / bp
 	left := math.Max(0, 100-weekPct) / bp
-	tag := ""
-	if !measured {
-		tag = " (default)"
-	}
-	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk%s)", left, total, bp, tag)
+	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk)", left, total, bp)
 }
 
 func (a *App) showError(msg string) {

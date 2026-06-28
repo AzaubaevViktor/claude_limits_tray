@@ -6,34 +6,34 @@ import (
 	"testing"
 )
 
-// Task 3: the default seed drives the dial and menu before any measurement.
-func TestDefaultBlockShownBeforeCalibration(t *testing.T) {
+// Task 9: no synthetic default — nothing is shown until a real spend is measured.
+func TestNoBlockBeforeCalibration(t *testing.T) {
 	a := newApp()
 	a.statePath = filepath.Join(t.TempDir(), "state.json")
 	a.calib = &WeeklyCalibrator{}
 	a.calibByModel = map[string]*WeeklyCalibrator{}
 
-	if bp := a.weeklyBlockPct(); !near(bp, defaultBlockPct, 0.001) {
-		t.Fatalf("default block want %v, got %v", defaultBlockPct, bp)
+	if bp := a.weeklyBlockPct(); bp != 0 {
+		t.Fatalf("uncalibrated block should be 0, got %v", bp)
 	}
-	if txt := a.weekBlocksText(0); !strings.Contains(txt, "(default)") {
-		t.Fatalf("want default tag in menu text, got %q", txt)
+	if txt := a.weekBlocksText(0); !strings.Contains(txt, "calibrating") {
+		t.Fatalf("want calibrating placeholder, got %q", txt)
 	}
-	// The dial carries separators straight away (BlockPct > 0).
+	// The dial draws no separators until measured (BlockPct == 0).
 	a.lastUsage = &Usage{FiveHour: Window{Utilization: 20}, SevenDay: Window{Utilization: 30}}
 	limits, _, ok, _ := a.claudeDial()
-	if !ok || limits["weekly"].BlockPct <= 0 {
-		t.Fatalf("default should draw separators, BlockPct=%v ok=%v", limits["weekly"].BlockPct, ok)
+	if !ok || limits["weekly"].BlockPct != 0 {
+		t.Fatalf("uncalibrated should draw no separators, BlockPct=%v ok=%v", limits["weekly"].BlockPct, ok)
 	}
 }
 
-// Task 1: per-model rows show the ratio and its Δsession basis once measured.
+// Task 1+9: per-model rows are empty until measured, then show ratio + basis.
 func TestModelCalibrationText(t *testing.T) {
 	a := newApp()
 	a.calibByModel = map[string]*WeeklyCalibrator{}
 
-	if got := a.modelBlockText("Opus"); !strings.Contains(got, "default") {
-		t.Fatalf("unmeasured model should show default, got %q", got)
+	if got := a.modelBlockText("Opus"); got != "" {
+		t.Fatalf("unmeasured model should show nothing, got %q", got)
 	}
 	c := a.modelCalib("Opus")
 	c.Observe(0, 0)

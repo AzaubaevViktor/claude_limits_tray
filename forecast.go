@@ -118,14 +118,8 @@ type WeeklyCalibrator struct {
 }
 
 // calibMinDs is the smallest session jump (in %) we trust as a calibration
-// sample; below it Δw is mostly rounding noise. defaultBlockPct is the seed
-// price (weekly % per full 5-hour session) shown before anything is measured —
-// ~10 blocks per week — so the dial has separators from the first paint and
-// real spends only refine it.
-const (
-	calibMinDs      = 1.0
-	defaultBlockPct = 10.0
-)
+// sample; below it Δw is mostly rounding noise.
+const calibMinDs = 1.0
 
 // Observe feeds the latest poll's session/weekly utilisation (both 0..100). A
 // window reset (either counter dropping) is skipped — the next poll re-seeds
@@ -147,11 +141,12 @@ func (c *WeeklyCalibrator) Observe(sess, week float64) {
 }
 
 // BlockPct is the weekly % consumed by one full 5-hour session, and whether it
-// was measured. Before any sample lands it returns defaultBlockPct with
-// measured=false, so callers always have a usable price to show.
+// has been measured. There is no synthetic default: until a real spend lands it
+// returns (0, false) and callers draw nothing — the value is only ever computed
+// from observed consumption.
 func (c *WeeklyCalibrator) BlockPct() (float64, bool) {
 	if c.bestDs <= 0 || c.bestDw <= 0 {
-		return defaultBlockPct, false
+		return 0, false
 	}
 	return clamp(c.bestDw/c.bestDs*100, 0, 100), true
 }
