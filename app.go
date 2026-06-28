@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -330,7 +331,11 @@ func (a *App) onSuccess(r pollResult) {
 		if l.Kind != "weekly_scoped" || l.Scope == nil {
 			continue
 		}
-		a.modelCalib(scopedModelName(l)).Observe(r.usage.FiveHour.Utilization, l.Percent)
+		name := scopedModelName(l)
+		if skipCalibModel(name) {
+			continue
+		}
+		a.modelCalib(name).Observe(r.usage.FiveHour.Utilization, l.Percent)
 	}
 	a.lastUsageRaw = r.raw
 	a.lastUsage = r.usage
@@ -665,6 +670,13 @@ func (a *App) renderProfile() {
 	a.claudeParent.SetTitle("Claude · " + plan)
 }
 
+// skipCalibModel reports models we deliberately don't compute a 5h-block
+// coefficient for. Sonnet has its own large scoped weekly that doesn't track the
+// 5-hour session meaningfully, so there's nothing useful to calibrate there.
+func skipCalibModel(name string) bool {
+	return strings.Contains(strings.ToLower(name), "sonnet")
+}
+
 // scopedModelName is the display name for a weekly_scoped limit (its calibrator
 // key), falling back to "model" when the scope carries no name.
 func scopedModelName(l ScopedLimit) string {
@@ -688,6 +700,9 @@ func (a *App) modelCalib(name string) *WeeklyCalibrator {
 // model's full 5-hour session costs, and the Δsession % basis it was measured
 // from. Empty until a real spend lands — no synthetic default.
 func (a *App) modelBlockText(name string) string {
+	if skipCalibModel(name) {
+		return ""
+	}
 	c := a.calibByModel[name]
 	if c == nil {
 		return ""

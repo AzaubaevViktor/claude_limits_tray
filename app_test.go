@@ -80,6 +80,24 @@ func TestDynIconPersist(t *testing.T) {
 	}
 }
 
+// Task 13: Sonnet is never given a 5h-block coefficient.
+func TestSonnetSkippedFromCalibration(t *testing.T) {
+	if !skipCalibModel("Sonnet") || !skipCalibModel("Claude Sonnet 4.6") {
+		t.Fatal("Sonnet should be skipped")
+	}
+	if skipCalibModel("Claude Opus 4.8") {
+		t.Fatal("Opus should be calibrated")
+	}
+	a := newApp()
+	a.calibByModel = map[string]*WeeklyCalibrator{}
+	c := a.modelCalib("Sonnet")
+	c.Observe(0, 0)
+	c.Observe(20, 2)
+	if got := a.modelBlockText("Sonnet"); got != "" {
+		t.Fatalf("Sonnet should show no coefficient, got %q", got)
+	}
+}
+
 // Task 5: the steady-state throttle is at least hourly (exit/quit/SIGINT force a
 // flush via saveState(true), verified in signalLoop/onExit/the Quit handler).
 func TestSaveThrottleAtLeastHourly(t *testing.T) {
