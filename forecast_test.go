@@ -103,41 +103,52 @@ func TestRateTracker(t *testing.T) {
 	}
 }
 
-func TestWeeklyCalibratorLargestSpendWins(t *testing.T) {
+func TestWeeklyCalibratorCumulativeBasis(t *testing.T) {
 	var c WeeklyCalibrator
 	if _, ok := c.BlockPct(); ok {
 		t.Fatal("uncalibrated should report not-ok")
 	}
-	c.Observe(0, 0)   // seed prev
-	c.Observe(2, 0.4) // Δs=2, Δw=0.4  -> k=0.20 -> 20%/session
+	c.Observe(0, 0)   // baseline at the window open
+	c.Observe(3, 0.6) // span Δs=3 < calibMinDs -> the noisy small-basis case, skip
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("a small basis must not calibrate")
+	}
+	// Across a whole session the span is large: Δs=20, Δw=2 -> 10%/session.
+	c.Observe(20, 2)
 	bp, ok := c.BlockPct()
-	if !ok || !near(bp, 20, 0.001) {
-		t.Fatalf("after small spend want 20%%, got %v ok=%v", bp, ok)
+	if !ok || !near(bp, 10, 1e-9) {
+		t.Fatalf("want 10%%/session, got %v ok=%v", bp, ok)
 	}
-	// A bigger spend with a different ratio must replace the estimate.
-	c.Observe(12, 1.4) // Δs=10, Δw=1.0 -> k=0.10 -> 10%/session
-	bp, _ = c.BlockPct()
-	if !near(bp, 10, 0.001) {
-		t.Fatalf("largest spend should win: want 10%%, got %v", bp)
-	}
-	// A later smaller spend must NOT override the largest-spend estimate.
-	c.Observe(15, 2.0) // Δs=3, Δw=0.6 -> k=0.20, but Δs<10 so ignored
-	bp, _ = c.BlockPct()
-	if !near(bp, 10, 0.001) {
-		t.Fatalf("smaller spend should not override: want 10%%, got %v", bp)
+	if ds, _ := c.Snapshot(); !near(ds, 20, 1e-9) {
+		t.Fatalf("basis should be the 20%% span, got %v", ds)
 	}
 }
 
-func TestWeeklyCalibratorSkipsResetsAndNoise(t *testing.T) {
+func TestWeeklyCalibratorRebaselinesOnReset(t *testing.T) {
 	var c WeeklyCalibrator
-	c.Observe(80, 50)
-	c.Observe(5, 50) // session reset (Δs<0) -> skip
-	if _, ok := c.BlockPct(); ok {
-		t.Fatal("a reset must not register a sample")
+	c.Observe(10, 5)
+	c.Observe(60, 10) // span Δs=50, Δw=5 -> 10%/session
+	if bp, _ := c.BlockPct(); !near(bp, 10, 1e-9) {
+		t.Fatalf("want 10%%, got %v", bp)
 	}
-	c.Observe(5.5, 50) // Δs=0.5 < calibMinDs -> noise, skip
+	// Session resets (drops) -> re-baseline; a small new span must not override
+	// the larger-basis sample from the previous window.
+	c.Observe(2, 10)
+	c.Observe(13, 10.4) // span Δs=11, Δw=0.4 -> ~3.6%, but basis 11 < 50 -> kept
+	if bp, _ := c.BlockPct(); !near(bp, 10, 1e-9) {
+		t.Fatalf("largest-basis sample should persist, got %v", bp)
+	}
+}
+
+func TestCalibRestoreDropsTinyBasis(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Restore(4, 1) // the old noisy 25%/session sample (basis 4 < floor)
 	if _, ok := c.BlockPct(); ok {
-		t.Fatal("sub-threshold jump must not register a sample")
+		t.Fatal("stale sub-threshold sample should be dropped on restore")
+	}
+	c.Restore(20, 2) // a solid large-basis sample is kept
+	if bp, ok := c.BlockPct(); !ok || !near(bp, 10, 1e-9) {
+		t.Fatalf("solid sample should restore, got %v ok=%v", bp, ok)
 	}
 }
 

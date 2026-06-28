@@ -114,7 +114,7 @@ func TestPersistCalibRoundTrip(t *testing.T) {
 	a.statePath = path
 	a.calib = &WeeklyCalibrator{}
 	a.calibByModel = map[string]*WeeklyCalibrator{}
-	a.calib.Restore(8, 1)               // global k=0.125 -> 12.5%/session
+	a.calib.Restore(16, 2)              // global k=0.125 -> 12.5%/session
 	a.modelCalib("Opus").Restore(10, 2) // 20%/session
 	a.saveState(true)
 

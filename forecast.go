@@ -105,37 +105,37 @@ func (f Forecast) Text() string {
 // WeeklyCalibrator learns how many weekly-% one 1% of the 5-hour session costs,
 // so the weekly dial can be sliced into "one full 5-hour session" blocks.
 //
-// Between two polls the session climbs by Δs (% of the 5-hour quota) and the
-// week climbs by Δw (% of the weekly quota); their ratio k = Δw/Δs is the price,
-// in weekly-%, of 1% of a session. A full session (100% of the 5-hour limit)
-// therefore costs k*100 weekly %. We keep the single largest-spend sample (the
-// biggest Δs with Δw>0): a big jump carries the least quantisation noise, so it
-// is the most trustworthy estimate, and it only sharpens as bigger spends land.
+// The measurement accumulates from a baseline taken at each window reset, NOT
+// from poll-to-poll deltas: across a whole 5-hour window the session may climb
+// 0→60% while the week climbs a few %, and Δweek/Δsession over that large span
+// is robust. Tiny per-poll deltas are dominated by the 1% rounding of the
+// utilisation figures (e.g. Δs=4, Δw=1 reads as 25%/session when the truth is
+// ~10%), which is exactly the noise we avoid. We keep the largest-basis sample
+// (biggest Δsession with Δweek>0) and it only sharpens as a window runs longer.
 type WeeklyCalibrator struct {
-	havePrev           bool
-	prevSess, prevWeek float64
-	bestDs, bestDw     float64 // the largest-spend sample kept so far
+	haveBase           bool
+	baseSess, baseWeek float64
+	bestDs, bestDw     float64 // the largest-basis sample kept so far
 }
 
-// calibMinDs is the smallest session jump (in %) we trust as a calibration
-// sample; below it Δw is mostly rounding noise.
-const calibMinDs = 1.0
+// calibMinDs is the smallest session span (in %, since the window opened) we
+// trust as a calibration sample; below it Δweek is mostly 1% rounding noise.
+const calibMinDs = 10.0
 
-// Observe feeds the latest poll's session/weekly utilisation (both 0..100). A
-// window reset (either counter dropping) is skipped — the next poll re-seeds
-// prev. The best sample survives resets: the price is a property of usage, not
-// of the window.
+// Observe feeds the latest poll's session/weekly utilisation (both 0..100). On
+// the first call, or whenever either counter drops (a window reset), it re-takes
+// the baseline. Otherwise it samples the span since the baseline. The best
+// sample survives resets: the price is a property of usage, not of the window.
 func (c *WeeklyCalibrator) Observe(sess, week float64) {
-	prevS, prevW, had := c.prevSess, c.prevWeek, c.havePrev
-	c.prevSess, c.prevWeek, c.havePrev = sess, week, true
-	if !had {
+	if !c.haveBase || sess < c.baseSess || week < c.baseWeek {
+		c.baseSess, c.baseWeek, c.haveBase = sess, week, true
 		return
 	}
-	ds, dw := sess-prevS, week-prevW
-	if ds < calibMinDs || dw <= 0 { // a reset, idle, or too small to trust
+	ds, dw := sess-c.baseSess, week-c.baseWeek
+	if ds < calibMinDs || dw <= 0 { // not enough span yet, or no weekly movement
 		return
 	}
-	if ds > c.bestDs { // largest spend wins — least quantisation noise
+	if ds > c.bestDs { // largest basis wins — least quantisation noise
 		c.bestDs, c.bestDw = ds, dw
 	}
 }
@@ -152,9 +152,11 @@ func (c *WeeklyCalibrator) BlockPct() (float64, bool) {
 }
 
 // Snapshot/Restore persist the best sample across restarts (in the config file).
+// Restore drops a sample whose basis is below the trust floor — this also clears
+// stale tiny-basis values written by older noisier builds.
 func (c *WeeklyCalibrator) Snapshot() (float64, float64) { return c.bestDs, c.bestDw }
 func (c *WeeklyCalibrator) Restore(ds, dw float64) {
-	if ds > 0 && dw > 0 {
+	if ds >= calibMinDs && dw > 0 {
 		c.bestDs, c.bestDw = ds, dw
 	}
 }
