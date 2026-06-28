@@ -44,6 +44,30 @@ func TestModelCalibrationText(t *testing.T) {
 	}
 }
 
+// Task 7: the auto-size opt-out persists; absent => on (dynIconOff false).
+func TestDynIconPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	a := newApp()
+	a.statePath = path
+	a.dynIconOff = true
+	a.saveState(true)
+
+	b := newApp()
+	b.statePath = path
+	b.dynIconOff = false
+	b.loadState()
+	if !b.dynIconOff {
+		t.Fatal("dynIconOff should persist as true")
+	}
+
+	c := newApp()
+	c.statePath = filepath.Join(t.TempDir(), "none.json")
+	c.loadState()
+	if c.dynIconOff {
+		t.Fatal("fresh install should default to auto-size ON (dynIconOff false)")
+	}
+}
+
 // Task 5: the steady-state throttle is at least hourly (exit/quit/SIGINT force a
 // flush via saveState(true), verified in signalLoop/onExit/the Quit handler).
 func TestSaveThrottleAtLeastHourly(t *testing.T) {

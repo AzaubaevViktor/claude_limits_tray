@@ -88,8 +88,12 @@ type App struct {
 	results          chan pollResult
 	iconKey          string
 
-	// menu-bar icon height in points (user-adjustable, persisted)
-	iconHeight float64
+	// menu-bar icon height in points (manual setting, persisted). dynIconOff
+	// disables the burn-driven auto-size (which is on by default — opt-out);
+	// appliedIconHeight is the height currently pushed to systray.
+	iconHeight        float64
+	dynIconOff        bool
+	appliedIconHeight float64
 
 	// working hours (local minutes from midnight) and last data
 	workStart    int
@@ -134,6 +138,7 @@ type App struct {
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
+	dynIconItem                                *systray.MenuItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
 	status, ok, fail                           *systray.MenuItem
@@ -172,7 +177,7 @@ func defaultStatePath() string {
 func (a *App) onReady() {
 	systray.SetTitle("…")
 	systray.SetTooltip("Claude and Codex limits")
-	systray.SetIconHeight(a.iconHeight)
+	a.applyIconHeight()
 	a.buildMenu()
 	if a.lastUsage != nil {
 		a.apply()
@@ -820,6 +825,7 @@ func (a *App) showError(msg string) {
 }
 
 func (a *App) updateStatus() {
+	a.applyIconHeight() // track the burn-driven size; shrinks back when idle
 	a.ok.SetTitle("✓ Last success: " + agoOf(a.lastOk))
 	a.fail.SetTitle("✗ Last failure: " + agoOf(a.lastFail))
 	if a.inflight {
@@ -856,6 +862,7 @@ type persistState struct {
 	WorkEnd      string   `json:"work_end"`
 	TimeFill     string   `json:"time_fill"`
 	IconHeight   float64  `json:"icon_height"`
+	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
 	SessRate     float64  `json:"sess_rate"`
 	WeekRate     float64  `json:"week_rate"`
 	CalibDs      float64  `json:"calib_ds"` // largest session-spend sample (%)
@@ -907,6 +914,7 @@ func (a *App) loadState() {
 	if s.IconHeight >= minIconHeight && s.IconHeight <= maxIconHeight {
 		a.iconHeight = s.IconHeight
 	}
+	a.dynIconOff = s.DynIconOff
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
@@ -958,6 +966,7 @@ func (a *App) saveState(force bool) {
 		WorkEnd:          fmtHHMM(a.workEnd),
 		TimeFill:         timeFillString(),
 		IconHeight:       a.iconHeight,
+		DynIconOff:       a.dynIconOff,
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
 		CalibDs:          calibDs,

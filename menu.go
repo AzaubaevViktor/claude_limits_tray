@@ -114,6 +114,9 @@ func (a *App) buildMenu() {
 
 func (a *App) buildIconSizeMenu() {
 	a.iconSizeParent = systray.AddMenuItem("Icon size", "")
+	a.dynIconItem = a.iconSizeParent.AddSubMenuItemCheckbox(
+		fmt.Sprintf("Grow while burning (%d→%d pt)", int(dynIconMin), int(dynIconMax)), "", !a.dynIconOff)
+	a.onClick(a.dynIconItem, func() { a.setDynIcon(a.dynIconOff) })
 	for pt := int(minIconHeight); pt <= int(maxIconHeight); pt++ {
 		pt := pt
 		it := a.iconSizeParent.AddSubMenuItemCheckbox(iconSizeLabel(pt), "", pt == iround(a.iconHeight))
@@ -132,18 +135,37 @@ func iconSizeLabel(pt int) string {
 }
 
 func (a *App) refreshIconSizeMenu() {
-	a.iconSizeParent.SetTitle(fmt.Sprintf("Icon size: %d pt", iround(a.iconHeight)))
+	if a.dynIconOff {
+		a.iconSizeParent.SetTitle(fmt.Sprintf("Icon size: %d pt", iround(a.iconHeight)))
+	} else {
+		a.iconSizeParent.SetTitle(fmt.Sprintf("Icon size: auto %d–%d pt", int(dynIconMin), int(dynIconMax)))
+	}
+	if a.dynIconItem != nil {
+		setCheck(a.dynIconItem, !a.dynIconOff)
+	}
 	for _, hi := range a.iconSizeItems {
 		setCheck(hi.item, hi.min == iround(a.iconHeight))
 	}
 }
 
-// setIconHeight changes the menu-bar icon height and repaints immediately.
+// setIconHeight changes the manual menu-bar icon height. When auto-size is on
+// the change is stored but only takes visible effect once auto-size is turned
+// off; applyIconHeight decides what actually reaches systray.
 func (a *App) setIconHeight(h float64) {
 	a.iconHeight = h
-	systray.SetIconHeight(h)
 	a.refreshIconSizeMenu()
 	a.iconKey = "" // force a repaint — the SVG is unchanged, only its scale
+	a.applyIconHeight()
+	a.renderIcon()
+	a.saveState(true)
+}
+
+// setDynIcon toggles the burn-driven auto-size (opt-out; on by default).
+func (a *App) setDynIcon(on bool) {
+	a.dynIconOff = !on
+	a.refreshIconSizeMenu()
+	a.iconKey = "" // force a repaint at the new scale
+	a.applyIconHeight()
 	a.renderIcon()
 	a.saveState(true)
 }
