@@ -26,9 +26,16 @@ dial has two concentric rings, split left/right:
 ```
 
 - **Percent arcs** (outer) — how much quota is left: green plenty → red low.
+- **Weekly notches** (outer right) — thin separators slice the weekly arc into
+  **"one full 5-hour session" blocks**, so the notches still lit tell you *how
+  many more whole sessions* of weekly budget you have. The block size is
+  **measured from your own spending** (no synthetic default) — until a real spend
+  lands the menu reads "calibrating…".
 - **Time arcs** (inner) — grow **greener as the reset nears** (fresh quota is
   coming soon). Pick how they *fill* from **Time ring** in the menu — either by
   time *elapsed* (default) or by time *left*; the colour is the same either way.
+  Fixed tick marks split each time ring into known units — the **session by
+  hours**, the **weekly by days**.
 - **Centre spark** — the burn-rate forecast (the worse of the two windows):
   - 🟣 purple — >10% of quota will still be spare at the reset
   - 🟢 green — you'll finish right around 0% (on track)
@@ -46,8 +53,15 @@ Click it for everything as numbers, plus your account.
   (so the weekly burn reflects ~9h workdays, not 24h of wall-clock).
 - Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
   past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
-- Adjustable **icon size** (14–24 pt, default 19) and **Time ring** fill
-  direction — both picked from the dropdown and saved to disk.
+- **Burn-driven icon size** — the menu-bar icon **grows while tokens are
+  actively burning** (18→24 pt, scored per window so a fast weekly burn and a
+  fast 5h burn count equally) and shrinks back when idle. On by default; turn it
+  off to pin a fixed **icon size** (14–24 pt, default 19). Both this toggle and
+  the **Time ring** fill direction are picked from the dropdown and saved to disk.
+- **Weekly limit in 5-hour-session blocks** — the dropdown spells out the dial's
+  notches as "≈ N / M × 5h blocks left", with the calibrated cost of one block
+  (weekly-% per session) and the spend basis it was measured from, globally and
+  **per model**.
 - Consumption **speed** two ways — the **last 5 minutes** and the **average
   since the window opened** — with session in **%/h** and weekly in **%/d**,
   each with the **spare left at reset** if that pace holds.
