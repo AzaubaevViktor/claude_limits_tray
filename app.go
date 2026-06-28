@@ -810,7 +810,9 @@ func (a *App) weekBlocksText(weekPct float64) string {
 	}
 	total := 100.0 / bp
 	left := math.Max(0, 100-weekPct) / bp
-	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk)", left, total, bp)
+	ds, _ := a.calib.Snapshot()
+	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk, basis %.0f%% sess)",
+		left, total, bp, ds)
 }
 
 func (a *App) showError(msg string) {

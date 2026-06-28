@@ -27,6 +27,18 @@ func TestNoBlockBeforeCalibration(t *testing.T) {
 	}
 }
 
+// Task 14: once measured, the global Claude weekly line shows the Δsession basis.
+func TestGlobalWeeklyShowsBasis(t *testing.T) {
+	a := newApp()
+	a.calib = &WeeklyCalibrator{}
+	a.calib.Observe(0, 0)
+	a.calib.Observe(20, 2) // Δs=20, Δw=2 -> 10%/wk, basis 20% session
+	txt := a.weekBlocksText(0)
+	if !strings.Contains(txt, "10.0%/wk") || !strings.Contains(txt, "basis 20% sess") {
+		t.Fatalf("global weekly line should show ratio + basis, got %q", txt)
+	}
+}
+
 // Task 1+9: per-model rows are empty until measured, then show ratio + basis.
 func TestModelCalibrationText(t *testing.T) {
 	a := newApp()
