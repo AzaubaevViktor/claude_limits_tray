@@ -520,10 +520,15 @@ func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
 	}
 	primary := u.primary()
 	secondary := u.secondary()
-	limits := map[string]Limit{
-		"session": codexLimitForDial(primary),
-		"weekly":  codexLimitForDial(secondary),
+	sess := codexLimitForDial(primary)
+	week := codexLimitForDial(secondary)
+	if primary != nil {
+		sess.TimeTicks = hourTicks(float64(primary.WindowSeconds))
 	}
+	if secondary != nil {
+		week.TimeTicks = dayTicks(float64(secondary.WindowSeconds))
+	}
+	limits := map[string]Limit{"session": sess, "weekly": week}
 	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
 	secondaryFc := a.codexForecast(secondary, a.codexSecondRate)
 	worst := primaryFc
@@ -795,8 +800,8 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 	}
 	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
-		"session": {Pct: sessPct, TimeLeft: sessTf},
-		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock},
+		"session": {Pct: sessPct, TimeLeft: sessTf, TimeTicks: hourTicks(fiveHourSecs)},
+		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
 	}
 	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),

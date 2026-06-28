@@ -8,9 +8,10 @@ import (
 
 // Limit is the per-window input to the dial.
 type Limit struct {
-	Pct      float64 // used 0..100
-	TimeLeft float64 // fraction of window remaining 0..1
-	BlockPct float64 // weekly % per 5-hour-session block; 0 = no separators
+	Pct       float64 // used 0..100
+	TimeLeft  float64 // fraction of window remaining 0..1
+	BlockPct  float64 // weekly % per 5-hour-session block; 0 = no separators
+	TimeTicks int     // segments to split the time ring into (hours/days); <2 = none
 }
 
 // maxWeekTicks caps how many 5-hour-block separators the weekly semicircle can
@@ -107,6 +108,13 @@ func timeSegLabel(source string) string {
 	}
 	return name + " since reset (fills with elapsed)"
 }
+
+// hourTicks/dayTicks derive how many equal time segments a window splits into —
+// by hours (session) or days (weekly) — clamped so an odd window can't comb the
+// dial. <2 means no internal ticks.
+func hourTicks(windowSecs float64) int { return timeTicks(windowSecs / 3600) }
+func dayTicks(windowSecs float64) int  { return timeTicks(windowSecs / 86400) }
+func timeTicks(n float64) int          { return int(clamp(math.Round(n), 0, 24)) }
 
 // metric returns (arc length, health) in 0..1.
 func metricFor(name string, l Limit) (float64, float64) {
@@ -225,6 +233,15 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		writeBlockTicks(b, xoff, wl.BlockPct)
 	}
 
+	// Deterministic time ticks on the inner (time) rings, from the known window
+	// lengths: the session/left semicircle by hours, the weekly/right by days.
+	if sl, ok := input.limits["session"]; ok {
+		writeRingTicks(b, xoff, sideSign["left"], rings["inner"], sl.TimeTicks)
+	}
+	if wl, ok := input.limits["weekly"]; ok {
+		writeRingTicks(b, xoff, sideSign["right"], rings["inner"], wl.TimeTicks)
+	}
+
 	if input.hasMark {
 		writeMark(b, xoff, input.markColor)
 	}
@@ -244,6 +261,24 @@ func writeBlockTicks(b *strings.Builder, xoff, blockPct float64) {
 	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
 	for p := blockPct; p < 100-1e-6; p += blockPct {
 		ph := phi(sign * (endGap + p/100*span))
+		c, s := math.Cos(ph), math.Sin(ph)
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,
+			ox+in*c, dialCY+in*s, ox+out*c, dialCY+out*s))
+	}
+}
+
+// writeRingTicks notches a ring's semicircle into n equal segments (n-1 internal
+// ticks) on the given side — used for the deterministic hour/day time marks.
+func writeRingTicks(b *strings.Builder, xoff, sign, r float64, n int) {
+	if n < 2 {
+		return
+	}
+	span := 180.0 - 2*endGap
+	ox := xoff + dialCX + sign*halfShift
+	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
+	for i := 1; i < n; i++ {
+		ph := phi(sign * (endGap + float64(i)/float64(n)*span))
 		c, s := math.Cos(ph), math.Sin(ph)
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,

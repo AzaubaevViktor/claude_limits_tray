@@ -115,3 +115,35 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestTimeTickCounts(t *testing.T) {
+	if got := hourTicks(fiveHourSecs); got != 5 {
+		t.Fatalf("5h window -> 5 hour segments, got %d", got)
+	}
+	if got := dayTicks(weekSecs); got != 7 {
+		t.Fatalf("7d window -> 7 day segments, got %d", got)
+	}
+	if got := hourTicks(0); got != 0 {
+		t.Fatalf("zero window -> 0, got %d", got)
+	}
+	if got := dayTicks(40 * 86400); got != 24 {
+		t.Fatalf("40d should clamp to 24, got %d", got)
+	}
+}
+
+func TestTimeTicksRendered(t *testing.T) {
+	limits := map[string]Limit{
+		"session": {Pct: 10, TimeLeft: 0.5, TimeTicks: 5}, // 4 internal ticks
+		"weekly":  {Pct: 10, TimeLeft: 0.5, TimeTicks: 7}, // 6 internal ticks
+	}
+	svg := string(renderDial(limits, [3]int{0, 0, 0}, false))
+	if got := countSubstr(svg, "<line"); got != 10 {
+		t.Fatalf("want 4+6=10 time ticks, got %d", got)
+	}
+	// <2 draws nothing.
+	limits["session"] = Limit{Pct: 10, TimeLeft: 0.5, TimeTicks: 1}
+	limits["weekly"] = Limit{Pct: 10, TimeLeft: 0.5, TimeTicks: 0}
+	if got := countSubstr(string(renderDial(limits, [3]int{0, 0, 0}, false)), "<line"); got != 0 {
+		t.Fatalf("want 0 ticks for <2 segments, got %d", got)
+	}
+}
