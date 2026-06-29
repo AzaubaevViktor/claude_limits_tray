@@ -245,65 +245,91 @@ void setIconHeight(double h) {
   }
 }
 
+// These entry points are called from Go goroutines, which run on OS threads
+// that have no autorelease pool in place. Without an explicit @autoreleasepool
+// every autoreleased Cocoa temporary created here (NSData copies of the icon
+// bytes, NSImage bitmap reps, NSNumber/NSString) leaks for the life of the
+// process. setIcon is the worst offender: the blink loop calls it twice a
+// second whenever the app is in an error/429 state, so the leaked NSData/NSImage
+// temporaries climb into the gigabytes over a long session. Wrapping each body
+// drains those temporaries as soon as the call returns.
 void setIcon(const char* iconBytes, int length, bool template) {
-  NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
-  NSImage *image = [[NSImage alloc] initWithData:buffer];
-  NSSize imageSize = [image size];
-  CGFloat height = gIconHeight;
-  CGFloat width = height;
-  if (imageSize.height > 0) {
-    width = MAX(height, height * imageSize.width / imageSize.height);
+  @autoreleasepool {
+    NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    NSSize imageSize = [image size];
+    CGFloat height = gIconHeight;
+    CGFloat width = height;
+    if (imageSize.height > 0) {
+      width = MAX(height, height * imageSize.width / imageSize.height);
+    }
+    [image setSize:NSMakeSize(width, height)];
+    image.template = template;
+    runInMainThread(@selector(setIcon:), (id)image);
   }
-  [image setSize:NSMakeSize(width, height)];
-  image.template = template;
-  runInMainThread(@selector(setIcon:), (id)image);
 }
 
 void setMenuItemIcon(const char* iconBytes, int length, int menuId, bool template) {
-  NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
-  NSImage *image = [[NSImage alloc] initWithData:buffer];
-  [image setSize:NSMakeSize(16, 16)];
-  image.template = template;
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(setMenuItemIcon:), @[image, (id)mId]);
+  @autoreleasepool {
+    NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    [image setSize:NSMakeSize(16, 16)];
+    image.template = template;
+    NSNumber *mId = [NSNumber numberWithInt:menuId];
+    runInMainThread(@selector(setMenuItemIcon:), @[image, (id)mId]);
+  }
 }
 
 void setTitle(char* ctitle) {
-  NSString* title = [[NSString alloc] initWithCString:ctitle
-                                             encoding:NSUTF8StringEncoding];
-  free(ctitle);
-  runInMainThread(@selector(setTitle:), (id)title);
+  @autoreleasepool {
+    NSString* title = [[NSString alloc] initWithCString:ctitle
+                                               encoding:NSUTF8StringEncoding];
+    free(ctitle);
+    runInMainThread(@selector(setTitle:), (id)title);
+  }
 }
 
 void setTooltip(char* ctooltip) {
-  NSString* tooltip = [[NSString alloc] initWithCString:ctooltip
-                                               encoding:NSUTF8StringEncoding];
-  free(ctooltip);
-  runInMainThread(@selector(setTooltip:), (id)tooltip);
+  @autoreleasepool {
+    NSString* tooltip = [[NSString alloc] initWithCString:ctooltip
+                                                 encoding:NSUTF8StringEncoding];
+    free(ctooltip);
+    runInMainThread(@selector(setTooltip:), (id)tooltip);
+  }
 }
 
 void add_or_update_menu_item(int menuId, int parentMenuId, char* title, char* tooltip, short disabled, short checked, short isCheckable) {
-  MenuItem* item = [[MenuItem alloc] initWithId: menuId withParentMenuId: parentMenuId withTitle: title withTooltip: tooltip withDisabled: disabled withChecked: checked];
-  free(title);
-  free(tooltip);
-  runInMainThread(@selector(add_or_update_menu_item:), (id)item);
+  @autoreleasepool {
+    MenuItem* item = [[MenuItem alloc] initWithId: menuId withParentMenuId: parentMenuId withTitle: title withTooltip: tooltip withDisabled: disabled withChecked: checked];
+    free(title);
+    free(tooltip);
+    runInMainThread(@selector(add_or_update_menu_item:), (id)item);
+  }
 }
 
 void add_separator(int menuId) {
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(add_separator:), (id)mId);
+  @autoreleasepool {
+    NSNumber *mId = [NSNumber numberWithInt:menuId];
+    runInMainThread(@selector(add_separator:), (id)mId);
+  }
 }
 
 void hide_menu_item(int menuId) {
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(hide_menu_item:), (id)mId);
+  @autoreleasepool {
+    NSNumber *mId = [NSNumber numberWithInt:menuId];
+    runInMainThread(@selector(hide_menu_item:), (id)mId);
+  }
 }
 
 void show_menu_item(int menuId) {
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(show_menu_item:), (id)mId);
+  @autoreleasepool {
+    NSNumber *mId = [NSNumber numberWithInt:menuId];
+    runInMainThread(@selector(show_menu_item:), (id)mId);
+  }
 }
 
 void quit() {
-  runInMainThread(@selector(quit), nil);
+  @autoreleasepool {
+    runInMainThread(@selector(quit), nil);
+  }
 }
