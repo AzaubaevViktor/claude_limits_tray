@@ -247,6 +247,13 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 	}
 }
 
+// capDeg is the angular overshoot, in degrees, that a round stroke linecap adds
+// past an arc endpoint at radius r: the cap reaches half the stroke width beyond
+// the path end. Ticks must span this so the first/last visual segments (which
+// include the bulging caps) match the interior ones — otherwise the ends read
+// fatter than the centre.
+func capDeg(r float64) float64 { return (dialSW / 2) / r * 180 / math.Pi }
+
 // writeBlockTicks draws radial notches across the outer weekly ring, one at each
 // blockPct boundary of the weekly quota (right semicircle). blockPct <= 0 draws
 // nothing.
@@ -255,12 +262,14 @@ func writeBlockTicks(b *strings.Builder, xoff, blockPct float64) {
 		return
 	}
 	const sign = +1.0 // weekly lives on the right side
-	span := 180.0 - 2*endGap
-	ox := xoff + dialCX + sign*halfShift
 	r := rings["outer"]
+	cap := capDeg(r)
+	start := endGap - cap
+	span := 180.0 - 2*endGap + 2*cap // visible span, caps included
+	ox := xoff + dialCX + sign*halfShift
 	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
 	for p := blockPct; p < 100-1e-6; p += blockPct {
-		ph := phi(sign * (endGap + p/100*span))
+		ph := phi(sign * (start + p/100*span))
 		c, s := math.Cos(ph), math.Sin(ph)
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,
@@ -269,16 +278,20 @@ func writeBlockTicks(b *strings.Builder, xoff, blockPct float64) {
 }
 
 // writeRingTicks notches a ring's semicircle into n equal segments (n-1 internal
-// ticks) on the given side — used for the deterministic hour/day time marks.
+// ticks) on the given side — used for the deterministic hour/day time marks. The
+// span includes the round-cap overshoot at both ends so all n visual segments
+// come out equal.
 func writeRingTicks(b *strings.Builder, xoff, sign, r float64, n int) {
 	if n < 2 {
 		return
 	}
-	span := 180.0 - 2*endGap
+	cap := capDeg(r)
+	start := endGap - cap
+	span := 180.0 - 2*endGap + 2*cap // visible span, caps included
 	ox := xoff + dialCX + sign*halfShift
 	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
 	for i := 1; i < n; i++ {
-		ph := phi(sign * (endGap + float64(i)/float64(n)*span))
+		ph := phi(sign * (start + float64(i)/float64(n)*span))
 		c, s := math.Cos(ph), math.Sin(ph)
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,
