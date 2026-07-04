@@ -68,7 +68,7 @@ Click it for everything as numbers, plus your account.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
-  also shows credits).
+  also shows the signed-in account and credits).
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
@@ -131,10 +131,11 @@ or the macOS keychain item `Codex Auth`. From then on it keeps the **refresh
 token** in its state file and mints fresh access tokens itself (OpenAI's OAuth
 endpoint, the same flow the Codex CLI uses) — so the keychain is touched at most
 once and you won't be re-prompted for a password on every launch. It only falls
-back to the keychain if refreshing fails (e.g. you signed out and back in). Keep
-Codex signed in with ChatGPT (`codex login`); API-key auth does not expose
-ChatGPT plan limits. Requests go through the system `curl`; no network or crypto
-libraries are added.
+back to the keychain if refreshing fails (e.g. you signed out and back in), or
+when you click **Use current Codex login** in the Codex menu to replace a stale
+saved token after switching accounts. Keep Codex signed in with ChatGPT
+(`codex login`); API-key auth does not expose ChatGPT plan limits. Requests go
+through the system `curl`; no network or crypto libraries are added.
 
 ## Code
 

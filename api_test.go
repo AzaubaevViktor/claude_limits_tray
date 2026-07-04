@@ -143,3 +143,15 @@ func TestCodexAccountFromJWT(t *testing.T) {
 		t.Fatalf("fallback account = %q", got)
 	}
 }
+
+func TestStoreBootstrapTokensClearsStaleRefresh(t *testing.T) {
+	var c CodexClient
+	c.LoadRefresh("old-refresh")
+	c.storeBootstrapTokens("access-only", "")
+	if got := c.RefreshToken(); got != "" {
+		t.Fatalf("refresh should be cleared, got %q", got)
+	}
+	if !c.TakeRefreshDirty() {
+		t.Fatalf("clearing refresh should mark state dirty")
+	}
+}

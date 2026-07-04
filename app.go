@@ -123,7 +123,7 @@ type App struct {
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
 	codexParent                                *systray.MenuItem
-	codexAccount, codexPlan                    *systray.MenuItem
+	codexAccount, codexSwitchAuth, codexPlan   *systray.MenuItem
 	codexPrimary, codexPrimaryReset            *systray.MenuItem
 	codexSecondary, codexSecondaryReset        *systray.MenuItem
 	codexBurn, codexBurnPrimary                *systray.MenuItem
@@ -308,6 +308,31 @@ func (a *App) noteCodex(r pollResult) {
 	a.lastCodex = r.codexUsage
 	a.renderCodex()
 	a.renderIcon()
+}
+
+func (a *App) useCurrentCodexLogin() {
+	if _, err := a.codex.UseCurrentAuth(); err != nil {
+		a.lastCodexFail = time.Now()
+		a.lastCodexFailMsg = describe(err)
+		a.renderCodex()
+		a.saveState(true)
+		return
+	}
+	a.lastCodexRaw = nil
+	a.lastCodex = nil
+	a.lastCodexOk = time.Time{}
+	a.lastCodexFailMsg = ""
+	a.codexPrimaryRate = 0
+	a.codexSecondRate = 0
+	a.cRates = &RateTracker{}
+	a.codexErrorOn = false
+	a.renderCodex()
+	a.renderIcon()
+	a.saveState(true)
+	a.nextPoll = time.Time{}
+	if !a.inflight {
+		a.startRequest()
+	}
 }
 
 func (a *App) onSuccess(r pollResult) {

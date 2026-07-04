@@ -35,6 +35,8 @@ func (a *App) buildMenu() {
 
 	a.codexParent = systray.AddMenuItem("Codex · —", "")
 	a.codexAccount = a.codexParent.AddSubMenuItem("Account: —", "")
+	a.codexSwitchAuth = a.codexParent.AddSubMenuItem("Use current Codex login", "")
+	a.onClick(a.codexSwitchAuth, func() { a.useCurrentCodexLogin() })
 	a.codexPlan = a.codexParent.AddSubMenuItem("Plan: —", "")
 	a.codexPrimary = a.codexParent.AddSubMenuItem("Primary", "")
 	a.codexPrimaryReset = a.codexParent.AddSubMenuItem("Primary resets", "")

@@ -437,35 +437,70 @@ func (c *CodexClient) token() (string, error) {
 	return c.bootstrap()
 }
 
-// bootstrap reads credentials the slow way — env var, auth.json, then keychain
-// (which is the one that can prompt). Whatever it finds (access + refresh) is
-// cached so the next poll refreshes silently instead of hitting the keychain.
-func (c *CodexClient) bootstrap() (string, error) {
+type codexBootstrapCreds struct {
+	access  string
+	refresh string
+	source  string
+}
+
+// bootstrapCreds reads credentials the slow way — env var, auth.json, then
+// keychain (which is the one that can prompt).
+func (c *CodexClient) bootstrapCreds() (*codexBootstrapCreds, error) {
 	if tok := strings.TrimSpace(os.Getenv(codexAccessEnvVar)); tok != "" {
-		c.storeTokens(tok, "", 0)
-		return tok, nil
+		return &codexBootstrapCreds{access: tok, source: codexAccessEnvVar}, nil
 	}
 	home, err := c.codexHome()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if access, refresh, err := codexTokensFromFile(filepath.Join(home, "auth.json")); err == nil && access != "" {
-		c.storeTokens(access, refresh, 0)
-		return access, nil
+		return &codexBootstrapCreds{
+			access:  access,
+			refresh: refresh,
+			source:  filepath.Join(home, "auth.json"),
+		}, nil
 	}
 	key, err := codexStoreKey(home)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	out, err := exec.Command("security", "find-generic-password",
 		"-s", codexAuthService, "-a", key, "-w").Output()
 	if err == nil {
 		if access, refresh, err := codexTokensFromJSON(out); err == nil && access != "" {
-			c.storeTokens(access, refresh, 0)
-			return access, nil
+			return &codexBootstrapCreds{
+				access:  access,
+				refresh: refresh,
+				source:  "keychain " + codexAuthService,
+			}, nil
 		}
 	}
-	return "", &APIError{Msg: "No Codex ChatGPT credentials — run codex login"}
+	return nil, &APIError{Msg: "No Codex ChatGPT credentials — run codex login"}
+}
+
+// bootstrap reads current Codex credentials and caches them so the next poll can
+// refresh silently instead of hitting the keychain again.
+func (c *CodexClient) bootstrap() (string, error) {
+	creds, err := c.bootstrapCreds()
+	if err != nil {
+		return "", err
+	}
+	c.storeBootstrapTokens(creds.access, creds.refresh)
+	return creds.access, nil
+}
+
+// UseCurrentAuth replaces the persisted Codex token pair with the currently
+// configured Codex login (env/auth.json/keychain), returning a display label for
+// the account it switched to.
+func (c *CodexClient) UseCurrentAuth() (string, error) {
+	creds, err := c.bootstrapCreds()
+	if err != nil {
+		return "", err
+	}
+	account := codexAccountFromJWT(creds.access)
+	log.Printf("codex account switched from %s: %s", creds.source, orElse(account, "unknown"))
+	c.storeBootstrapTokens(creds.access, creds.refresh)
+	return account, nil
 }
 
 // refresh exchanges the refresh token for a new access token via OpenAI's OAuth
@@ -530,6 +565,19 @@ func (c *CodexClient) storeTokens(access, refresh string, expiresIn int) {
 		c.accountLabel = label
 		c.accountDirty = true
 		log.Printf("codex account: %s", label)
+	}
+	c.mu.Unlock()
+}
+
+func (c *CodexClient) storeBootstrapTokens(access, refresh string) {
+	c.storeTokens(access, refresh, 0)
+	if refresh != "" {
+		return
+	}
+	c.mu.Lock()
+	if c.refreshToken != "" {
+		c.refreshToken = ""
+		c.refreshDirty = true
 	}
 	c.mu.Unlock()
 }
