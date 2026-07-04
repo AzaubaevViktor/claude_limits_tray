@@ -46,6 +46,8 @@ func spareText(pct, rate, ttr float64, ttrKnown bool) string {
 }
 
 var burnRed = [3]int{255, 69, 58}
+var weeklyBurnLilac = [3]int{198, 136, 255}
+var weeklyBurnDarkRed = [3]int{128, 0, 32}
 
 // gradient stops along the continuous severity axis (pos 0..1).
 var stops = []struct {
@@ -90,6 +92,16 @@ func gradient(pos float64) [3]int {
 }
 
 func (f Forecast) Color() [3]int { return gradient(f.Pos()) }
+
+func forecastMarkColor(session, weekly Forecast, weeklyPct float64) ([3]int, string) {
+	if weeklyPct >= 100 {
+		return weeklyBurnDarkRed, "weekly-empty"
+	}
+	if weekly.Pos() > session.Pos() {
+		return weeklyBurnLilac, "weekly"
+	}
+	return session.Color(), "session"
+}
 
 func (f Forecast) Text() string {
 	if f.HasBreak {

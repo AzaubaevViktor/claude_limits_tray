@@ -571,11 +571,16 @@ func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
 	if secondaryFc.Pos() > worst.Pos() {
 		worst = secondaryFc
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d",
+	secondaryPct := 0.0
+	if secondary != nil {
+		secondaryPct = secondary.UsedPercent
+	}
+	mark, markKey := forecastMarkColor(primaryFc, secondaryFc, secondaryPct)
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
-		iround(worst.Pos()*60), int(timeFill))
-	return limits, worst.Color(), true, key
+		iround(worst.Pos()*60), int(timeFill), markKey)
+	return limits, mark, true, key
 }
 
 func codexLimitForDial(w *CodexWindow) Limit {
@@ -834,15 +839,16 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 	if weekFc.Pos() > worst.Pos() {
 		worst = weekFc
 	}
+	mark, markKey := forecastMarkColor(sessFc, weekFc, weekPct)
 	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
 		"session": {Pct: sessPct, TimeLeft: sessTf, TimeTicks: hourTicks(fiveHourSecs)},
 		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d", iround(sessPct), iround(weekPct),
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%s-%d", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
-		iround(weekBlock*10))
-	return limits, worst.Color(), true, key
+		markKey, iround(weekBlock*10))
+	return limits, mark, true, key
 }
 
 // weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the

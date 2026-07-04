@@ -45,6 +45,21 @@ func TestGradientEndpoints(t *testing.T) {
 	}
 }
 
+func TestForecastMarkColorCallsOutWeekly(t *testing.T) {
+	session := projectForecast(20, 0, 3600, true)
+	weekly := projectForecast(80, 40.0/3600, 4*3600, true)
+
+	if got, key := forecastMarkColor(session, weekly, 99); got != weeklyBurnLilac || key != "weekly" {
+		t.Fatalf("weekly warning = %v/%q, want lilac/weekly", got, key)
+	}
+	if got, key := forecastMarkColor(session, weekly, 100); got != weeklyBurnDarkRed || key != "weekly-empty" {
+		t.Fatalf("weekly empty = %v/%q, want dark red/weekly-empty", got, key)
+	}
+	if got, key := forecastMarkColor(weekly, session, 20); got == weeklyBurnLilac || key != "session" {
+		t.Fatalf("session warning should keep normal forecast colour, got %v/%q", got, key)
+	}
+}
+
 func TestForecastText(t *testing.T) {
 	if txt := projectForecast(20, 0, 3600, true).Text(); !contains(txt, "spare") {
 		t.Errorf("purple text = %q", txt)
