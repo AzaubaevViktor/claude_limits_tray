@@ -374,6 +374,8 @@ type CodexClient struct {
 	tokenExp     time.Time // when cachedToken expires (zero = unknown)
 	refreshToken string    // long-lived; lets us mint access tokens without the keychain
 	refreshDirty bool      // refreshToken changed since the last persist
+	accountLabel string    // display-only account hint learned from the access token
+	accountDirty bool      // accountLabel changed since the last persist
 }
 
 type CodexWindow struct {
@@ -524,6 +526,11 @@ func (c *CodexClient) storeTokens(access, refresh string, expiresIn int) {
 		c.refreshToken = refresh
 		c.refreshDirty = true
 	}
+	if label := codexAccountFromJWT(access); label != "" && label != c.accountLabel {
+		c.accountLabel = label
+		c.accountDirty = true
+		log.Printf("codex account: %s", label)
+	}
 	c.mu.Unlock()
 }
 
@@ -550,11 +557,32 @@ func (c *CodexClient) LoadRefresh(rt string) {
 	c.mu.Unlock()
 }
 
+// LoadAccount seeds the display account from persisted state (without marking
+// it dirty); a later access token can replace it with fresher data.
+func (c *CodexClient) LoadAccount(label string) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.accountLabel == "" {
+		c.accountLabel = label
+	}
+	c.mu.Unlock()
+}
+
 // RefreshToken returns the current refresh token for persistence.
 func (c *CodexClient) RefreshToken() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.refreshToken
+}
+
+// AccountLabel returns the last display-only account hint learned for Codex.
+func (c *CodexClient) AccountLabel() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.accountLabel
 }
 
 // TakeRefreshDirty reports whether the refresh token rotated since the last call
@@ -564,6 +592,16 @@ func (c *CodexClient) TakeRefreshDirty() bool {
 	defer c.mu.Unlock()
 	d := c.refreshDirty
 	c.refreshDirty = false
+	return d
+}
+
+// TakeAccountDirty reports whether the display account changed since the last
+// call and clears the flag, so the caller can persist it promptly.
+func (c *CodexClient) TakeAccountDirty() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d := c.accountDirty
+	c.accountDirty = false
 	return d
 }
 
@@ -584,6 +622,72 @@ func jwtExp(token string) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(d.Exp, 0)
+}
+
+func jwtPayload(token string) map[string]json.RawMessage {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var d map[string]json.RawMessage
+	if json.Unmarshal(payload, &d) != nil {
+		return nil
+	}
+	return d
+}
+
+func codexAccountFromJWT(token string) string {
+	d := jwtPayload(token)
+	if len(d) == 0 {
+		return ""
+	}
+	var email, name string
+	for _, key := range []string{"email", "https://api.openai.com/email"} {
+		_ = json.Unmarshal(d[key], &email)
+		if strings.TrimSpace(email) != "" {
+			break
+		}
+	}
+	for _, key := range []string{"name", "given_name", "https://api.openai.com/name"} {
+		_ = json.Unmarshal(d[key], &name)
+		if strings.TrimSpace(name) != "" {
+			break
+		}
+	}
+	if email == "" {
+		email = stringFromNestedClaim(d, "https://api.openai.com/profile", "email")
+	}
+	if name == "" {
+		name = stringFromNestedClaim(d, "https://api.openai.com/profile", "name")
+	}
+	email = strings.TrimSpace(email)
+	name = strings.TrimSpace(name)
+	switch {
+	case name != "" && email != "":
+		return name + "  ·  " + email
+	case email != "":
+		return email
+	case name != "":
+		return name
+	default:
+		var sub string
+		_ = json.Unmarshal(d["sub"], &sub)
+		return strings.TrimSpace(sub)
+	}
+}
+
+func stringFromNestedClaim(d map[string]json.RawMessage, key, field string) string {
+	var nested map[string]json.RawMessage
+	if json.Unmarshal(d[key], &nested) != nil {
+		return ""
+	}
+	var out string
+	_ = json.Unmarshal(nested[field], &out)
+	return out
 }
 
 func (c *CodexClient) codexHome() (string, error) {

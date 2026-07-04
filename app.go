@@ -123,7 +123,7 @@ type App struct {
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
 	codexParent                                *systray.MenuItem
-	codexPlan                                  *systray.MenuItem
+	codexAccount, codexPlan                    *systray.MenuItem
 	codexPrimary, codexPrimaryReset            *systray.MenuItem
 	codexSecondary, codexSecondaryReset        *systray.MenuItem
 	codexBurn, codexBurnPrimary                *systray.MenuItem
@@ -273,8 +273,9 @@ func (a *App) drain() {
 		// A rotated refresh token must be saved promptly — losing it would force
 		// a re-bootstrap (Codex keychain prompt / Claude re-read) next launch.
 		codexDirty := a.codex.TakeRefreshDirty()
+		codexAccountDirty := a.codex.TakeAccountDirty()
 		claudeDirty := a.client.TakeRefreshDirty()
-		if codexDirty || claudeDirty {
+		if codexDirty || codexAccountDirty || claudeDirty {
 			a.saveState(true)
 		}
 	default:
@@ -458,7 +459,12 @@ func (a *App) renderCodex() {
 	primary := u.primary()
 	secondary := u.secondary()
 	plan := codexPlanLabel(u.PlanType)
+	account := a.codex.AccountLabel()
+	if account == "" {
+		account = "—"
+	}
 	a.codexParent.SetTitle("Codex · " + plan)
+	a.codexAccount.SetTitle("Account: " + account)
 	a.codexPlan.SetTitle("Plan: " + plan)
 	a.renderCodexWindow(a.codexPrimary, a.codexPrimaryReset, "Primary", primary)
 	a.renderCodexWindow(a.codexSecondary, a.codexSecondaryReset, "Secondary", secondary)
@@ -492,6 +498,11 @@ func (a *App) renderCodex() {
 
 func (a *App) renderCodexEmpty() {
 	a.codexParent.SetTitle("Codex · —")
+	account := a.codex.AccountLabel()
+	if account == "" {
+		account = "—"
+	}
+	a.codexAccount.SetTitle("Account: " + account)
 	a.codexPlan.SetTitle("Plan: —")
 	a.codexPrimary.SetTitle("Primary:  —")
 	a.codexPrimaryReset.SetTitle("      resets in —")
@@ -894,6 +905,7 @@ type persistState struct {
 	CodexPrimaryRate float64                `json:"codex_primary_rate"`
 	CodexSecondRate  float64                `json:"codex_secondary_rate"`
 	CodexRefresh     string                 `json:"codex_refresh_token"`
+	CodexAccount     string                 `json:"codex_account"`
 	ClaudeRefresh    string                 `json:"claude_refresh_token"`
 	Usage            json.RawMessage        `json:"usage"`
 	Profile          json.RawMessage        `json:"profile"`
@@ -949,6 +961,7 @@ func (a *App) loadState() {
 	}
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	a.codex.LoadRefresh(s.CodexRefresh)
+	a.codex.LoadAccount(s.CodexAccount)
 	a.client.LoadRefresh(s.ClaudeRefresh)
 	if len(s.Usage) > 0 && string(s.Usage) != "null" {
 		a.lastUsageRaw = s.Usage
@@ -997,6 +1010,7 @@ func (a *App) saveState(force bool) {
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,
 		CodexRefresh:     a.codex.RefreshToken(),
+		CodexAccount:     a.codex.AccountLabel(),
 		ClaudeRefresh:    a.client.RefreshToken(),
 		Usage:            json.RawMessage(a.lastUsageRaw),
 		CodexUsage:       json.RawMessage(a.lastCodexRaw),

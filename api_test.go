@@ -123,3 +123,23 @@ func TestJWTExp(t *testing.T) {
 		t.Fatalf("missing exp should be zero, got %v", got)
 	}
 }
+
+func TestCodexAccountFromJWT(t *testing.T) {
+	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+	tok := enc(`{"alg":"none"}`) + "." +
+		enc(`{"name":"Ada Lovelace","email":"ada@example.com","sub":"user-1"}`) + ".sig"
+	if got := codexAccountFromJWT(tok); got != "Ada Lovelace  ·  ada@example.com" {
+		t.Fatalf("account = %q", got)
+	}
+
+	nested := enc(`{"alg":"none"}`) + "." +
+		enc(`{"https://api.openai.com/profile":{"email":"codex@example.com"}}`) + ".sig"
+	if got := codexAccountFromJWT(nested); got != "codex@example.com" {
+		t.Fatalf("nested account = %q", got)
+	}
+
+	fallback := enc(`{"alg":"none"}`) + "." + enc(`{"sub":"acct_123"}`) + ".sig"
+	if got := codexAccountFromJWT(fallback); got != "acct_123" {
+		t.Fatalf("fallback account = %q", got)
+	}
+}

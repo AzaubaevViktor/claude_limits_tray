@@ -34,6 +34,7 @@ func (a *App) buildMenu() {
 	}
 
 	a.codexParent = systray.AddMenuItem("Codex · —", "")
+	a.codexAccount = a.codexParent.AddSubMenuItem("Account: —", "")
 	a.codexPlan = a.codexParent.AddSubMenuItem("Plan: —", "")
 	a.codexPrimary = a.codexParent.AddSubMenuItem("Primary", "")
 	a.codexPrimaryReset = a.codexParent.AddSubMenuItem("Primary resets", "")
@@ -89,7 +90,7 @@ func (a *App) buildMenu() {
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
 		a.status, a.ok, a.fail,
-		a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
+		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
 		a.codexCredits, a.codexStatus,
