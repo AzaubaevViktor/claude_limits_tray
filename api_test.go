@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseCodexUsage(t *testing.T) {
@@ -107,6 +108,41 @@ func TestClaudeCredsFromJSON(t *testing.T) {
 	// Flat shape (no claudeAiOauth wrapper).
 	if a2, r2, _ := claudeCredsFromJSON([]byte(`{"accessToken":"x","refreshToken":"y"}`)); a2 != "x" || r2 != "y" {
 		t.Fatalf("flat: a=%q r=%q", a2, r2)
+	}
+}
+
+func TestClaudeAdoptKeychainTokensReplacesAccountCredentials(t *testing.T) {
+	var c Client
+	c.LoadRefresh("old-account-refresh")
+	exp := time.Unix(1800000000, 0)
+	c.adoptKeychainTokens("new-account-access", "new-account-refresh", exp)
+
+	if c.cachedToken != "new-account-access" || !c.tokenExp.Equal(exp) {
+		t.Fatalf("access token not adopted: token=%q exp=%v", c.cachedToken, c.tokenExp)
+	}
+	if got := c.RefreshToken(); got != "new-account-refresh" {
+		t.Fatalf("refresh token = %q", got)
+	}
+	if !c.TakeRefreshDirty() {
+		t.Fatal("replacing the account refresh token should mark state dirty")
+	}
+
+	c.adoptKeychainTokens("access-only", "", time.Time{})
+	if got := c.RefreshToken(); got != "" {
+		t.Fatalf("missing current refresh should clear stale token, got %q", got)
+	}
+}
+
+func TestClaudeInvalidateDoesNotClearNewerToken(t *testing.T) {
+	var c Client
+	c.adoptKeychainTokens("new-token", "refresh", time.Time{})
+	c.invalidateAccess("old-token")
+	if c.cachedToken != "new-token" {
+		t.Fatalf("older request cleared current token: %q", c.cachedToken)
+	}
+	c.invalidateAccess("new-token")
+	if c.cachedToken != "" {
+		t.Fatalf("rejected current token was not cleared: %q", c.cachedToken)
 	}
 }
 

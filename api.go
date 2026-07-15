@@ -191,12 +191,41 @@ func (c *Client) storeTokens(access, refresh string, exp time.Time) {
 	c.mu.Unlock()
 }
 
-// invalidateAccess drops only the access token (keeping the refresh token), so a
-// rejected token triggers a re-read/refresh on the next call.
-func (c *Client) invalidateAccess() {
+// invalidateAccess drops only the rejected access token (keeping the refresh
+// token), so a concurrent "use current login" cannot have its newly adopted
+// token cleared by an older request finishing with 401/403.
+func (c *Client) invalidateAccess(rejected string) {
 	c.mu.Lock()
-	c.cachedToken = ""
-	c.tokenExp = time.Time{}
+	if c.cachedToken == rejected {
+		c.cachedToken = ""
+		c.tokenExp = time.Time{}
+	}
+	c.mu.Unlock()
+}
+
+// UseCurrentAuth forcibly adopts the credentials currently stored by Claude
+// Code. Unlike token(), this intentionally bypasses a still-valid cached token:
+// it is the explicit account-switch path used by the menu action.
+func (c *Client) UseCurrentAuth() error {
+	access, refresh, exp, ok := c.readKeychain()
+	if !ok {
+		return &APIError{Msg: "No credentials — sign in to Claude Code"}
+	}
+	c.adoptKeychainTokens(access, refresh, exp)
+	log.Printf("claude credentials reloaded from keychain")
+	return nil
+}
+
+// adoptKeychainTokens replaces the complete token pair. In particular, an
+// absent refresh token clears a stale persisted token from another account.
+func (c *Client) adoptKeychainTokens(access, refresh string, exp time.Time) {
+	c.mu.Lock()
+	c.cachedToken = access
+	c.tokenExp = exp
+	if refresh != c.refreshToken {
+		c.refreshToken = refresh
+		c.refreshDirty = true
+	}
 	c.mu.Unlock()
 }
 
@@ -237,7 +266,7 @@ func (c *Client) get(path string) ([]byte, error) {
 	// which re-reads the keychain (Claude Code may have refreshed it) or mints a
 	// fresh one from the refresh token.
 	if ae, ok := err.(*APIError); ok && (ae.Status == 401 || ae.Status == 403) {
-		c.invalidateAccess()
+		c.invalidateAccess(tok)
 		if tok, err2 := c.token(); err2 == nil {
 			body, err = c.do(path, tok)
 		}

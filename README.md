@@ -69,6 +69,8 @@ Click it for everything as numbers, plus your account.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
   also shows the signed-in account and credits).
+- Shows the active Claude account and provides **Use current Claude login** to
+  reload `Claude Code-credentials` immediately after switching accounts.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
@@ -122,7 +124,10 @@ work. When that token is still valid the app just uses it (never interfering);
 when it's expired and Claude Code is idle (e.g. overnight) the app mints a fresh
 one itself from the refresh token, the same way Claude Code would — so
 monitoring keeps working. If even that fails the token is dead until you reopen
-Claude Code, and the status says so.
+Claude Code, and the status says so. After changing accounts in Claude Code,
+click **Use current Claude login** in the Claude menu to discard the old cached
+token and immediately reload the current keychain credentials, profile, and
+limits.
 
 For Codex it reads the ChatGPT-authenticated Codex usage endpoint
 (`chatgpt.com/backend-api/wham/usage`). On first run the token is bootstrapped

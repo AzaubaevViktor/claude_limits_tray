@@ -43,13 +43,14 @@ var planNames = map[string]string{
 }
 
 type pollResult struct {
-	raw        []byte
-	usage      *Usage
-	prof       *Profile
-	codexRaw   []byte
-	codexUsage *CodexUsage
-	codexErr   error
-	err        error
+	raw                  []byte
+	usage                *Usage
+	prof                 *Profile
+	claudeAuthGeneration uint64
+	codexRaw             []byte
+	codexUsage           *CodexUsage
+	codexErr             error
+	err                  error
 }
 
 type hourItem struct {
@@ -88,6 +89,9 @@ type App struct {
 	reqStart         time.Time
 	results          chan pollResult
 	iconKey          string
+	// Incremented when the user explicitly reloads Claude Code credentials, so
+	// a request already in flight cannot restore the previous account's data.
+	claudeAuthGeneration uint64
 
 	// menu-bar icon height in points (manual setting, persisted). dynIconOff
 	// disables the burn-driven auto-size (which is on by default — opt-out);
@@ -116,7 +120,7 @@ type App struct {
 
 	// menu items
 	claudeParent                               *systray.MenuItem
-	account, plan                              *systray.MenuItem
+	account, claudeSwitchAuth, plan            *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
@@ -233,15 +237,17 @@ func (a *App) startRequest() {
 	client := a.client
 	codex := a.codex
 	results := a.results
+	claudeAuthGeneration := a.claudeAuthGeneration
 	go func() {
 		codexRaw, codexUsage, codexErr := codex.Usage()
 		raw, usage, err := client.Usage()
 		if err != nil {
 			results <- pollResult{
-				codexRaw:   codexRaw,
-				codexUsage: codexUsage,
-				codexErr:   codexErr,
-				err:        err,
+				claudeAuthGeneration: claudeAuthGeneration,
+				codexRaw:             codexRaw,
+				codexUsage:           codexUsage,
+				codexErr:             codexErr,
+				err:                  err,
 			}
 			return
 		}
@@ -250,12 +256,13 @@ func (a *App) startRequest() {
 			prof, _ = client.Profile()
 		}
 		results <- pollResult{
-			raw:        raw,
-			usage:      usage,
-			prof:       prof,
-			codexRaw:   codexRaw,
-			codexUsage: codexUsage,
-			codexErr:   codexErr,
+			raw:                  raw,
+			usage:                usage,
+			prof:                 prof,
+			claudeAuthGeneration: claudeAuthGeneration,
+			codexRaw:             codexRaw,
+			codexUsage:           codexUsage,
+			codexErr:             codexErr,
 		}
 	}()
 }
@@ -265,7 +272,13 @@ func (a *App) drain() {
 	case r := <-a.results:
 		a.inflight = false
 		a.noteCodex(r)
-		if r.err != nil {
+		if r.claudeAuthGeneration != a.claudeAuthGeneration {
+			// The Claude half belongs to the login active before the user clicked
+			// "Use current Claude login". Keep the Codex half, discard this half,
+			// and request the newly selected Claude account on the next tick.
+			a.nextPoll = time.Time{}
+			a.nextAllowedEpoch = 0
+		} else if r.err != nil {
 			a.noteFail(r.err)
 		} else {
 			a.onSuccess(r)
@@ -279,6 +292,38 @@ func (a *App) drain() {
 			a.saveState(true)
 		}
 	default:
+	}
+}
+
+func (a *App) useCurrentClaudeLogin() {
+	if err := a.client.UseCurrentAuth(); err != nil {
+		a.lastFail = time.Now()
+		a.lastFailMsg = describe(err)
+		a.status.SetTitle("⚠ " + a.lastFailMsg)
+		return
+	}
+
+	a.claudeAuthGeneration++
+	a.profile = nil
+	a.lastUsageRaw = nil
+	a.lastUsage = nil
+	a.lastOk = time.Time{}
+	a.lastFailMsg = ""
+	a.sessRate = 0
+	a.weekRate = 0
+	a.rates = &RateTracker{}
+	a.calib = &WeeklyCalibrator{}
+	a.calibByModel = map[string]*WeeklyCalibrator{}
+	a.errorOn = false
+	a.cached = false
+	a.failCount = 0
+	a.renderClaudeEmpty("requesting…")
+	a.renderIcon()
+	a.saveState(true)
+	a.nextPoll = time.Time{}
+	a.nextAllowedEpoch = 0
+	if !a.inflight {
+		a.startRequest()
 	}
 }
 
@@ -699,7 +744,11 @@ func (a *App) renderProfile() {
 	if name == "" {
 		name = "—"
 	}
-	a.account.SetTitle(name + "  ·  " + a.profile.Account.Email)
+	account := name
+	if a.profile.Account.Email != "" {
+		account += "  ·  " + a.profile.Account.Email
+	}
+	a.account.SetTitle("Account: " + account)
 	tier := a.profile.Organization.RateLimitTier
 	otype := a.profile.Organization.OrganizationType
 	plan := planNames[tier]
@@ -714,6 +763,24 @@ func (a *App) renderProfile() {
 	}
 	a.plan.SetTitle("🎗 " + plan)
 	a.claudeParent.SetTitle("Claude · " + plan)
+}
+
+func (a *App) renderClaudeEmpty(account string) {
+	a.claudeParent.SetTitle("Claude · —")
+	a.account.SetTitle("Account: " + account)
+	a.plan.SetTitle("Plan: —")
+	a.session.SetTitle("Session (5h): —")
+	a.sessionReset.SetTitle("      resets in —")
+	a.weekly.SetTitle("Weekly: —")
+	a.weeklyReset.SetTitle("      resets in —")
+	a.burn.SetTitle("Forecast @ rate · —")
+	a.burnSession.SetTitle("Session (5h): —")
+	a.burnWeekly.SetTitle("Weekly: —")
+	a.speed.SetTitle("Last 5m: —")
+	a.speedLeft.SetTitle("      ↳ spare at reset: —")
+	a.speedAvg.SetTitle("Since reset: —")
+	a.speedAvgLeft.SetTitle("      ↳ spare at reset: —")
+	a.renderScoped(nil)
 }
 
 // skipCalibModel reports models we deliberately don't compute a 5h-block

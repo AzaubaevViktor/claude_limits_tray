@@ -12,7 +12,9 @@ import (
 
 func (a *App) buildMenu() {
 	a.claudeParent = systray.AddMenuItem("Claude · —", "")
-	a.account = a.claudeParent.AddSubMenuItem("Account", "")
+	a.account = a.claudeParent.AddSubMenuItem("Account: —", "")
+	a.claudeSwitchAuth = a.claudeParent.AddSubMenuItem("Use current Claude login", "")
+	a.onClick(a.claudeSwitchAuth, func() { a.useCurrentClaudeLogin() })
 	a.plan = a.claudeParent.AddSubMenuItem("Plan", "")
 	a.session = a.claudeParent.AddSubMenuItem("Session", "")
 	a.sessionReset = a.claudeParent.AddSubMenuItem("Session resets", "")
