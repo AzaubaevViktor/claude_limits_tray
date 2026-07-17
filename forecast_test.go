@@ -112,6 +112,18 @@ func TestRateTracker(t *testing.T) {
 	approx(t, sess, 1.0, 1e-3, "sess rate")
 	approx(t, week, 0.0, 1e-3, "week rate")
 
+	// A poll gap longer than the 5-minute window must still yield a rate,
+	// measured over the actual gap — not read 0 because only the newest sample
+	// falls inside the window.
+	rtGap := &RateTracker{}
+	rtGap.Update(0, 10, 5)
+	sess, week, ok = rtGap.Update(600, 40, 11) // 600s > rateWindow (300s)
+	if !ok {
+		t.Fatal("a poll gap longer than the window should still yield a rate")
+	}
+	approx(t, sess, 30.0/600, 1e-6, "sess rate over the real gap")
+	approx(t, week, 6.0/600, 1e-6, "week rate over the real gap")
+
 	rt2 := &RateTracker{}
 	rt2.Update(1000, 80, 50)
 	if _, _, ok := rt2.Update(1020, 5, 50); ok { // a drop resets

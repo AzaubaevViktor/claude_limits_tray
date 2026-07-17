@@ -205,12 +205,21 @@ func (r *RateTracker) Update(now, sess, week float64) (float64, float64, bool) {
 	if len(r.history) > rateMaxLen {
 		r.history = r.history[len(r.history)-rateMaxLen:]
 	}
+	// Base the rate on the oldest sample still inside the window, so a burst is
+	// smoothed over ~5 min. But when the poll gap is itself longer than the
+	// window (slow/manual refresh, or a grown backoff interval), that leaves only
+	// the just-added sample in range — measuring over dt=0 would wrongly read 0.
+	// Fall back to the previous sample so we always span at least the last gap.
 	cutoff := now - rateWindow
-	base := r.history[0]
-	for _, s := range r.history {
-		if s.t >= cutoff {
-			base = s
-			break
+	n := len(r.history)
+	base := r.history[n-1]
+	if n >= 2 {
+		base = r.history[n-2]
+		for _, s := range r.history[:n-1] {
+			if s.t >= cutoff {
+				base = s
+				break
+			}
 		}
 	}
 	dt := now - base.t
