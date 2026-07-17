@@ -82,8 +82,8 @@ func TestHealthColorEndpoints(t *testing.T) {
 }
 
 func TestLegendMatchesSegments(t *testing.T) {
-	if len(legendRows()) != len(segments)+1 {
-		t.Error("legend should be one row per segment + colour")
+	if len(legendRows()) != len(segments)+3 {
+		t.Error("legend should be one row per segment + three colour rows")
 	}
 }
 
@@ -114,6 +114,40 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestLimitTimeColor(t *testing.T) {
+	// Lots of quota, little time left -> purple (spending under pace).
+	if got := limitTimeColor(0.9, 0.2); got != dialPurple {
+		t.Errorf("surplus should be purple, got %v", got)
+	}
+	// Quota and time about equal -> green (on pace).
+	if got := limitTimeColor(0.5, 0.5); got != dialGreen {
+		t.Errorf("parity should be green, got %v", got)
+	}
+	// Little quota, lots of time -> red (will run out first).
+	if got := limitTimeColor(0.2, 0.9); got != dialRed {
+		t.Errorf("deficit should be red, got %v", got)
+	}
+}
+
+func TestFullCircleMode(t *testing.T) {
+	in := dialRenderInput{
+		limits:  map[string]Limit{"weekly": {Pct: 0, TimeLeft: 0.5, TimeTicks: 7}},
+		source:  "weekly",
+		full:    true,
+		hasMark: false,
+	}
+	svg := string(renderDialSVG([]dialRenderInput{in}))
+	// Two ring tracks + a full outer quota ring (0% used -> 100% left) = 3 circles.
+	if got := countSubstr(svg, "<circle"); got < 3 {
+		t.Fatalf("full mode should draw closed circles, got %d", got)
+	}
+	// The semicircle layout draws none.
+	half := string(renderDial(map[string]Limit{"weekly": {Pct: 0, TimeLeft: 0.5}}, [3]int{}, false))
+	if countSubstr(half, "<circle") != 0 {
+		t.Fatal("semicircle mode should draw no closed circles")
+	}
 }
 
 func TestTimeTickCounts(t *testing.T) {

@@ -46,8 +46,7 @@ func spareText(pct, rate, ttr float64, ttrKnown bool) string {
 }
 
 var burnRed = [3]int{255, 69, 58}
-var weeklyBurnLilac = [3]int{198, 136, 255}
-var weeklyBurnDarkRed = [3]int{128, 0, 32}
+var dialGray = [3]int{142, 142, 147} // idle centre — no tokens being spent right now
 
 // gradient stops along the continuous severity axis (pos 0..1).
 var stops = []struct {
@@ -93,14 +92,21 @@ func gradient(pos float64) [3]int {
 
 func (f Forecast) Color() [3]int { return gradient(f.Pos()) }
 
-func forecastMarkColor(session, weekly Forecast, weeklyPct float64) ([3]int, string) {
-	if weeklyPct >= 100 {
-		return weeklyBurnDarkRed, "weekly-empty"
+// speedColor colours the centre dot by burn speed: grey when nothing is being
+// spent right now, green at a sustainable pace, ramping green→yellow→red as the
+// projected spend would exhaust the session or weekly window before it resets.
+// active is whether any tokens are being consumed at the moment.
+func speedColor(session, weekly Forecast, active bool) [3]int {
+	if !active {
+		return dialGray
 	}
-	if weekly.Pos() > session.Pos() {
-		return weeklyBurnLilac, "weekly"
+	worst := session
+	if weekly.Pos() > worst.Pos() {
+		worst = weekly
 	}
-	return session.Color(), "session"
+	// The centre never advertises head-room: collapse the relaxed purple half of
+	// the severity axis onto green, so it only ever reads green→yellow→red.
+	return gradient(clamp(worst.Pos(), 0.33, 1))
 }
 
 func (f Forecast) Text() string {

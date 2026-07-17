@@ -17,6 +17,9 @@ import (
 const (
 	profileEvery   = 60
 	cacheTTL       = 600.0
+	// idleRate: a measured burn (% of quota per second) at or below this reads as
+	// "nothing being spent right now" — the centre speed dot goes grey.
+	idleRate = 1e-9
 	saveEverySecs  = 3600.0 // steady-state throttle; exit/quit/SIGINT force a flush
 	scopedPoolSize = 4
 
@@ -594,10 +597,10 @@ func (a *App) renderCodexEmpty() {
 	a.renderCodexScoped(nil)
 }
 
-func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
+func (a *App) codexDial() (dialRenderInput, string) {
 	u := a.lastCodex
 	if u == nil {
-		return blankLimits, [3]int{}, false, "codex-empty"
+		return dialRenderInput{limits: blankLimits}, "codex-empty"
 	}
 	primary := u.primary()
 	secondary := u.secondary()
@@ -616,16 +619,21 @@ func (a *App) codexDial() (map[string]Limit, [3]int, bool, string) {
 	if secondaryFc.Pos() > worst.Pos() {
 		worst = secondaryFc
 	}
-	secondaryPct := 0.0
-	if secondary != nil {
-		secondaryPct = secondary.UsedPercent
+	active := a.codexPrimaryRate > idleRate || a.codexSecondRate > idleRate
+	mark := speedColor(primaryFc, secondaryFc, active)
+
+	// Only one window left (e.g. Codex now hands out only a weekly limit) — draw
+	// it as one big full circle instead of a half-empty pair of semicircles.
+	full := (primary == nil) != (secondary == nil)
+	source := "session"
+	if primary == nil {
+		source = "weekly"
 	}
-	mark, markKey := forecastMarkColor(primaryFc, secondaryFc, secondaryPct)
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%s",
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%v-%v-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
-		iround(worst.Pos()*60), int(timeFill), markKey)
-	return limits, mark, true, key
+		iround(worst.Pos()*60), int(timeFill), active, full, source)
+	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source}, key
 }
 
 func codexLimitForDial(w *CodexWindow) Limit {
@@ -870,27 +878,27 @@ func (a *App) setIcon(png []byte, key string) {
 // live dial or, when that side is in error, a red spark that the blink loop
 // toggles on and off — so Claude and Codex can blink red on their own.
 func (a *App) renderIcon() {
-	cl, cc, ch, ck := a.errorOr(a.errorOn, "claude", a.claudeDial)
-	xl, xc, xh, xk := a.errorOr(a.codexErrorOn, "codex", a.codexDial)
-	a.setIcon(renderDualDial(cl, cc, ch, xl, xc, xh), ck+"|"+xk)
+	ci, ck := a.errorOr(a.errorOn, "claude", a.claudeDial)
+	xi, xk := a.errorOr(a.codexErrorOn, "codex", a.codexDial)
+	a.setIcon(renderDialSVG([]dialRenderInput{ci, xi}), ck+"|"+xk)
 }
 
 // errorOr returns the red-blink error frame for a side that's erroring, or the
 // side's normal dial otherwise.
-func (a *App) errorOr(on bool, name string, dial func() (map[string]Limit, [3]int, bool, string)) (map[string]Limit, [3]int, bool, string) {
+func (a *App) errorOr(on bool, name string, dial func() (dialRenderInput, string)) (dialRenderInput, string) {
 	if !on {
 		return dial()
 	}
 	if a.blink {
-		return blankLimits, burnRed, true, name + "-err-on"
+		return dialRenderInput{limits: blankLimits, markColor: burnRed, hasMark: true}, name + "-err-on"
 	}
-	return blankLimits, [3]int{}, false, name + "-err-off"
+	return dialRenderInput{limits: blankLimits}, name + "-err-off"
 }
 
-func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
+func (a *App) claudeDial() (dialRenderInput, string) {
 	u := a.lastUsage
 	if u == nil {
-		return blankLimits, [3]int{}, false, "claude-empty"
+		return dialRenderInput{limits: blankLimits}, "claude-empty"
 	}
 	sessPct, weekPct := u.FiveHour.Utilization, u.SevenDay.Utilization
 	sessLeft, sessKnown := secondsUntil(u.FiveHour.ResetsAt)
@@ -906,16 +914,17 @@ func (a *App) claudeDial() (map[string]Limit, [3]int, bool, string) {
 	if weekFc.Pos() > worst.Pos() {
 		worst = weekFc
 	}
-	mark, markKey := forecastMarkColor(sessFc, weekFc, weekPct)
+	active := a.sessRate > idleRate || a.weekRate > idleRate
+	mark := speedColor(sessFc, weekFc, active)
 	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
 		"session": {Pct: sessPct, TimeLeft: sessTf, TimeTicks: hourTicks(fiveHourSecs)},
 		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%s-%d", iround(sessPct), iround(weekPct),
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%v-%d", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
-		markKey, iround(weekBlock*10))
-	return limits, mark, true, key
+		active, iround(weekBlock*10))
+	return dialRenderInput{limits: limits, markColor: mark, hasMark: true}, key
 }
 
 // weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the

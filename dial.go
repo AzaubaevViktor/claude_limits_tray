@@ -41,7 +41,37 @@ var sideLabel = map[string]string{"left": "left", "right": "right"}
 var dialGreen = [3]int{48, 209, 88}
 var dialYellow = [3]int{255, 204, 0}
 var dialRed = [3]int{255, 69, 58}
+var dialPurple = [3]int{175, 82, 222} // more quota left than time — spending under pace
 var dialTrack = [3]int{150, 150, 150}
+
+// lerpColor blends a->b as t runs 0..1.
+func lerpColor(a, b [3]int, t float64) [3]int {
+	t = clamp(t, 0, 1)
+	var out [3]int
+	for i := 0; i < 3; i++ {
+		out[i] = int(math.Round(float64(a[i]) + (float64(b[i])-float64(a[i]))*t))
+	}
+	return out
+}
+
+// limitTimeColor colours the outer (quota) ring by how the fraction of quota
+// left compares to the fraction of the window's time left:
+//
+//	purple  quota left clearly exceeds time left (spending below pace, headroom)
+//	green   the two are about equal (on pace to finish right around the reset)
+//	red     quota left trails time left (you'll run out before the reset)
+func limitTimeColor(limitLeft, timeLeft float64) [3]int {
+	d := clamp(limitLeft, 0, 1) - clamp(timeLeft, 0, 1)
+	const band = 0.05 // dead-band around parity that reads as plain green
+	switch {
+	case d > band:
+		return lerpColor(dialGreen, dialPurple, (d-band)/(0.5-band))
+	case d < -band:
+		return lerpColor(dialGreen, dialRed, (-d-band)/(0.5-band))
+	default:
+		return dialGreen
+	}
+}
 
 // timeFill selects how the inner (time) ring fills. The colour is the same
 // either way — greener the less time is left in the window — only the arc
@@ -85,8 +115,10 @@ var segments = []segment{
 	{"inner", "right", "weekly", "time", false, "Weekly time"},
 }
 
+// legendRows: one row per dial segment, then three rows explaining the three
+// colour systems (outer quota-vs-time, inner time, centre speed).
 func legendRows() [][2]string {
-	rows := make([][2]string, 0, len(segments)+1)
+	rows := make([][2]string, 0, len(segments)+3)
 	for _, s := range segments {
 		label := s.label
 		if s.metric == "time" {
@@ -94,7 +126,11 @@ func legendRows() [][2]string {
 		}
 		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
-	rows = append(rows, [2]string{"Colour", "green plenty → red low"})
+	rows = append(rows,
+		[2]string{"Outer colour", "purple: more limit than time · green: on pace · red: less limit than time"},
+		[2]string{"Inner colour", "time left — greener toward the reset"},
+		[2]string{"Centre dot", "speed — grey idle · green ok · yellow→red running out before reset"},
+	)
 	return rows
 }
 
@@ -143,18 +179,19 @@ func metricFor(name string, l Limit) (float64, float64) {
 
 func healthColor(health float64) [3]int {
 	health = clamp(health, 0, 1)
-	var a, b [3]int
-	var t float64
 	if health >= 0.5 {
-		a, b, t = dialYellow, dialGreen, (health-0.5)/0.5
-	} else {
-		a, b, t = dialRed, dialYellow, health/0.5
+		return lerpColor(dialYellow, dialGreen, (health-0.5)/0.5)
 	}
-	var out [3]int
-	for i := 0; i < 3; i++ {
-		out[i] = int(math.Round(float64(a[i]) + (float64(b[i])-float64(a[i]))*t))
+	return lerpColor(dialRed, dialYellow, health/0.5)
+}
+
+// segColor picks a segment's colour: the outer quota ring reads quota-left vs
+// time-left (purple/green/red); every other ring uses the health gradient.
+func segColor(seg segment, l Limit, health float64) [3]int {
+	if seg.metric == "percent_left" {
+		return limitTimeColor(clamp(1-l.Pct/100, 0, 1), clamp(l.TimeLeft, 0, 1))
 	}
-	return out
+	return healthColor(health)
 }
 
 // phi converts a "clockwise from the top" angle (degrees) to SVG's angle (rad).
@@ -178,6 +215,11 @@ type dialRenderInput struct {
 	limits    map[string]Limit
 	markColor [3]int
 	hasMark   bool
+	// full draws a single window as one big full circle instead of the two
+	// semicircles — used when only one limit remains (e.g. Codex weekly-only).
+	// source names which limits key that circle shows ("session"/"weekly").
+	full   bool
+	source string
 }
 
 func renderDialSVG(inputs []dialRenderInput) []byte {
@@ -198,6 +240,10 @@ func renderDialSVG(inputs []dialRenderInput) []byte {
 }
 
 func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
+	if input.full {
+		renderFullGroup(b, input, xoff)
+		return
+	}
 	span := 180.0 - 2*endGap
 
 	// faint tracks, one per ring/side, so the centre gap stays empty
@@ -209,7 +255,8 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 	}
 
 	for _, seg := range segments {
-		length, health := metricFor(seg.metric, input.limits[seg.source])
+		l := input.limits[seg.source]
+		length, health := metricFor(seg.metric, l)
 		length = clamp(length, 0, 1)
 		if length <= 0.004 {
 			continue
@@ -222,7 +269,7 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 			alpha = 1.0
 		}
 		writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
-			healthColor(health), alpha, dialSW)
+			segColor(seg, l, health), alpha, dialSW)
 	}
 
 	// Thin separators slicing the weekly (right) semicircle into "one full
@@ -244,6 +291,89 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 
 	if input.hasMark {
 		writeMark(b, xoff, input.markColor)
+	}
+}
+
+// renderFullGroup draws one window as a single full circle: the outer quota
+// ring (coloured quota-vs-time), the inner time ring, their ticks, and the
+// centre speed dot. Used when only one limit remains (input.source names it).
+func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
+	ox := xoff + dialCX
+	l := input.limits[input.source]
+
+	for _, r := range rings { // faint full-circle tracks
+		writeCircle(b, ox, r, dialTrack, 0.45)
+	}
+
+	limitLeft := clamp(1-l.Pct/100, 0, 1)
+	writeSweep(b, ox, rings["outer"], limitLeft,
+		limitTimeColor(limitLeft, clamp(l.TimeLeft, 0, 1)), 1.0)
+
+	tlen, thealth := metricFor("time", l)
+	writeSweep(b, ox, rings["inner"], tlen, healthColor(thealth), 0.85)
+
+	writeFullBlockTicks(b, ox, l.BlockPct)
+	writeFullRingTicks(b, ox, rings["inner"], l.TimeTicks)
+
+	if input.hasMark {
+		writeMark(b, xoff, input.markColor)
+	}
+}
+
+// writeCircle strokes a full ring (no fill) at radius r.
+func writeCircle(b *strings.Builder, ox, r float64, c [3]int, alpha float64) {
+	b.WriteString(fmt.Sprintf(
+		`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f"/>`,
+		ox, dialCY, r, svgRGB(c), dialSW, alpha))
+}
+
+// writeSweep draws frac (0..1) of a full circle, starting at the top and going
+// clockwise. A full fraction closes into a circle, since a 360° arc collapses
+// to a point.
+func writeSweep(b *strings.Builder, ox, r, frac float64, c [3]int, alpha float64) {
+	frac = clamp(frac, 0, 1)
+	if frac <= 0.004 {
+		return
+	}
+	if frac >= 0.999 {
+		writeCircle(b, ox, r, c, alpha)
+		return
+	}
+	writeArc(b, ox, r, 0, frac*360, c, alpha, dialSW)
+}
+
+// writeFullRingTicks notches a full-circle ring into n equal segments (n ticks)
+// — the whole-circle analogue of writeRingTicks.
+func writeFullRingTicks(b *strings.Builder, ox, r float64, n int) {
+	if n < 2 {
+		return
+	}
+	writeFullTicks(b, ox, r, func(i int) float64 { return float64(i) / float64(n) * 360 }, n)
+}
+
+// writeFullBlockTicks draws a notch at each blockPct boundary of the quota
+// around the full outer ring; blockPct <= 0 draws nothing.
+func writeFullBlockTicks(b *strings.Builder, ox, blockPct float64) {
+	if blockPct <= 0 {
+		return
+	}
+	var degs []float64
+	for p := blockPct; p < 100-1e-6; p += blockPct {
+		degs = append(degs, p/100*360)
+	}
+	writeFullTicks(b, ox, rings["outer"], func(i int) float64 { return degs[i] }, len(degs))
+}
+
+// writeFullTicks stamps n radial notches across a full-circle ring at the angles
+// deg(i) returns (clockwise from the top).
+func writeFullTicks(b *strings.Builder, ox, r float64, deg func(int) float64, n int) {
+	in, out := r-dialSW/2-0.1, r+dialSW/2+0.1
+	for i := 0; i < n; i++ {
+		ph := phi(deg(i))
+		c, s := math.Cos(ph), math.Sin(ph)
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(15,15,15)" stroke-width="0.45" stroke-opacity="0.9"/>`,
+			ox+in*c, dialCY+in*s, ox+out*c, dialCY+out*s))
 	}
 }
 
@@ -324,19 +454,12 @@ func svgRGB(c [3]int) string {
 	return fmt.Sprintf("rgb(%d,%d,%d)", c[0], c[1], c[2])
 }
 
+// writeMark draws the centre speed dot: a filled circle coloured by burn speed
+// (grey idle → green → yellow → red).
 func writeMark(b *strings.Builder, xoff float64, c [3]int) {
-	const rays = 12
-	r0, r1 := 0.35, 2.15
-	for k := 0; k < rays; k++ {
-		ang := float64(k) * 2 * math.Pi / rays
-		x0 := xoff + dialCX + r0*math.Cos(ang)
-		y0 := dialCY + r0*math.Sin(ang)
-		x1 := xoff + dialCX + r1*math.Cos(ang)
-		y1 := dialCY + r1*math.Sin(ang)
-		b.WriteString(fmt.Sprintf(
-			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.82" stroke-linecap="round"/>`,
-			x0, y0, x1, y1, svgRGB(c)))
-	}
+	b.WriteString(fmt.Sprintf(
+		`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s"/>`,
+		xoff+dialCX, dialCY, 2.0, svgRGB(c)))
 }
 
 var blankLimits = map[string]Limit{

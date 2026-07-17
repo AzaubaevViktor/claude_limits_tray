@@ -21,9 +21,9 @@ func TestNoBlockBeforeCalibration(t *testing.T) {
 	}
 	// The dial draws no separators until measured (BlockPct == 0).
 	a.lastUsage = &Usage{FiveHour: Window{Utilization: 20}, SevenDay: Window{Utilization: 30}}
-	limits, _, ok, _ := a.claudeDial()
-	if !ok || limits["weekly"].BlockPct != 0 {
-		t.Fatalf("uncalibrated should draw no separators, BlockPct=%v ok=%v", limits["weekly"].BlockPct, ok)
+	in, _ := a.claudeDial()
+	if in.limits["weekly"].BlockPct != 0 {
+		t.Fatalf("uncalibrated should draw no separators, BlockPct=%v", in.limits["weekly"].BlockPct)
 	}
 }
 

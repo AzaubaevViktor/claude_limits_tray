@@ -45,18 +45,22 @@ func TestGradientEndpoints(t *testing.T) {
 	}
 }
 
-func TestForecastMarkColorCallsOutWeekly(t *testing.T) {
-	session := projectForecast(20, 0, 3600, true)
-	weekly := projectForecast(80, 40.0/3600, 4*3600, true)
+func TestSpeedColor(t *testing.T) {
+	idle := projectForecast(20, 0, 3600, true)
+	overshoot := projectForecast(80, 40.0/3600, 4*3600, true)
 
-	if got, key := forecastMarkColor(session, weekly, 99); got != weeklyBurnLilac || key != "weekly" {
-		t.Fatalf("weekly warning = %v/%q, want lilac/weekly", got, key)
+	// No spend right now -> grey, regardless of the forecast.
+	if got := speedColor(idle, overshoot, false); got != dialGray {
+		t.Fatalf("inactive should be grey, got %v", got)
 	}
-	if got, key := forecastMarkColor(session, weekly, 100); got != weeklyBurnDarkRed || key != "weekly-empty" {
-		t.Fatalf("weekly empty = %v/%q, want dark red/weekly-empty", got, key)
+	// Relaxed pace collapses onto green (never purple/head-room on the centre).
+	if got := speedColor(idle, idle, true); got != dialGreen {
+		t.Fatalf("relaxed active should be green, got %v", got)
 	}
-	if got, key := forecastMarkColor(weekly, session, 20); got == weeklyBurnLilac || key != "session" {
-		t.Fatalf("session warning should keep normal forecast colour, got %v/%q", got, key)
+	// A big overshoot in either window drives the dot red-ward (red high, green
+	// low) — distinct from the green "on pace" dot.
+	if got := speedColor(idle, overshoot, true); got[0] < 200 || got[1] > 150 {
+		t.Fatalf("overshoot should be red-ward, got %v", got)
 	}
 }
 
