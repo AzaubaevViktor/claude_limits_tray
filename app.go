@@ -491,10 +491,14 @@ func (a *App) apply() {
 	a.renderIcon()
 	systray.SetTitle("")
 
+	sessReset, sessResetOk := parseISO(u.FiveHour.ResetsAt)
+	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
 	a.session.SetTitle(fmt.Sprintf("🕐 Session (5h):  %.0f%% left", 100-sessPct))
-	a.sessionReset.SetTitle("      resets in " + fmtRemaining(sessLeft, sessKnown))
+	a.sessionReset.SetTitle("      resets in " +
+		withClock(fmtRemaining(sessLeft, sessKnown), sessReset, sessResetOk))
 	a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
-	a.weeklyReset.SetTitle("      resets in " + fmtRemaining(weekLeft, weekKnown) +
+	a.weeklyReset.SetTitle("      resets in " +
+		withClock(fmtRemaining(weekLeft, weekKnown), weekReset, weekResetOk) +
 		"  ·  " + a.weekBlocksText(weekPct))
 
 	avgSessH, asOk := avgRate(sessPct, sessLeft, fiveHourSecs, 3600, sessKnown)
@@ -659,8 +663,17 @@ func (a *App) renderCodexWindow(row, reset *systray.MenuItem, name string, w *Co
 		return
 	}
 	left, known := codexSecondsUntil(w)
+	t, tok := codexResetAt(w)
 	row.SetTitle(fmt.Sprintf("%s:  %.0f%% left", name, 100-w.UsedPercent))
-	reset.SetTitle("      resets in " + fmtRemaining(left, known))
+	reset.SetTitle("      resets in " + withClock(fmtRemaining(left, known), t, tok))
+}
+
+// codexResetAt is a window's absolute reset moment (from its epoch field).
+func codexResetAt(w *CodexWindow) (time.Time, bool) {
+	if w == nil || w.ResetsAt <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(w.ResetsAt, 0), true
 }
 
 func (a *App) codexForecast(w *CodexWindow, rate float64) Forecast {
@@ -725,9 +738,10 @@ func (a *App) renderCodexScoped(limits []CodexLimit) {
 			w = l.Secondary
 		}
 		left, known := codexSecondsUntil(w)
+		t, tok := codexResetAt(w)
 		it := a.codexScoped[shown]
 		it.SetTitle(fmt.Sprintf("%s:  %.0f%% left · %s", name, 100-w.UsedPercent,
-			fmtRemaining(left, known)))
+			withClock(fmtRemaining(left, known), t, tok)))
 		it.Show()
 		shown++
 	}
@@ -850,9 +864,10 @@ func (a *App) renderScoped(limits []ScopedLimit) {
 		}
 		model := scopedModelName(l)
 		left, known := secondsUntil(l.ResetsAt)
+		reset, resetOk := parseISO(l.ResetsAt)
 		it := a.scoped[shown]
 		it.SetTitle(fmt.Sprintf("%s:  %.0f%% left · %s%s", model, 100-l.Percent,
-			fmtRemaining(left, known), a.modelBlockText(model)))
+			withClock(fmtRemaining(left, known), reset, resetOk), a.modelBlockText(model)))
 		it.Show()
 		shown++
 	}

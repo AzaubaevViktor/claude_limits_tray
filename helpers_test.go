@@ -14,6 +14,32 @@ func approx(t *testing.T, got, want, tol float64, msg string) {
 	}
 }
 
+func TestFmtResetClock(t *testing.T) {
+	if got := fmtResetClock(time.Now(), false); got != "" {
+		t.Errorf("unknown reset should be empty, got %q", got)
+	}
+	now := time.Now()
+	// Same day -> bare clock.
+	today := time.Date(now.Year(), now.Month(), now.Day(), 23, 30, 0, 0, now.Location())
+	if now.Hour() < 23 { // only meaningful when 23:30 is still ahead today
+		if got := fmtResetClock(today, true); got != "23:30" {
+			t.Errorf("same-day should be bare clock, got %q", got)
+		}
+	}
+	// A few days out -> weekday-prefixed.
+	soon := now.Add(3 * 24 * time.Hour)
+	if got := fmtResetClock(soon, true); got != soon.Format("Mon 15:04") {
+		t.Errorf("within-week reset = %q, want %q", got, soon.Format("Mon 15:04"))
+	}
+	// withClock appends only when known.
+	if got := withClock("2h", soon, true); got != "2h · "+soon.Format("Mon 15:04") {
+		t.Errorf("withClock known = %q", got)
+	}
+	if got := withClock("2h", time.Time{}, false); got != "2h" {
+		t.Errorf("withClock unknown should pass through, got %q", got)
+	}
+}
+
 func TestFmtRemaining(t *testing.T) {
 	cases := []struct {
 		s     float64

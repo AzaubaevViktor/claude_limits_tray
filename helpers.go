@@ -160,6 +160,40 @@ func fmtRemaining(seconds float64, known bool) string {
 	return fmt.Sprintf("%dd %dh", d, h)
 }
 
+// fmtResetClock formats an absolute reset moment as a short local clock time:
+// bare "15:04" when it lands today, "Mon 15:04" within the coming week, and
+// "Jan 2 15:04" beyond. Empty when the reset time isn't known.
+func fmtResetClock(t time.Time, known bool) string {
+	if !known {
+		return ""
+	}
+	now := time.Now()
+	t = t.In(now.Location())
+	switch {
+	case sameDay(t, now):
+		return t.Format("15:04")
+	case t.Sub(now) < 6*24*time.Hour:
+		return t.Format("Mon 15:04")
+	default:
+		return t.Format("Jan 2 15:04")
+	}
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// withClock appends the absolute reset moment to a "resets in <dur>" fragment,
+// as " · <clock>"; unchanged when the moment isn't known.
+func withClock(remaining string, t time.Time, known bool) string {
+	if c := fmtResetClock(t, known); c != "" {
+		return remaining + " · " + c
+	}
+	return remaining
+}
+
 func fmtAgo(seconds float64) string {
 	s := int(math.Max(0, seconds))
 	if s < 60 {
