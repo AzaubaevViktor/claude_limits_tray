@@ -1099,6 +1099,28 @@ func (a *App) loadState() {
 			a.profile = &p
 		}
 	}
+	a.seedRates()
+}
+
+// seedRates primes the rate trackers with the last persisted sample, timestamped
+// at the last successful poll, so the FIRST poll after a restart measures a rate
+// straight away instead of needing two fresh polls before "Last 5m" leaves zero.
+// (Claude and Codex are fetched in one poll cycle, so lastOk stands in for the
+// Codex sample time too.) A window that reset during downtime self-corrects:
+// RateTracker.Update drops the seed when the new utilisation comes in lower.
+func (a *App) seedRates() {
+	if a.lastOk.IsZero() {
+		return
+	}
+	t := float64(a.lastOk.Unix())
+	if a.lastUsage != nil {
+		a.rates.Update(t, a.lastUsage.FiveHour.Utilization, a.lastUsage.SevenDay.Utilization)
+	}
+	if a.lastCodex != nil {
+		if p, s, ok := codexPercents(a.lastCodex); ok {
+			a.cRates.Update(t, p, s)
+		}
+	}
 }
 
 func (a *App) saveState(force bool) {
