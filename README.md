@@ -25,7 +25,11 @@ dial has two concentric rings, split left/right:
   right    Long-window  % left      Long window:  time since reset
 ```
 
-- **Percent arcs** (outer) — how much quota is left: green plenty → red low.
+- **Quota arcs** (outer) — how much quota is left, coloured by how that compares
+  to how much of the window's **time** is left:
+  - 🟣 purple — more quota left than time (you're spending **under** pace — headroom)
+  - 🟢 green — quota and time about equal (**on pace** to finish around the reset)
+  - 🔴 red — less quota left than time (you'll **run out before** the reset)
 - **Weekly notches** (outer right) — thin separators slice the weekly arc into
   **"one full 5-hour session" blocks**, so the notches still lit tell you *how
   many more whole sessions* of weekly budget you have. The block size is
@@ -36,12 +40,15 @@ dial has two concentric rings, split left/right:
   time *elapsed* (default) or by time *left*; the colour is the same either way.
   Fixed tick marks split each time ring into known units — the **session by
   hours**, the **weekly by days**.
-- **Centre spark** — the burn-rate forecast (the worse of the two windows):
-  - 🟣 purple — >10% of quota will still be spare at the reset
-  - 🟢 green — you'll finish right around 0% (on track)
-  - 🟡 yellow — you'd overshoot, but a ≤1h break saves it
-  - 🔴 red — overshoot needing a >1h break
-- On an error that side's dial goes all-grey with a **red blinking** spark —
+- **Centre dot** — your live **burn speed** (the worse of the two windows):
+  - ⚪ grey — nothing being spent right now
+  - 🟢 green — a sustainable pace
+  - 🟡 yellow — spending fast
+  - 🔴 red — spending so fast you'd run out **before** the session or weekly reset
+- **Single-limit mode** — when only **one** window is in play (e.g. Codex now
+  hands out only a weekly limit) the dial auto-collapses to **one big full
+  circle** for that window instead of a half-empty pair of semicircles.
+- On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.
 
 Click it for everything as numbers, plus your account.
