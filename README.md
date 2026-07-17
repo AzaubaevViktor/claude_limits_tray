@@ -69,9 +69,12 @@ Click it for everything as numbers, plus your account.
   notches as "≈ N / M × 5h blocks left", with the calibrated cost of one block
   (weekly-% per session) and the spend basis it was measured from, globally and
   **per model**.
-- Consumption **speed** two ways — the **last 5 minutes** and the **average
-  since the window opened** — with session in **%/h** and weekly in **%/d**,
-  each with the **spare left at reset** if that pace holds.
+- Consumption **speed** two ways — a **recent** rate and the **average since the
+  window opened** — with session in **%/h** and weekly in **%/d**, each with the
+  **spare left at reset** if that pace holds. The recent line is labelled with
+  the **actual span it was measured over** (nominally ~5 min, but widening to the
+  real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
+  manual refresh never misreads as 0).
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex

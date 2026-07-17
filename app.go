@@ -110,6 +110,7 @@ type App struct {
 	lastUsage    *Usage
 	sessRate     float64
 	weekRate     float64
+	rateSpan     float64 // seconds the recent Claude rate was measured over
 
 	lastCodexRaw     []byte
 	lastCodex        *CodexUsage
@@ -118,6 +119,7 @@ type App struct {
 	lastCodexFailMsg string
 	codexPrimaryRate float64
 	codexSecondRate  float64
+	codexRateSpan    float64 // seconds the recent Codex rate was measured over
 
 	statePath string
 
@@ -350,6 +352,7 @@ func (a *App) noteCodex(r pollResult) {
 	if primary, secondary, ok := codexPercents(r.codexUsage); ok {
 		if p, s, ok := a.cRates.Update(nowSecs(), primary, secondary); ok {
 			a.codexPrimaryRate, a.codexSecondRate = p, s
+			a.codexRateSpan = a.cRates.Span()
 		}
 	}
 	a.lastCodexRaw = r.codexRaw
@@ -399,6 +402,7 @@ func (a *App) onSuccess(r pollResult) {
 	if s, w, ok := a.rates.Update(nowSecs(), r.usage.FiveHour.Utilization,
 		r.usage.SevenDay.Utilization); ok {
 		a.sessRate, a.weekRate = s, w
+		a.rateSpan = a.rates.Span()
 	}
 	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
 	for _, l := range r.usage.Limits {
@@ -505,8 +509,8 @@ func (a *App) apply() {
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
 	sinceSess, _ := avgRate(sessPct, sessLeft, fiveHourSecs, 1, sessKnown)
 	sinceWeek, _ := avgRate(weekPct, weekLeft, weekSecs, 1, weekKnown)
-	a.speed.SetTitle(fmt.Sprintf("⚡ Last 5m:  sess %.1f%%/h · week %.1f%%/d",
-		a.sessRate*3600, a.weekRate*86400))
+	a.speed.SetTitle(fmt.Sprintf("⚡ Last %s:  sess %.1f%%/h · week %.1f%%/d",
+		spanLabel(a.rateSpan), a.sessRate*3600, a.weekRate*86400))
 	a.speedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  sess %s · week %s",
 		spareText(sessPct, a.sessRate, sessWork, sw),
 		spareText(weekPct, a.weekRate, weekWork, ww)))
@@ -556,8 +560,8 @@ func (a *App) renderCodex() {
 	a.codexBurnPrimary.SetTitle("Primary:  " + primaryFc.Text())
 	a.codexBurnSecondary.SetTitle("Secondary:  " + secondaryFc.Text())
 
-	a.codexSpeed.SetTitle(fmt.Sprintf("Last 5m:  primary %.1f%%/h · secondary %.1f%%/h",
-		a.codexPrimaryRate*3600, a.codexSecondRate*3600))
+	a.codexSpeed.SetTitle(fmt.Sprintf("Last %s:  primary %.1f%%/h · secondary %.1f%%/h",
+		spanLabel(a.codexRateSpan), a.codexPrimaryRate*3600, a.codexSecondRate*3600))
 	a.codexSpeedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
 		a.codexSpare(primary, a.codexPrimaryRate), a.codexSpare(secondary, a.codexSecondRate)))
 	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s%%/h · secondary %s%%/h",

@@ -184,7 +184,13 @@ type rateSample struct{ t, sess, week float64 }
 
 type RateTracker struct {
 	history []rateSample
+	lastDt  float64 // span (s) the most recent successful rate was measured over
 }
+
+// Span is how many seconds the last computed rate was measured over — the real
+// window behind the "Last …" label, which can exceed rateWindow when polls are
+// sparse. 0 until a rate has been computed.
+func (r *RateTracker) Span() float64 { return r.lastDt }
 
 const (
 	rateWindow = 300.0
@@ -226,5 +232,6 @@ func (r *RateTracker) Update(now, sess, week float64) (float64, float64, bool) {
 	if dt < rateMinDt {
 		return 0, 0, false
 	}
+	r.lastDt = dt
 	return math.Max(0, (sess-base.sess)/dt), math.Max(0, (week-base.week)/dt), true
 }

@@ -194,6 +194,27 @@ func withClock(remaining string, t time.Time, known bool) string {
 	return remaining
 }
 
+// fmtSpan renders a measurement span compactly: "45s", "5m", "1h03m".
+func fmtSpan(secs float64) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", int(math.Round(math.Max(0, secs))))
+	}
+	m := int(math.Round(secs / 60))
+	if m < 60 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dh%02dm", m/60, m%60)
+}
+
+// spanLabel is fmtSpan for a measured span, or the nominal "~5m" window before
+// any rate has been measured yet (span 0).
+func spanLabel(secs float64) string {
+	if secs <= 0 {
+		return "~5m"
+	}
+	return fmtSpan(secs)
+}
+
 func fmtAgo(seconds float64) string {
 	s := int(math.Max(0, seconds))
 	if s < 60 {

@@ -40,6 +40,26 @@ func TestFmtResetClock(t *testing.T) {
 	}
 }
 
+func TestFmtSpanAndLabel(t *testing.T) {
+	cases := []struct {
+		secs float64
+		want string
+	}{
+		{0, "0s"}, {45, "45s"}, {90, "2m"}, {300, "5m"}, {720, "12m"}, {3780, "1h03m"},
+	}
+	for _, c := range cases {
+		if got := fmtSpan(c.secs); got != c.want {
+			t.Errorf("fmtSpan(%v) = %q, want %q", c.secs, got, c.want)
+		}
+	}
+	if got := spanLabel(0); got != "~5m" {
+		t.Errorf("unmeasured span should be nominal ~5m, got %q", got)
+	}
+	if got := spanLabel(720); got != "12m" {
+		t.Errorf("measured span should format, got %q", got)
+	}
+}
+
 func TestFmtRemaining(t *testing.T) {
 	cases := []struct {
 		s     float64
