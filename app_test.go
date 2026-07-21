@@ -153,3 +153,27 @@ func TestPersistCalibRoundTrip(t *testing.T) {
 		t.Fatalf("model calib not restored: %v measured=%v", bp, measured)
 	}
 }
+
+func TestSessionLeftTextWeeklyCap(t *testing.T) {
+	a := newApp()
+	// One session costs 15% of the weekly (ds=100 -> dw=15).
+	a.calib.Restore(100, 15)
+
+	// 3% weekly left -> only 3/15 = 20% of the session is usable, though its own
+	// budget shows 80% left.
+	got := a.sessionLeftText(20, 97) // sessPct=20 (80% left), weekPct=97 (3% left)
+	if !strings.Contains(got, "80% left") || !strings.Contains(got, "20% usable (weekly cap)") {
+		t.Fatalf("capped session text = %q", got)
+	}
+
+	// Plenty of weekly left -> no cap note.
+	if got := a.sessionLeftText(80, 20); got != "20% left" {
+		t.Fatalf("uncapped session text = %q", got)
+	}
+
+	// Not calibrated -> no cap note even when the weekly is low.
+	b := newApp()
+	if got := b.sessionLeftText(20, 97); got != "80% left" {
+		t.Fatalf("uncalibrated session text = %q", got)
+	}
+}

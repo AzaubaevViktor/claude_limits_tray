@@ -133,21 +133,30 @@ func TestLimitTimeColor(t *testing.T) {
 
 func TestSessionCappedByWeeklyGreyTail(t *testing.T) {
 	grey := svgRGB(dialUnavail)
-	// Weekly (main) has less left (20%) than session (80% left) -> grey tail.
+	// 3% weekly left, one session costs 15% of the weekly -> only 3/15 = 20% of
+	// the session is spendable, though 80% of its budget remains. Grey tail.
 	capped := map[string]Limit{
-		"session": {Pct: 20, TimeLeft: 0.5}, // 80% session left
-		"weekly":  {Pct: 80, TimeLeft: 0.5}, // 20% weekly left
+		"session": {Pct: 20, TimeLeft: 0.5},               // 80% session left
+		"weekly":  {Pct: 97, TimeLeft: 0.5, BlockPct: 15}, // 3% weekly left
 	}
 	if svg := string(renderDial(capped, [3]int{0, 0, 0}, false)); !strings.Contains(svg, grey) {
-		t.Fatalf("session should show a grey unavailable tail when weekly left is smaller:\n%s", svg)
+		t.Fatalf("session should show a grey unavailable tail when the weekly caps it:\n%s", svg)
 	}
-	// Weekly has more left than session -> nothing is capped, no grey.
+	// Plenty of weekly left (80%, ~5 sessions) -> nothing is capped, no grey.
 	uncapped := map[string]Limit{
-		"session": {Pct: 80, TimeLeft: 0.5}, // 20% session left
-		"weekly":  {Pct: 20, TimeLeft: 0.5}, // 80% weekly left
+		"session": {Pct: 80, TimeLeft: 0.5},               // 20% session left
+		"weekly":  {Pct: 20, TimeLeft: 0.5, BlockPct: 15}, // 80% weekly left
 	}
 	if svg := string(renderDial(uncapped, [3]int{0, 0, 0}, false)); strings.Contains(svg, grey) {
-		t.Fatalf("no grey tail expected when weekly left exceeds session left:\n%s", svg)
+		t.Fatalf("no grey tail expected when the weekly has sessions to spare:\n%s", svg)
+	}
+	// No BlockPct calibrated yet -> can't convert, so no cap is drawn.
+	nocal := map[string]Limit{
+		"session": {Pct: 20, TimeLeft: 0.5},
+		"weekly":  {Pct: 97, TimeLeft: 0.5},
+	}
+	if svg := string(renderDial(nocal, [3]int{0, 0, 0}, false)); strings.Contains(svg, grey) {
+		t.Fatalf("no grey tail expected before BlockPct is known:\n%s", svg)
 	}
 }
 

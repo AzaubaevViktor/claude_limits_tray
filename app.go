@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	profileEvery   = 60
-	cacheTTL       = 600.0
+	profileEvery = 60
+	cacheTTL     = 600.0
 	// idleRate: a measured burn (% of quota per second) at or below this reads as
 	// "nothing being spent right now" — the centre speed dot goes grey.
-	idleRate = 1e-9
+	idleRate       = 1e-9
 	saveEverySecs  = 3600.0 // steady-state throttle; exit/quit/SIGINT force a flush
 	scopedPoolSize = 4
 
@@ -497,7 +497,7 @@ func (a *App) apply() {
 
 	sessReset, sessResetOk := parseISO(u.FiveHour.ResetsAt)
 	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
-	a.session.SetTitle(fmt.Sprintf("🕐 Session (5h):  %.0f%% left", 100-sessPct))
+	a.session.SetTitle("🕐 Session (5h):  " + a.sessionLeftText(sessPct, weekPct))
 	a.sessionReset.SetTitle("      resets in " +
 		withClock(fmtRemaining(sessLeft, sessKnown), sessReset, sessResetOk))
 	a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
@@ -944,6 +944,23 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
 		active, iround(weekBlock*10))
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true}, key
+}
+
+// sessionLeftText renders the session's "% left", noting when the weekly ("main")
+// limit caps how much of it is actually spendable. One full session costs bp% of
+// the weekly, so the weekly's remaining budget covers only (weekLeft/bp) of a
+// session; when that is below the session budget left, the rest is unreachable.
+func (a *App) sessionLeftText(sessPct, weekPct float64) string {
+	sessLeft := math.Max(0, 100-sessPct)
+	bp, ok := a.calib.BlockPct()
+	if ok && bp > 0 {
+		weekLeft := math.Max(0, 100-weekPct)
+		usable := math.Min(sessLeft, weekLeft/bp*100) // % of the session actually spendable
+		if usable < sessLeft-0.5 {
+			return fmt.Sprintf("%.0f%% left · %.0f%% usable (weekly cap)", sessLeft, usable)
+		}
+	}
+	return fmt.Sprintf("%.0f%% left", sessLeft)
 }
 
 // weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the
