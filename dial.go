@@ -43,6 +43,7 @@ var dialYellow = [3]int{255, 204, 0}
 var dialRed = [3]int{255, 69, 58}
 var dialPurple = [3]int{175, 82, 222} // more quota left than time — spending under pace
 var dialTrack = [3]int{150, 150, 150}
+var dialUnavail = [3]int{200, 200, 200} // session budget unreachable because the weekly cap runs out first
 
 // lerpColor blends a->b as t runs 0..1.
 func lerpColor(a, b [3]int, t float64) [3]int {
@@ -127,7 +128,7 @@ func legendRows() [][2]string {
 		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
 	rows = append(rows,
-		[2]string{"Outer colour", "purple: more limit than time · green: on pace · red: less limit than time"},
+		[2]string{"Outer colour", "purple: more limit than time · green: on pace · red: less limit than time · grey: capped by weekly"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "speed — grey idle · green ok · yellow→red running out before reset"},
 	)
@@ -267,6 +268,23 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		alpha := 0.85
 		if seg.bright {
 			alpha = 1.0
+		}
+		// The session quota is really capped by the weekly ("main") quota: when
+		// less weekly remains than session, the excess session budget can never be
+		// spent — the weekly runs out first. Lay the whole session-left arc down in
+		// light grey and paint only the reachable part (up to the weekly left) in
+		// colour over it, so the unreachable tail reads as unavailable.
+		if seg.source == "session" && seg.metric == "percent_left" {
+			if wl, ok := input.limits["weekly"]; ok {
+				if weeklyLeft := clamp(1-wl.Pct/100, 0, 1); weeklyLeft < length {
+					writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
+						dialUnavail, 0.9, dialSW)
+					length = weeklyLeft
+				}
+			}
+		}
+		if length <= 0.004 {
+			continue
 		}
 		writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
 			segColor(seg, l, health), alpha, dialSW)

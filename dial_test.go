@@ -131,6 +131,26 @@ func TestLimitTimeColor(t *testing.T) {
 	}
 }
 
+func TestSessionCappedByWeeklyGreyTail(t *testing.T) {
+	grey := svgRGB(dialUnavail)
+	// Weekly (main) has less left (20%) than session (80% left) -> grey tail.
+	capped := map[string]Limit{
+		"session": {Pct: 20, TimeLeft: 0.5}, // 80% session left
+		"weekly":  {Pct: 80, TimeLeft: 0.5}, // 20% weekly left
+	}
+	if svg := string(renderDial(capped, [3]int{0, 0, 0}, false)); !strings.Contains(svg, grey) {
+		t.Fatalf("session should show a grey unavailable tail when weekly left is smaller:\n%s", svg)
+	}
+	// Weekly has more left than session -> nothing is capped, no grey.
+	uncapped := map[string]Limit{
+		"session": {Pct: 80, TimeLeft: 0.5}, // 20% session left
+		"weekly":  {Pct: 20, TimeLeft: 0.5}, // 80% weekly left
+	}
+	if svg := string(renderDial(uncapped, [3]int{0, 0, 0}, false)); strings.Contains(svg, grey) {
+		t.Fatalf("no grey tail expected when weekly left exceeds session left:\n%s", svg)
+	}
+}
+
 func TestFullCircleMode(t *testing.T) {
 	in := dialRenderInput{
 		limits:  map[string]Limit{"weekly": {Pct: 0, TimeLeft: 0.5, TimeTicks: 7}},
