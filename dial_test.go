@@ -160,6 +160,26 @@ func TestSessionCappedByWeeklyGreyTail(t *testing.T) {
 	}
 }
 
+func TestOuterRingColorReflectsCap(t *testing.T) {
+	tf := 0.5
+	// 92% session left but only 2% weekly at 15%/session -> usable 2/15 ≈ 0.133.
+	limits := map[string]Limit{
+		"session": {Pct: 8, TimeLeft: tf},                // 92% session left
+		"weekly":  {Pct: 98, TimeLeft: tf, BlockPct: 15}, // 2% weekly left
+	}
+	svg := string(renderDial(limits, [3]int{0, 0, 0}, false))
+	// The lit session arc must be coloured by the usable (capped) fraction, which
+	// trails the time left -> red, NOT the plentiful raw 92% -> purple.
+	capped := svgRGB(limitTimeColor(0.02/0.15, tf))
+	raw := svgRGB(limitTimeColor(0.92, tf))
+	if !strings.Contains(svg, capped) {
+		t.Fatalf("outer session colour should follow the cap (%s):\n%s", capped, svg)
+	}
+	if strings.Contains(svg, raw) {
+		t.Fatalf("outer session colour must not use the raw session %% (%s)", raw)
+	}
+}
+
 func TestFullCircleMode(t *testing.T) {
 	in := dialRenderInput{
 		limits:  map[string]Limit{"weekly": {Pct: 0, TimeLeft: 0.5, TimeTicks: 7}},

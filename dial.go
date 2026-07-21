@@ -188,9 +188,12 @@ func healthColor(health float64) [3]int {
 
 // segColor picks a segment's colour: the outer quota ring reads quota-left vs
 // time-left (purple/green/red); every other ring uses the health gradient.
-func segColor(seg segment, l Limit, health float64) [3]int {
+// limitLeft is the effective quota fraction left — for the session ring this is
+// the weekly-capped usable amount, not the raw incoming %, so the colour tells
+// the truth (red when the weekly leaves almost nothing spendable).
+func segColor(seg segment, l Limit, limitLeft, health float64) [3]int {
 	if seg.metric == "percent_left" {
-		return limitTimeColor(clamp(1-l.Pct/100, 0, 1), clamp(l.TimeLeft, 0, 1))
+		return limitTimeColor(clamp(limitLeft, 0, 1), clamp(l.TimeLeft, 0, 1))
 	}
 	return healthColor(health)
 }
@@ -288,8 +291,11 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		if length <= 0.004 {
 			continue
 		}
+		// length now carries any weekly cap, so it doubles as the effective
+		// quota-left the colour reads from — the ring reddens once the usable
+		// slice shrinks, even while the raw session % still looks healthy.
 		writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
-			segColor(seg, l, health), alpha, dialSW)
+			segColor(seg, l, length, health), alpha, dialSW)
 	}
 
 	// Thin separators slicing the weekly (right) semicircle into "one full
