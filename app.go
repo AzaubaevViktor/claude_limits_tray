@@ -1041,9 +1041,10 @@ type persistState struct {
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
 	SessRate     float64  `json:"sess_rate"`
 	WeekRate     float64  `json:"week_rate"`
-	CalibDs      float64  `json:"calib_ds"` // largest session-spend sample (%)
+	CalibDs      float64  `json:"calib_ds"` // retained session-spend sample (%)
 	CalibDw      float64  `json:"calib_dw"` // matching weekly spend (%)
-	// per-model best samples, keyed by model display name
+	CalibAt      float64  `json:"calib_at,omitempty"`
+	// per-model retained samples, keyed by model display name
 	CalibModels      map[string]calibSample `json:"calib_models,omitempty"`
 	CodexPrimaryRate float64                `json:"codex_primary_rate"`
 	CodexSecondRate  float64                `json:"codex_secondary_rate"`
@@ -1055,10 +1056,11 @@ type persistState struct {
 	CodexUsage       json.RawMessage        `json:"codex_usage"`
 }
 
-// calibSample is one persisted largest-spend calibration sample.
+// calibSample is one persisted calibration sample and its observation time.
 type calibSample struct {
 	Ds float64 `json:"ds"`
 	Dw float64 `json:"dw"`
+	At float64 `json:"at,omitempty"`
 }
 
 func (a *App) loadState() {
@@ -1096,10 +1098,22 @@ func (a *App) loadState() {
 		a.pollInterval = s.PollInterval
 	}
 	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
-	a.calib.Restore(s.CalibDs, s.CalibDw)
+	calibFallbackAt := time.Now()
+	if !a.lastOk.IsZero() {
+		calibFallbackAt = a.lastOk
+	}
+	calibAt := calibFallbackAt
+	if s.CalibAt > 0 {
+		calibAt = time.Unix(int64(s.CalibAt), 0)
+	}
+	a.calib.RestoreAt(s.CalibDs, s.CalibDw, calibAt)
 	for name, cs := range s.CalibModels {
 		c := &WeeklyCalibrator{}
-		c.Restore(cs.Ds, cs.Dw)
+		at := calibFallbackAt
+		if cs.At > 0 {
+			at = time.Unix(int64(cs.At), 0)
+		}
+		c.RestoreAt(cs.Ds, cs.Dw, at)
 		a.calibByModel[name] = c
 	}
 	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
@@ -1156,7 +1170,7 @@ func (a *App) saveState(force bool) {
 			if calibModels == nil {
 				calibModels = map[string]calibSample{}
 			}
-			calibModels[name] = calibSample{Ds: ds, Dw: dw}
+			calibModels[name] = calibSample{Ds: ds, Dw: dw, At: c.SnapshotAt()}
 		}
 	}
 	s := persistState{
@@ -1171,6 +1185,7 @@ func (a *App) saveState(force bool) {
 		WeekRate:         a.weekRate,
 		CalibDs:          calibDs,
 		CalibDw:          calibDw,
+		CalibAt:          a.calib.SnapshotAt(),
 		CalibModels:      calibModels,
 		CodexPrimaryRate: a.codexPrimaryRate,
 		CodexSecondRate:  a.codexSecondRate,

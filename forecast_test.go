@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestForecastCategories(t *testing.T) {
 	cases := []struct {
@@ -144,14 +147,14 @@ func TestWeeklyCalibratorCumulativeBasis(t *testing.T) {
 	if _, ok := c.BlockPct(); ok {
 		t.Fatal("a small basis must not calibrate")
 	}
-	// Across a whole session the span is large: Δs=20, Δw=2 -> 10%/session.
-	c.Observe(20, 2)
+	// Three whole weekly points give enough resolution: Δs=30, Δw=3.
+	c.Observe(30, 3)
 	bp, ok := c.BlockPct()
 	if !ok || !near(bp, 10, 1e-9) {
 		t.Fatalf("want 10%%/session, got %v ok=%v", bp, ok)
 	}
-	if ds, _ := c.Snapshot(); !near(ds, 20, 1e-9) {
-		t.Fatalf("basis should be the 20%% span, got %v", ds)
+	if ds, _ := c.Snapshot(); !near(ds, 30, 1e-9) {
+		t.Fatalf("basis should be the 30%% span, got %v", ds)
 	}
 }
 
@@ -162,12 +165,12 @@ func TestWeeklyCalibratorRebaselinesOnReset(t *testing.T) {
 	if bp, _ := c.BlockPct(); !near(bp, 10, 1e-9) {
 		t.Fatalf("want 10%%, got %v", bp)
 	}
-	// Session resets (drops) -> re-baseline; a small new span must not override
-	// the larger-basis sample from the previous window.
+	// Session resets (drops) -> re-baseline; a new span with fewer than three
+	// weekly points must not override the retained sample.
 	c.Observe(2, 10)
-	c.Observe(13, 10.4) // span Δs=11, Δw=0.4 -> ~3.6%, but basis 11 < 50 -> kept
+	c.Observe(32, 12) // span Δs=30, Δw=2 -> not enough weekly resolution
 	if bp, _ := c.BlockPct(); !near(bp, 10, 1e-9) {
-		t.Fatalf("largest-basis sample should persist, got %v", bp)
+		t.Fatalf("retained sample should persist, got %v", bp)
 	}
 }
 
@@ -200,11 +203,41 @@ func TestCalibSkipsSaturatedSession(t *testing.T) {
 	}
 }
 
-func TestCalibRestoreDropsSaturatedSample(t *testing.T) {
+func TestCalibRestoredSaturatedSampleExpires(t *testing.T) {
+	now := time.Now()
 	var c WeeklyCalibrator
-	c.Restore(100, 15) // the pre-fix inflated sample persisted in old state
-	if _, ok := c.BlockPct(); ok {
-		t.Fatal("a saturated (ds>=100) restored sample must be dropped")
+	c.RestoreAt(100, 15, now) // a suspect pre-fix sample remains a short fallback
+	if bp, ok := c.BlockPctAt(now); !ok || !near(bp, 15, 1e-9) {
+		t.Fatalf("fresh restored fallback should remain, got %v ok=%v", bp, ok)
+	}
+	if _, ok := c.BlockPctAt(now.Add(calibMaxAge)); ok {
+		t.Fatal("restored fallback should expire after one day")
+	}
+}
+
+func TestCalibFreshSampleNeedsThreeWeeklySteps(t *testing.T) {
+	now := time.Now()
+	var c WeeklyCalibrator
+	c.RestoreAt(100, 10, now) // prior estimate: 1% weekly costs 10% session
+	c.ObserveAt(now.Add(time.Minute), 0, 20)
+	c.ObserveAt(now.Add(2*time.Minute), 29, 23)
+	if bp, _ := c.BlockPctAt(now.Add(2 * time.Minute)); !near(bp, 10, 1e-9) {
+		t.Fatalf("29%% session basis should not replace the fallback, got %v", bp)
+	}
+	c.ObserveAt(now.Add(3*time.Minute), 30, 23)
+	if ds, dw := c.Snapshot(); !near(ds, 30, 1e-9) || !near(dw, 3, 1e-9) {
+		t.Fatalf("30%%/3%% fresh sample should replace fallback, got ds=%v dw=%v", ds, dw)
+	}
+}
+
+func TestCalibFreshResolvedWindowReplacesWiderOldSample(t *testing.T) {
+	now := time.Now()
+	var c WeeklyCalibrator
+	c.RestoreAt(90, 9, now)
+	c.ObserveAt(now.Add(time.Minute), 5, 20)
+	c.ObserveAt(now.Add(2*time.Minute), 45, 25) // fresh 40/5 => 12.5%/session
+	if bp, ok := c.BlockPctAt(now.Add(2 * time.Minute)); !ok || !near(bp, 12.5, 1e-9) {
+		t.Fatalf("fresh resolved sample should replace wider old one, got %v ok=%v", bp, ok)
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"time"
 )
 
 // Forecast projects the recent consumption rate forward to a window's reset.
@@ -128,23 +129,34 @@ func (f Forecast) Text() string {
 // 0→60% while the week climbs a few %, and Δweek/Δsession over that large span
 // is robust. Tiny per-poll deltas are dominated by the 1% rounding of the
 // utilisation figures (e.g. Δs=4, Δw=1 reads as 25%/session when the truth is
-// ~10%), which is exactly the noise we avoid. We keep the largest-basis sample
-// (biggest Δsession with Δweek>0) and it only sharpens as a window runs longer.
+// ~10%), which is exactly the noise we avoid. A retained sample bridges resets
+// until the current window has accumulated three weekly percentage points.
 type WeeklyCalibrator struct {
 	haveBase           bool
 	baseSess, baseWeek float64
-	bestDs, bestDw     float64 // the largest-basis sample kept so far
+	bestDs, bestDw     float64
+	bestAt             time.Time
 }
 
-// calibMinDs is the smallest session span (in %, since the window opened) we
-// trust as a calibration sample; below it Δweek is mostly 1% rounding noise.
-const calibMinDs = 10.0
+const (
+	// calibMinDs is an absolute floor for the session span. In addition, a new
+	// sample must cover calibMinWeekSteps whole weekly percentage points.
+	calibMinDs        = 10.0
+	calibMinWeekSteps = 3.0
+	calibMaxAge       = 24 * time.Hour
+)
 
 // Observe feeds the latest poll's session/weekly utilisation (both 0..100). On
 // the first call, or whenever either counter drops (a window reset), it re-takes
 // the baseline. Otherwise it samples the span since the baseline. The best
-// sample survives resets: the price is a property of usage, not of the window.
+// sample survives a reset for up to a day, giving the next window time to build
+// enough resolution before replacing it.
 func (c *WeeklyCalibrator) Observe(sess, week float64) {
+	c.ObserveAt(time.Now(), sess, week)
+}
+
+// ObserveAt is Observe with an explicit clock, for deterministic expiry tests.
+func (c *WeeklyCalibrator) ObserveAt(now time.Time, sess, week float64) {
 	if !c.haveBase || sess < c.baseSess || week < c.baseWeek {
 		c.baseSess, c.baseWeek, c.haveBase = sess, week, true
 		return
@@ -159,12 +171,25 @@ func (c *WeeklyCalibrator) Observe(sess, week float64) {
 		return
 	}
 	ds, dw := sess-c.baseSess, week-c.baseWeek
-	if ds < calibMinDs || dw <= 0 { // not enough span yet, or no weekly movement
+	if ds < c.minFreshDs(now) || dw < calibMinWeekSteps {
 		return
 	}
-	if ds > c.bestDs { // largest basis wins — least quantisation noise
-		c.bestDs, c.bestDw = ds, dw
+	// A sufficiently resolved sample from the current window is preferable to
+	// an older, wider one: it reflects the current model/account price. As this
+	// window grows, each later endpoint sharpens the same measurement.
+	c.bestDs, c.bestDw, c.bestAt = ds, dw, now
+}
+
+// minFreshDs asks a replacement to span at least three expected 1%-weekly
+// steps. For example, a 10%-weekly session needs about 30% session spend. The
+// direct dw check in Observe guards against an outdated estimate being too
+// optimistic.
+func (c *WeeklyCalibrator) minFreshDs(now time.Time) float64 {
+	minDs := calibMinDs
+	if blockPct, ok := c.BlockPctAt(now); ok {
+		minDs = math.Max(minDs, calibMinWeekSteps*100/blockPct)
 	}
+	return minDs
 }
 
 // BlockPct is the weekly % consumed by one full 5-hour session, and whether it
@@ -172,21 +197,36 @@ func (c *WeeklyCalibrator) Observe(sess, week float64) {
 // returns (0, false) and callers draw nothing — the value is only ever computed
 // from observed consumption.
 func (c *WeeklyCalibrator) BlockPct() (float64, bool) {
-	if c.bestDs <= 0 || c.bestDw <= 0 {
+	return c.BlockPctAt(time.Now())
+}
+
+// BlockPctAt is BlockPct with an explicit clock, for deterministic expiry tests.
+func (c *WeeklyCalibrator) BlockPctAt(now time.Time) (float64, bool) {
+	if c.bestDs <= 0 || c.bestDw <= 0 || c.bestAt.IsZero() || now.Sub(c.bestAt) >= calibMaxAge {
 		return 0, false
 	}
 	return clamp(c.bestDw/c.bestDs*100, 0, 100), true
 }
 
 // Snapshot/Restore persist the best sample across restarts (in the config file).
-// Restore drops a sample whose basis is below the trust floor — this also clears
-// stale tiny-basis values written by older noisier builds.
 func (c *WeeklyCalibrator) Snapshot() (float64, float64) { return c.bestDs, c.bestDw }
+func (c *WeeklyCalibrator) SnapshotAt() float64 {
+	if c.bestAt.IsZero() {
+		return 0
+	}
+	return float64(c.bestAt.Unix())
+}
+
 func (c *WeeklyCalibrator) Restore(ds, dw float64) {
-	// ds >= 100 can only be a pre-fix saturated sample (Observe now never records
-	// one): drop it so a stale inflated block size doesn't outlive the fix.
-	if ds >= calibMinDs && ds < 100 && dw > 0 {
-		c.bestDs, c.bestDw = ds, dw
+	c.RestoreAt(ds, dw, time.Now())
+}
+
+// RestoreAt also restores sample age. A legacy saturated sample is retained as
+// a temporary fallback, but Observe never refreshes it and the one-day TTL (or
+// a sufficiently resolved fresh sample) removes its influence.
+func (c *WeeklyCalibrator) RestoreAt(ds, dw float64, at time.Time) {
+	if ds >= calibMinDs && dw > 0 && !at.IsZero() {
+		c.bestDs, c.bestDw, c.bestAt = ds, dw, at
 	}
 }
 

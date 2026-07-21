@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,9 +52,9 @@ func TestGlobalWeeklyShowsBasis(t *testing.T) {
 	a := newApp()
 	a.calib = &WeeklyCalibrator{}
 	a.calib.Observe(0, 0)
-	a.calib.Observe(20, 2) // Δs=20, Δw=2 -> 10%/wk, basis 20% session
+	a.calib.Observe(30, 3) // Δs=30, Δw=3 -> 10%/wk, basis 30% session
 	txt := a.weekBlocksText(0)
-	if !strings.Contains(txt, "10.0%/wk") || !strings.Contains(txt, "basis 20% sess") {
+	if !strings.Contains(txt, "10.0%/wk") || !strings.Contains(txt, "basis 30% sess") {
 		t.Fatalf("global weekly line should show ratio + basis, got %q", txt)
 	}
 }
@@ -67,9 +69,9 @@ func TestModelCalibrationText(t *testing.T) {
 	}
 	c := a.modelCalib("Opus")
 	c.Observe(0, 0)
-	c.Observe(10, 2) // Δs=10, Δw=2 -> 20%/wk, basis 10% session
+	c.Observe(15, 3) // Δs=15, Δw=3 -> 20%/wk, basis 15% session
 	got := a.modelBlockText("Opus")
-	if !strings.Contains(got, "20.0%/wk") || !strings.Contains(got, "basis 10% sess") {
+	if !strings.Contains(got, "20.0%/wk") || !strings.Contains(got, "basis 15% sess") {
 		t.Fatalf("measured model text wrong: %q", got)
 	}
 }
@@ -127,12 +129,13 @@ func TestSaveThrottleAtLeastHourly(t *testing.T) {
 // Tasks 1+5: global and per-model calibration survive a save/load round-trip.
 func TestPersistCalibRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
+	observed := time.Now().Add(-23 * time.Hour).Truncate(time.Second)
 
 	a := newApp()
 	a.statePath = path
 	a.calib = &WeeklyCalibrator{}
 	a.calibByModel = map[string]*WeeklyCalibrator{}
-	a.calib.Restore(16, 2)              // global k=0.125 -> 12.5%/session
+	a.calib.RestoreAt(16, 2, observed)  // global k=0.125 -> 12.5%/session
 	a.modelCalib("Opus").Restore(10, 2) // 20%/session
 	a.saveState(true)
 
@@ -145,12 +148,45 @@ func TestPersistCalibRoundTrip(t *testing.T) {
 	if bp, measured := b.calib.BlockPct(); !measured || !near(bp, 12.5, 0.01) {
 		t.Fatalf("global calib not restored: %v measured=%v", bp, measured)
 	}
+	if got := b.calib.SnapshotAt(); got != float64(observed.Unix()) {
+		t.Fatalf("global calibration timestamp not restored: got %.0f want %d", got, observed.Unix())
+	}
+	if _, measured := b.calib.BlockPctAt(observed.Add(25 * time.Hour)); measured {
+		t.Fatal("reloaded calibration should expire relative to its original timestamp")
+	}
 	mc := b.calibByModel["Opus"]
 	if mc == nil {
 		t.Fatal("per-model calib not restored")
 	}
 	if bp, measured := mc.BlockPct(); !measured || !near(bp, 20, 0.01) {
 		t.Fatalf("model calib not restored: %v measured=%v", bp, measured)
+	}
+}
+
+func TestLegacySaturatedCalibUsesLastOkAsAge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	lastOk := float64(time.Now().Add(-time.Hour).Unix())
+	raw, err := json.Marshal(persistState{
+		LastOk:  &lastOk,
+		CalibDs: 100,
+		CalibDw: 15,
+		// CalibAt is absent in state files written before calibration ageing.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := newApp()
+	a.statePath = path
+	a.loadState()
+	if bp, ok := a.calib.BlockPct(); !ok || !near(bp, 15, 1e-9) {
+		t.Fatalf("recent legacy 100%% sample should remain temporarily, got %v ok=%v", bp, ok)
+	}
+	if got := a.calib.SnapshotAt(); got != lastOk {
+		t.Fatalf("legacy sample age = %.0f, want last_ok %.0f", got, lastOk)
 	}
 }
 
