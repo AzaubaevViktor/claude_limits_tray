@@ -149,6 +149,15 @@ func (c *WeeklyCalibrator) Observe(sess, week float64) {
 		c.baseSess, c.baseWeek, c.haveBase = sess, week, true
 		return
 	}
+	// A saturated session (utilisation pinned at the 100% cap) is useless as a
+	// sample endpoint: the session counter stops climbing while the weekly keeps
+	// rising, so Δweek/Δsession over-counts and inflates the block size (a window
+	// where 1.5 sessions' worth of work spilled past the cap reads as one session
+	// costing 15%/wk when the truth is 10%/wk). Skip it — the largest sub-100
+	// reading already carries the same span with an accurate Δsession.
+	if sess >= 100 {
+		return
+	}
 	ds, dw := sess-c.baseSess, week-c.baseWeek
 	if ds < calibMinDs || dw <= 0 { // not enough span yet, or no weekly movement
 		return
@@ -174,7 +183,9 @@ func (c *WeeklyCalibrator) BlockPct() (float64, bool) {
 // stale tiny-basis values written by older noisier builds.
 func (c *WeeklyCalibrator) Snapshot() (float64, float64) { return c.bestDs, c.bestDw }
 func (c *WeeklyCalibrator) Restore(ds, dw float64) {
-	if ds >= calibMinDs && dw > 0 {
+	// ds >= 100 can only be a pre-fix saturated sample (Observe now never records
+	// one): drop it so a stale inflated block size doesn't outlive the fix.
+	if ds >= calibMinDs && ds < 100 && dw > 0 {
 		c.bestDs, c.bestDw = ds, dw
 	}
 }

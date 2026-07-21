@@ -156,8 +156,8 @@ func TestPersistCalibRoundTrip(t *testing.T) {
 
 func TestSessionLeftTextWeeklyCap(t *testing.T) {
 	a := newApp()
-	// One session costs 15% of the weekly (ds=100 -> dw=15).
-	a.calib.Restore(100, 15)
+	// One session costs 15% of the weekly (ds=60 -> dw=9; a sub-cap sample).
+	a.calib.Restore(60, 9)
 
 	// 3% weekly left -> only 3/15 = 20% of the session is usable, though its own
 	// budget shows 80% left.

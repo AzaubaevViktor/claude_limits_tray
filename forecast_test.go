@@ -183,6 +183,31 @@ func TestCalibRestoreDropsTinyBasis(t *testing.T) {
 	}
 }
 
+func TestCalibSkipsSaturatedSession(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Observe(0, 0)  // baseline at the window open
+	c.Observe(90, 9) // clean span Δs=90, Δw=9 -> 10%/session
+	// The session saturates at the 100% cap while the user keeps working, so the
+	// weekly climbs to 15 with the session frozen. That endpoint (100,15) must be
+	// ignored — taking it would read as a 15%/session block, over-counting by 50%.
+	c.Observe(100, 15)
+	bp, ok := c.BlockPct()
+	if !ok || !near(bp, 10, 1e-9) {
+		t.Fatalf("saturated endpoint should be skipped, want 10%%/session, got %v ok=%v", bp, ok)
+	}
+	if ds, _ := c.Snapshot(); !near(ds, 90, 1e-9) {
+		t.Fatalf("basis should stay the sub-cap 90%% span, got %v", ds)
+	}
+}
+
+func TestCalibRestoreDropsSaturatedSample(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Restore(100, 15) // the pre-fix inflated sample persisted in old state
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("a saturated (ds>=100) restored sample must be dropped")
+	}
+}
+
 func TestWeeklyBlockSeparatorsRendered(t *testing.T) {
 	limits := map[string]Limit{
 		"session": {Pct: 10, TimeLeft: 0.5},
