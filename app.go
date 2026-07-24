@@ -130,9 +130,10 @@ type App struct {
 	claudeParent                               *systray.MenuItem
 	account, claudeSwitchAuth, plan            *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
+	weeklyBlocks, weeklyBlocksBasis            *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
-	histParent                                 *systray.MenuItem
+	histHeader                                 *systray.MenuItem
 	histHour, histSession, histWeek            *systray.MenuItem
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
@@ -515,12 +516,18 @@ func (a *App) apply() {
 	sessReset, sessResetOk := parseISO(u.FiveHour.ResetsAt)
 	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
 	a.session.SetTitle("🕐 Session (5h):  " + a.sessionLeftText(sessPct, weekPct))
+	a.session.SetIcon(renderPctBar(sessPct, fmt.Sprintf("Session %.0f%%", sessPct)))
 	a.sessionReset.SetTitle("      resets in " +
 		withClock(fmtRemaining(sessLeft, sessKnown), sessReset, sessResetOk))
 	a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
+	a.weekly.SetIcon(renderPctBar(weekPct, fmt.Sprintf("Weekly %.0f%%", weekPct)))
+	// The reset line was overlong once the 5h-block summary was appended; it now
+	// spans three rows: the reset clock, the blocks-left figure, and its basis.
 	a.weeklyReset.SetTitle("      resets in " +
-		withClock(fmtRemaining(weekLeft, weekKnown), weekReset, weekResetOk) +
-		"  ·  " + a.weekBlocksText(weekPct))
+		withClock(fmtRemaining(weekLeft, weekKnown), weekReset, weekResetOk))
+	blocks, basis := a.weekBlocksLines(weekPct)
+	a.weeklyBlocks.SetTitle("      " + blocks)
+	a.weeklyBlocksBasis.SetTitle("      " + basis)
 
 	avgSessH, asOk := avgRate(sessPct, sessLeft, fiveHourSecs, 3600, sessKnown)
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
@@ -818,6 +825,8 @@ func (a *App) renderClaudeEmpty(account string) {
 	a.sessionReset.SetTitle("      resets in —")
 	a.weekly.SetTitle("Weekly: —")
 	a.weeklyReset.SetTitle("      resets in —")
+	a.weeklyBlocks.SetTitle("      5h blocks: —")
+	a.weeklyBlocksBasis.SetTitle("")
 	a.burn.SetTitle("Forecast @ rate · —")
 	a.burnSession.SetTitle("Session (5h): —")
 	a.burnWeekly.SetTitle("Weekly: —")
@@ -930,7 +939,7 @@ func (a *App) setBurnRow(it *systray.MenuItem, label string, s []histSample, hor
 }
 
 func (a *App) renderClaudeHistory() {
-	if a.histParent == nil {
+	if a.histHour == nil {
 		return
 	}
 	sess := a.history[seriesClaudeSession]
@@ -1066,6 +1075,22 @@ func (a *App) weekBlocksText(weekPct float64) string {
 	ds, _ := a.calib.Snapshot()
 	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left (1 ≈ %.1f%%/wk, basis %.0f%% sess)",
 		left, total, bp, ds)
+}
+
+// weekBlocksLines splits the 5h-block summary into a headline (blocks left) and
+// a basis detail, so the weekly entry spreads across rows instead of one
+// overlong line. While calibrating the headline carries the status and the
+// basis is blank.
+func (a *App) weekBlocksLines(weekPct float64) (headline, basis string) {
+	bp, ok := a.calib.BlockPct()
+	if !ok {
+		return "5h blocks: calibrating…", ""
+	}
+	total := 100.0 / bp
+	left := math.Max(0, 100-weekPct) / bp
+	ds, _ := a.calib.Snapshot()
+	return fmt.Sprintf("≈ %.1f / %.0f × 5h blocks left", left, total),
+		fmt.Sprintf("1 block ≈ %.1f%%/wk · basis %.0f%% session", bp, ds)
 }
 
 func (a *App) showError(msg string) {

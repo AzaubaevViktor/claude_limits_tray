@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -148,6 +149,45 @@ func nightBands(start, now int64, ws, we int) [][2]int64 {
 		bands = append(bands, [2]int64{runStart, now})
 	}
 	return bands
+}
+
+// pctColor colours a fill by how full it is: green low, yellow mid, red high.
+func pctColor(pct float64) [3]int {
+	if pct <= 50 {
+		return lerpColor(dialGreen, dialYellow, pct/50)
+	}
+	return lerpColor(dialYellow, dialRed, (pct-50)/50)
+}
+
+var svgTextEscape = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// renderPctBar draws a horizontal progress bar (pct used, 0..100) as an SVG
+// icon with label text drawn inside it. Menu-item icons render through WebKit,
+// which supports <text>, so the label shows in-bar. The text carries a thin
+// dark outline so it stays readable over both the fill and the empty track.
+func renderPctBar(pct float64, label string) []byte {
+	const W, H = 120.0, 18.0
+	pct = clamp(pct, 0, 100)
+	fillW := W * pct / 100
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
+		W, H, W, H))
+	b.WriteString(fmt.Sprintf(
+		`<rect x="0.5" y="2.5" width="%.2f" height="13" rx="2.5" fill="rgb(120,120,120)" fill-opacity="0.25"/>`,
+		W-1))
+	if fillW > 0.5 {
+		b.WriteString(fmt.Sprintf(
+			`<rect x="0.5" y="2.5" width="%.2f" height="13" rx="2.5" fill="%s" fill-opacity="0.9"/>`,
+			math.Max(fillW-1, 1), svgRGB(pctColor(pct))))
+	}
+	b.WriteString(fmt.Sprintf(
+		`<text x="4" y="11.8" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" `+
+			`font-weight="600" fill="white" stroke="black" stroke-width="0.5" stroke-opacity="0.5" `+
+			`paint-order="stroke">%s</text>`,
+		svgTextEscape.Replace(label)))
+	b.WriteString(`</svg>`)
+	return []byte(b.String())
 }
 
 // burnColor maps a burn ratio (spend vs the sustainable share for the interval)

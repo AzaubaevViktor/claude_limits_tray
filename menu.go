@@ -11,6 +11,15 @@ import (
 )
 
 func (a *App) buildMenu() {
+	// Burn history sits at the very top of the menu so the charts are visible
+	// without drilling into a submenu.
+	a.histHeader = systray.AddMenuItem("Burn history", "")
+	a.histHeader.Disable()
+	a.histHour = systray.AddMenuItem("Last hour: —", "")
+	a.histSession = systray.AddMenuItem("Session: —", "")
+	a.histWeek = systray.AddMenuItem("Week: —", "")
+	systray.AddSeparator()
+
 	a.claudeParent = systray.AddMenuItem("Claude · —", "")
 	a.account = a.claudeParent.AddSubMenuItem("Account: —", "")
 	a.claudeSwitchAuth = a.claudeParent.AddSubMenuItem("Use current Claude login", "")
@@ -20,6 +29,8 @@ func (a *App) buildMenu() {
 	a.sessionReset = a.claudeParent.AddSubMenuItem("Session resets", "")
 	a.weekly = a.claudeParent.AddSubMenuItem("Weekly", "")
 	a.weeklyReset = a.claudeParent.AddSubMenuItem("Weekly resets", "")
+	a.weeklyBlocks = a.claudeParent.AddSubMenuItem("5h blocks", "")
+	a.weeklyBlocksBasis = a.claudeParent.AddSubMenuItem("basis", "")
 	a.burn = a.claudeParent.AddSubMenuItem("Forecast @ current rate", "")
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
@@ -27,10 +38,6 @@ func (a *App) buildMenu() {
 	a.speedLeft = a.burn.AddSubMenuItem("Spare at reset (5m)", "")
 	a.speedAvg = a.burn.AddSubMenuItem("Speed (since reset)", "")
 	a.speedAvgLeft = a.burn.AddSubMenuItem("Spare at reset (since reset)", "")
-	a.histParent = a.claudeParent.AddSubMenuItem("Burn history", "")
-	a.histHour = a.histParent.AddSubMenuItem("Last hour: —", "")
-	a.histSession = a.histParent.AddSubMenuItem("Session: —", "")
-	a.histWeek = a.histParent.AddSubMenuItem("Week: —", "")
 	a.scopedParent = a.claudeParent.AddSubMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.scopedParent.AddSubMenuItem("", "")
@@ -100,6 +107,7 @@ func (a *App) buildMenu() {
 	// don't highlight on hover (submenu parents stay active so they open)
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
+		a.weeklyBlocks, a.weeklyBlocksBasis,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
 		a.histHour, a.histSession, a.histWeek,
 		a.status, a.ok, a.fail,

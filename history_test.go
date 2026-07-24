@@ -137,6 +137,31 @@ func TestBurnColorThresholds(t *testing.T) {
 	}
 }
 
+func TestRenderPctBar(t *testing.T) {
+	svg := string(renderPctBar(42, "Session 42%"))
+	if !strings.HasPrefix(svg, "<svg") || !strings.HasSuffix(svg, "</svg>") {
+		t.Fatalf("not well-formed svg: %.40s...", svg)
+	}
+	if !strings.Contains(svg, "<text") || !strings.Contains(svg, "Session 42%") {
+		t.Fatal("label text should be drawn inside the bar")
+	}
+	// A near-empty and a full bar must both stay well-formed (no negative widths).
+	for _, p := range []float64{0, 100} {
+		if s := string(renderPctBar(p, "x")); !strings.HasSuffix(s, "</svg>") {
+			t.Fatalf("pct %.0f produced malformed svg", p)
+		}
+	}
+}
+
+func TestPctColor(t *testing.T) {
+	if pctColor(0) != dialGreen {
+		t.Errorf("0%% should be green")
+	}
+	if pctColor(100) != dialRed {
+		t.Errorf("100%% should be red")
+	}
+}
+
 func TestRenderBurnChartSVG(t *testing.T) {
 	now := int64(1_000_000)
 	s := []histSample{
