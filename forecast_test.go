@@ -174,6 +174,40 @@ func TestWeeklyCalibratorRebaselinesOnReset(t *testing.T) {
 	}
 }
 
+// TestCalibDetectsResetFromLowBaseline reproduces the missed-reset bug: the
+// baseline is the window's low point (~0), so a session wrapping 100→0 never
+// dips below it. If the reset goes unnoticed, Δweek accrues across many sessions
+// while Δsession only tracks the current position, inflating the ratio well past
+// 100%. Each session drop must re-anchor the baseline so the block stays ~10%.
+func TestCalibDetectsResetFromLowBaseline(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Observe(0, 2)   // baseline near zero
+	c.Observe(90, 11) // one clean session: Δs=90, Δw=9 -> 10%/session
+	if bp, ok := c.BlockPct(); !ok || !near(bp, 10, 1e-9) {
+		t.Fatalf("want 10%%, got %v ok=%v", bp, ok)
+	}
+	// Three more sessions wrap the counter back toward zero. Under the old
+	// baseline-comparison reset these drops were missed and dw ballooned.
+	c.Observe(3, 20)  // reset -> re-baseline at (3,20)
+	c.Observe(95, 29) // Δs=92, Δw=9 -> still 10%/session
+	c.Observe(4, 38)  // reset -> re-baseline at (4,38)
+	c.Observe(28, 45) // partial session, Δw=7 < resolution to replace
+	if bp, ok := c.BlockPct(); !ok || bp > 100 {
+		t.Fatalf("ratio must never exceed 100%%, got %v ok=%v", bp, ok)
+	}
+	if bp, _ := c.BlockPct(); !near(bp, 10, 0.5) {
+		t.Fatalf("want ~10%% after wraps, got %v", bp)
+	}
+}
+
+func TestCalibRestoreDropsImpossibleRatio(t *testing.T) {
+	var c WeeklyCalibrator
+	c.Restore(28, 43) // corrupt sample from the missed-reset bug (dw > ds)
+	if _, ok := c.BlockPct(); ok {
+		t.Fatal("dw > ds sample (BlockPct > 100) should be dropped on restore")
+	}
+}
+
 func TestCalibRestoreDropsTinyBasis(t *testing.T) {
 	var c WeeklyCalibrator
 	c.Restore(4, 1) // the old noisy 25%/session sample (basis 4 < floor)

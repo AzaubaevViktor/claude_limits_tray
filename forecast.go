@@ -134,6 +134,8 @@ func (f Forecast) Text() string {
 type WeeklyCalibrator struct {
 	haveBase           bool
 	baseSess, baseWeek float64
+	lastSess, lastWeek float64 // previous reading, to detect a window reset
+	haveLast           bool
 	bestDs, bestDw     float64
 	bestAt             time.Time
 }
@@ -157,7 +159,15 @@ func (c *WeeklyCalibrator) Observe(sess, week float64) {
 
 // ObserveAt is Observe with an explicit clock, for deterministic expiry tests.
 func (c *WeeklyCalibrator) ObserveAt(now time.Time, sess, week float64) {
-	if !c.haveBase || sess < c.baseSess || week < c.baseWeek {
+	// A window reset is a DROP from the previous reading, not a value below the
+	// baseline: the baseline is the window's low point (~0), so the 5-hour session
+	// wrapping 100→0 never dips below it and the reset goes unnoticed — leaving the
+	// baseline pinned while Δweek accrues across many sessions and Δsession only
+	// tracks the current position, hugely inflating the ratio. Compare to the last
+	// reading (as RateTracker does) so each session reset re-anchors the baseline.
+	reset := !c.haveBase || sess < c.lastSess-1 || week < c.lastWeek-1
+	c.lastSess, c.lastWeek, c.haveLast = sess, week, true
+	if reset {
 		c.baseSess, c.baseWeek, c.haveBase = sess, week, true
 		return
 	}
@@ -172,6 +182,13 @@ func (c *WeeklyCalibrator) ObserveAt(now time.Time, sess, week float64) {
 	}
 	ds, dw := sess-c.baseSess, week-c.baseWeek
 	if ds < c.minFreshDs(now) || dw < calibMinWeekSteps {
+		return
+	}
+	// One full session cannot cost more than the whole week: you would hit the
+	// weekly cap before finishing it. A sample with dw > ds implies BlockPct > 100
+	// and is corrupt (usually a missed reset) — reject rather than clamp, so a bad
+	// value never sticks as "best".
+	if dw > ds {
 		return
 	}
 	// A sufficiently resolved sample from the current window is preferable to
@@ -223,9 +240,11 @@ func (c *WeeklyCalibrator) Restore(ds, dw float64) {
 
 // RestoreAt also restores sample age. A legacy saturated sample is retained as
 // a temporary fallback, but Observe never refreshes it and the one-day TTL (or
-// a sufficiently resolved fresh sample) removes its influence.
+// a sufficiently resolved fresh sample) removes its influence. A sample with
+// dw > ds (BlockPct > 100, impossible — see ObserveAt) is dropped outright so a
+// corrupt persisted value from the missed-reset bug does not survive a restart.
 func (c *WeeklyCalibrator) RestoreAt(ds, dw float64, at time.Time) {
-	if ds >= calibMinDs && dw > 0 && !at.IsZero() {
+	if ds >= calibMinDs && dw > 0 && dw <= ds && !at.IsZero() {
 		c.bestDs, c.bestDw, c.bestAt = ds, dw, at
 	}
 }
