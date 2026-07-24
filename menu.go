@@ -27,6 +27,10 @@ func (a *App) buildMenu() {
 	a.speedLeft = a.burn.AddSubMenuItem("Spare at reset (5m)", "")
 	a.speedAvg = a.burn.AddSubMenuItem("Speed (since reset)", "")
 	a.speedAvgLeft = a.burn.AddSubMenuItem("Spare at reset (since reset)", "")
+	a.histParent = a.claudeParent.AddSubMenuItem("Burn history", "")
+	a.histHour = a.histParent.AddSubMenuItem("Last hour: —", "")
+	a.histSession = a.histParent.AddSubMenuItem("Session: —", "")
+	a.histWeek = a.histParent.AddSubMenuItem("Week: —", "")
 	a.scopedParent = a.claudeParent.AddSubMenuItem("Weekly by model: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.scopedParent.AddSubMenuItem("", "")
@@ -51,6 +55,10 @@ func (a *App) buildMenu() {
 	a.codexSpeedLeft = a.codexBurn.AddSubMenuItem("Spare at reset (5m)", "")
 	a.codexSpeedAvg = a.codexBurn.AddSubMenuItem("Speed (since reset)", "")
 	a.codexSpeedAvgLeft = a.codexBurn.AddSubMenuItem("Spare at reset (since reset)", "")
+	a.codexHistParent = a.codexParent.AddSubMenuItem("Burn history", "")
+	a.codexHistHour = a.codexHistParent.AddSubMenuItem("Last hour: —", "")
+	a.codexHistPrimary = a.codexHistParent.AddSubMenuItem("Primary: —", "")
+	a.codexHistSecondary = a.codexHistParent.AddSubMenuItem("Secondary: —", "")
 	a.codexCredits = a.codexParent.AddSubMenuItem("Credits: —", "")
 	a.codexScopedParent = a.codexParent.AddSubMenuItem("Additional limits: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
@@ -93,10 +101,12 @@ func (a *App) buildMenu() {
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
+		a.histHour, a.histSession, a.histWeek,
 		a.status, a.ok, a.fail,
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
+		a.codexHistHour, a.codexHistPrimary, a.codexHistSecondary,
 		a.codexCredits, a.codexStatus,
 	} {
 		it.Disable()
@@ -206,6 +216,10 @@ func (a *App) afterWorkChange() {
 	a.saveState(true)
 	if a.lastUsage != nil && !a.errorOn {
 		a.apply()
+	}
+	// Off-hours shading on the Codex burn charts also follows the work window.
+	if a.lastCodex != nil {
+		a.renderCodex()
 	}
 }
 

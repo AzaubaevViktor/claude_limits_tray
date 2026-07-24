@@ -71,6 +71,9 @@ type App struct {
 	// per-model calibrators, keyed by model display name (the "Weekly by model"
 	// rows): each learns weekly-% per session for its own scoped weekly limit.
 	calibByModel map[string]*WeeklyCalibrator
+	// per-series log of raw utilisation readings, for the burn-history charts.
+	// Keyed by seriesClaude*/seriesCodex*; persisted in the state file.
+	history map[string][]histSample
 
 	// runtime state
 	profile          *Profile
@@ -129,6 +132,8 @@ type App struct {
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
+	histParent                                 *systray.MenuItem
+	histHour, histSession, histWeek            *systray.MenuItem
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
 	codexParent                                *systray.MenuItem
@@ -139,6 +144,9 @@ type App struct {
 	codexBurnSecondary                         *systray.MenuItem
 	codexSpeed, codexSpeedLeft                 *systray.MenuItem
 	codexSpeedAvg, codexSpeedAvgLeft           *systray.MenuItem
+	codexHistParent                            *systray.MenuItem
+	codexHistHour, codexHistPrimary            *systray.MenuItem
+	codexHistSecondary                         *systray.MenuItem
 	codexCredits, codexStatus                  *systray.MenuItem
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
@@ -162,6 +170,7 @@ func newApp() *App {
 		cRates:       &RateTracker{},
 		calib:        &WeeklyCalibrator{},
 		calibByModel: map[string]*WeeklyCalibrator{},
+		history:      map[string][]histSample{},
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
@@ -319,6 +328,8 @@ func (a *App) useCurrentClaudeLogin() {
 	a.rates = &RateTracker{}
 	a.calib = &WeeklyCalibrator{}
 	a.calibByModel = map[string]*WeeklyCalibrator{}
+	delete(a.history, seriesClaudeSession)
+	delete(a.history, seriesClaudeWeekly)
 	a.errorOn = false
 	a.cached = false
 	a.failCount = 0
@@ -354,6 +365,8 @@ func (a *App) noteCodex(r pollResult) {
 			a.codexPrimaryRate, a.codexSecondRate = p, s
 			a.codexRateSpan = a.cRates.Span()
 		}
+		a.recordHistory(seriesCodexPrimary, primary)
+		a.recordHistory(seriesCodexSecondary, secondary)
 	}
 	a.lastCodexRaw = r.codexRaw
 	a.lastCodex = r.codexUsage
@@ -376,6 +389,8 @@ func (a *App) useCurrentCodexLogin() {
 	a.codexPrimaryRate = 0
 	a.codexSecondRate = 0
 	a.cRates = &RateTracker{}
+	delete(a.history, seriesCodexPrimary)
+	delete(a.history, seriesCodexSecondary)
 	a.codexErrorOn = false
 	a.renderCodex()
 	a.renderIcon()
@@ -405,6 +420,8 @@ func (a *App) onSuccess(r pollResult) {
 		a.rateSpan = a.rates.Span()
 	}
 	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
+	a.recordHistory(seriesClaudeSession, r.usage.FiveHour.Utilization)
+	a.recordHistory(seriesClaudeWeekly, r.usage.SevenDay.Utilization)
 	for _, l := range r.usage.Limits {
 		if l.Kind != "weekly_scoped" || l.Scope == nil {
 			continue
@@ -524,6 +541,7 @@ func (a *App) apply() {
 	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())
 
 	a.renderScoped(u.Limits)
+	a.renderClaudeHistory()
 	a.status.SetTitle(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
 		100-sessPct, 100-weekPct))
 }
@@ -575,6 +593,7 @@ func (a *App) renderCodex() {
 	}
 	a.codexStatus.SetTitle(status)
 	a.renderCodexScoped(u.Limits)
+	a.renderCodexHistory()
 }
 
 func (a *App) renderCodexEmpty() {
@@ -885,6 +904,66 @@ func (a *App) renderScoped(limits []ScopedLimit) {
 	}
 }
 
+// recordHistory logs one utilisation reading (cumulative %, 0..100) for a
+// series, timestamped now, feeding the burn-history charts.
+func (a *App) recordHistory(series string, v float64) {
+	if a.history == nil {
+		a.history = map[string][]histSample{}
+	}
+	a.history[series] = addHistSample(a.history[series], time.Now().Unix(), v)
+}
+
+// setBurnRow renders one burn-history row: the total spent over the horizon as
+// the title, and the per-interval burn-rate bar chart as the item's icon.
+func (a *App) setBurnRow(it *systray.MenuItem, label string, s []histSample, horizon, bucket, windowSecs int64) {
+	if it == nil || bucket <= 0 {
+		return
+	}
+	now := time.Now().Unix()
+	buckets := burnBuckets(s, now, horizon, bucket)
+	if len(s) < 2 {
+		it.SetTitle(label + ":  —")
+	} else {
+		it.SetTitle(fmt.Sprintf("%s:  %.1f%%", label, totalSpent(buckets)))
+	}
+	it.SetIcon(renderBurnChart(buckets, windowSecs, bucket, now-horizon, now, a.workStart, a.workEnd))
+}
+
+func (a *App) renderClaudeHistory() {
+	if a.histParent == nil {
+		return
+	}
+	sess := a.history[seriesClaudeSession]
+	week := a.history[seriesClaudeWeekly]
+	a.setBurnRow(a.histHour, "Last hour", sess, 3600, 900, int64(fiveHourSecs))
+	a.setBurnRow(a.histSession, "Session", sess, int64(fiveHourSecs), int64(fiveHourSecs)/5, int64(fiveHourSecs))
+	a.setBurnRow(a.histWeek, "Week", week, int64(weekSecs), int64(weekSecs)/7, int64(weekSecs))
+}
+
+func (a *App) renderCodexHistory() {
+	if a.codexHistParent == nil {
+		return
+	}
+	primary := a.history[seriesCodexPrimary]
+	secondary := a.history[seriesCodexSecondary]
+	pWin, sWin := int64(fiveHourSecs), int64(weekSecs)
+	if a.lastCodex != nil {
+		pWin = codexWindowSecs(a.lastCodex.primary(), pWin)
+		sWin = codexWindowSecs(a.lastCodex.secondary(), sWin)
+	}
+	a.setBurnRow(a.codexHistHour, "Last hour", primary, 3600, 900, pWin)
+	a.setBurnRow(a.codexHistPrimary, "Primary", primary, pWin, pWin/5, pWin)
+	a.setBurnRow(a.codexHistSecondary, "Secondary", secondary, sWin, sWin/7, sWin)
+}
+
+// codexWindowSecs is w's window length in seconds, or def when unknown.
+func codexWindowSecs(w *CodexWindow, def int64) int64 {
+	if w != nil && w.WindowSeconds > 0 {
+		return int64(w.WindowSeconds)
+	}
+	return def
+}
+
 func (a *App) setIcon(png []byte, key string) {
 	if a.iconKey == key {
 		return
@@ -1045,15 +1124,16 @@ type persistState struct {
 	CalibDw      float64  `json:"calib_dw"` // matching weekly spend (%)
 	CalibAt      float64  `json:"calib_at,omitempty"`
 	// per-model retained samples, keyed by model display name
-	CalibModels      map[string]calibSample `json:"calib_models,omitempty"`
-	CodexPrimaryRate float64                `json:"codex_primary_rate"`
-	CodexSecondRate  float64                `json:"codex_secondary_rate"`
-	CodexRefresh     string                 `json:"codex_refresh_token"`
-	CodexAccount     string                 `json:"codex_account"`
-	ClaudeRefresh    string                 `json:"claude_refresh_token"`
-	Usage            json.RawMessage        `json:"usage"`
-	Profile          json.RawMessage        `json:"profile"`
-	CodexUsage       json.RawMessage        `json:"codex_usage"`
+	CalibModels      map[string]calibSample  `json:"calib_models,omitempty"`
+	CodexPrimaryRate float64                 `json:"codex_primary_rate"`
+	CodexSecondRate  float64                 `json:"codex_secondary_rate"`
+	CodexRefresh     string                  `json:"codex_refresh_token"`
+	CodexAccount     string                  `json:"codex_account"`
+	ClaudeRefresh    string                  `json:"claude_refresh_token"`
+	Usage            json.RawMessage         `json:"usage"`
+	Profile          json.RawMessage         `json:"profile"`
+	CodexUsage       json.RawMessage         `json:"codex_usage"`
+	History          map[string][]histSample `json:"history,omitempty"`
 }
 
 // calibSample is one persisted calibration sample and its observation time.
@@ -1134,6 +1214,15 @@ func (a *App) loadState() {
 			a.profile = &p
 		}
 	}
+	if s.History != nil {
+		now := time.Now().Unix()
+		a.history = map[string][]histSample{}
+		for name, samples := range s.History {
+			if pruned := decimateHistory(samples, now); len(pruned) > 0 {
+				a.history[name] = pruned
+			}
+		}
+	}
 	a.seedRates()
 }
 
@@ -1194,6 +1283,7 @@ func (a *App) saveState(force bool) {
 		ClaudeRefresh:    a.client.RefreshToken(),
 		Usage:            json.RawMessage(a.lastUsageRaw),
 		CodexUsage:       json.RawMessage(a.lastCodexRaw),
+		History:          a.history,
 	}
 	if !a.lastOk.IsZero() {
 		v := float64(a.lastOk.Unix())

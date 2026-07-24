@@ -1,0 +1,233 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// history.go stores a per-series log of raw utilisation readings and turns it
+// into a burn-rate (first-derivative) view: how much of a window's quota was
+// spent inside each grid interval. Unlike the live rate/forecast, the charts
+// here never extrapolate — they only ever show measured spend, so a wrong
+// estimate can't creep in. See renderBurnChart for the drawing.
+
+// histSample is one utilisation reading: cumulative used-% (0..100) at unix
+// second T. A window reset shows up as V dropping below the previous sample.
+type histSample struct {
+	T int64   `json:"t"`
+	V float64 `json:"v"`
+}
+
+// Series names for the persisted history map. Claude tracks its 5-hour session
+// and 7-day weekly counters; Codex its primary and secondary windows.
+const (
+	seriesClaudeSession  = "claude_session"
+	seriesClaudeWeekly   = "claude_weekly"
+	seriesCodexPrimary   = "codex_primary"
+	seriesCodexSecondary = "codex_secondary"
+)
+
+const (
+	histFullRes  = int64(24 * 3600)     // keep every sample from the last 24h
+	histThinStep = int64(15 * 60)       // older than that: thin to >= 15m apart
+	histMaxAge   = int64(7 * 24 * 3600) // drop anything older than 7 days
+)
+
+// addHistSample appends a reading and re-decimates. Out-of-order or duplicate
+// timestamps are ignored so a clock wobble can't corrupt the ordering the
+// derivative relies on.
+func addHistSample(s []histSample, t int64, v float64) []histSample {
+	if n := len(s); n > 0 && t <= s[n-1].T {
+		return s
+	}
+	s = append(s, histSample{t, v})
+	return decimateHistory(s, t)
+}
+
+// decimateHistory keeps full resolution for the last 24h, thins older samples
+// to at least histThinStep apart, and drops everything past histMaxAge. Samples
+// must be in ascending time order (addHistSample guarantees it).
+func decimateHistory(s []histSample, now int64) []histSample {
+	kept := make([]histSample, 0, len(s))
+	for _, smp := range s {
+		age := now - smp.T
+		if age > histMaxAge {
+			continue
+		}
+		if age <= histFullRes {
+			kept = append(kept, smp)
+			continue
+		}
+		// Older region: keep the first sample after each histThinStep gap.
+		if len(kept) == 0 || smp.T-kept[len(kept)-1].T >= histThinStep {
+			kept = append(kept, smp)
+		}
+	}
+	return kept
+}
+
+// burnBucket is the quota spent inside one grid interval starting at Start.
+type burnBucket struct {
+	Start int64
+	Spent float64 // sum of positive utilisation deltas landing in the bucket (%)
+}
+
+// burnBuckets slices [now-horizon, now] into buckets of bucketSecs and sums the
+// positive utilisation deltas in each. A reset (value drop) contributes 0, so
+// spend is counted correctly even across a window wrap. horizon should be a
+// whole multiple of bucketSecs.
+func burnBuckets(s []histSample, now, horizon, bucketSecs int64) []burnBucket {
+	start := now - horizon
+	n := int(horizon / bucketSecs)
+	if n < 1 {
+		n = 1
+	}
+	buckets := make([]burnBucket, n)
+	for i := range buckets {
+		buckets[i].Start = start + int64(i)*bucketSecs
+	}
+	for i := 1; i < len(s); i++ {
+		d := s[i].V - s[i-1].V
+		if d <= 0 || s[i].T <= start {
+			continue
+		}
+		idx := int((s[i].T - start) / bucketSecs)
+		if idx < 0 || idx >= n {
+			continue
+		}
+		buckets[idx].Spent += d
+	}
+	return buckets
+}
+
+// totalSpent is the quota consumed across the whole horizon.
+func totalSpent(buckets []burnBucket) float64 {
+	sum := 0.0
+	for _, b := range buckets {
+		sum += b.Spent
+	}
+	return sum
+}
+
+// inWorkWindow reports whether local minute-of-day min falls in the working
+// window [ws, we), which may wrap past midnight (e.g. 12:00 -> 02:00). Matches
+// workingSecondsUntil's semantics so "night" here is exactly "off the clock".
+func inWorkWindow(min, ws, we int) bool {
+	dur := (((we - ws) % (24 * 60)) + 24*60) % (24 * 60)
+	if dur == 0 {
+		dur = 24 * 60
+	}
+	off := (((min - ws) % (24 * 60)) + 24*60) % (24 * 60)
+	return off < dur
+}
+
+func minuteOfDay(t int64) int {
+	lt := time.Unix(t, 0)
+	return lt.Hour()*60 + lt.Minute()
+}
+
+// nightBands returns the [from,to) spans of [start, now] that fall outside
+// working hours, for shading the chart background. Scanned at 5-minute
+// resolution and merged into contiguous runs.
+func nightBands(start, now int64, ws, we int) [][2]int64 {
+	const step = int64(300)
+	var bands [][2]int64
+	runStart := int64(-1)
+	for t := start; t < now; t += step {
+		night := !inWorkWindow(minuteOfDay(t), ws, we)
+		switch {
+		case night && runStart < 0:
+			runStart = t
+		case !night && runStart >= 0:
+			bands = append(bands, [2]int64{runStart, t})
+			runStart = -1
+		}
+	}
+	if runStart >= 0 {
+		bands = append(bands, [2]int64{runStart, now})
+	}
+	return bands
+}
+
+// burnColor maps a burn ratio (spend vs the sustainable share for the interval)
+// to green -> yellow -> red: 0 is idle-green, 1 is exactly on pace (yellow),
+// 1.5+ is well over pace (red).
+func burnColor(ratio float64) [3]int {
+	if ratio <= 1 {
+		return lerpColor(dialGreen, dialYellow, clamp(ratio, 0, 1))
+	}
+	return lerpColor(dialYellow, dialRed, clamp((ratio-1)/0.5, 0, 1))
+}
+
+// renderBurnChart draws the burn-rate bars for one horizon as SVG bytes, ready
+// to hang off a menu item via SetIcon. Each bucket is a full-width bar so its
+// area reads as the spend (no invisibly-thin lines); the height auto-scales to
+// the busiest bar so the shape always fills the strip. Bars are coloured by how
+// the interval's spend compares to the sustainable share of windowSecs. A faint
+// grid marks the bucket boundaries and off-hours are shaded darker.
+func renderBurnChart(buckets []burnBucket, windowSecs, bucketSecs, start, now int64, ws, we int) []byte {
+	const W, H = 120.0, 18.0
+	const base, top = 16.5, 2.0
+	usable := base - top
+	n := len(buckets)
+	horizon := now - start
+	if horizon <= 0 {
+		horizon = 1
+	}
+	xOf := func(t int64) float64 { return clamp(float64(t-start)/float64(horizon), 0, 1) * W }
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
+		W, H, W, H))
+
+	// Off-hours shading behind everything.
+	for _, nb := range nightBands(start, now, ws, we) {
+		x0, x1 := xOf(nb[0]), xOf(nb[1])
+		b.WriteString(fmt.Sprintf(
+			`<rect x="%.2f" y="0" width="%.2f" height="%.0f" fill="rgb(120,120,120)" fill-opacity="0.16"/>`,
+			x0, x1-x0, H))
+	}
+
+	// Grid at every bucket boundary + the baseline.
+	barW := W / float64(n)
+	for i := 0; i <= n; i++ {
+		x := float64(i) * barW
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="0.5" x2="%.2f" y2="%.2f" stroke="rgb(150,150,150)" stroke-width="0.35" stroke-opacity="0.35"/>`,
+			x, x, base))
+	}
+	b.WriteString(fmt.Sprintf(
+		`<line x1="0" y1="%.2f" x2="%.0f" y2="%.2f" stroke="rgb(150,150,150)" stroke-width="0.4" stroke-opacity="0.55"/>`,
+		base, W, base))
+
+	maxSpent := 0.0
+	for _, bk := range buckets {
+		if bk.Spent > maxSpent {
+			maxSpent = bk.Spent
+		}
+	}
+	sustain := 100 * float64(bucketSecs) / float64(windowSecs)
+	for i, bk := range buckets {
+		if bk.Spent <= 0 || maxSpent <= 0 {
+			continue
+		}
+		h := usable * bk.Spent / maxSpent
+		if h < 1.4 { // never let a real spend vanish into the baseline
+			h = 1.4
+		}
+		c := burnColor(bk.Spent / sustain)
+		x := float64(i)*barW + 0.5
+		w := barW - 1.0
+		if w < 0.6 {
+			w = barW
+		}
+		b.WriteString(fmt.Sprintf(
+			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" fill-opacity="0.9" rx="0.4"/>`,
+			x, base-h, w, h, svgRGB(c)))
+	}
+
+	b.WriteString(`</svg>`)
+	return []byte(b.String())
+}
