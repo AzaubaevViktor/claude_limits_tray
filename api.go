@@ -49,6 +49,7 @@ type Client struct {
 	tokenExp     time.Time
 	refreshToken string
 	refreshDirty bool
+	kc           keychainGate // stops a refused keychain read from re-prompting
 }
 
 // token returns a usable access token. The keychain is the source of truth —
@@ -65,7 +66,7 @@ func (c *Client) token() (string, error) {
 	}
 	c.mu.Unlock()
 
-	if access, refresh, exp, ok := c.readKeychain(); ok {
+	if access, refresh, exp, ok := c.readKeychain(false); ok {
 		if exp.IsZero() || time.Now().Before(exp) {
 			c.storeTokens(access, refresh, exp) // adopt Claude Code's fresh token
 			return access, nil
@@ -99,12 +100,17 @@ func (c *Client) token() (string, error) {
 			return tok, nil
 		}
 	}
+	if blocked, reason := c.kc.state(); blocked {
+		return "", &APIError{Msg: reason}
+	}
 	return "", &APIError{Msg: "No credentials — sign in to Claude Code"}
 }
 
-func (c *Client) readKeychain() (access, refresh string, exp time.Time, ok bool) {
-	out, err := exec.Command("security", "find-generic-password",
-		"-s", keychain, "-w").Output()
+// readKeychain reads Claude Code's stored credentials. manual marks a read the
+// user asked for from the menu — those may prompt even after an earlier refusal,
+// which background reads may not.
+func (c *Client) readKeychain(manual bool) (access, refresh string, exp time.Time, ok bool) {
+	out, err := c.kc.find("Claude", manual, "-s", keychain, "-w")
 	if err != nil {
 		return "", "", time.Time{}, false
 	}
@@ -207,7 +213,7 @@ func (c *Client) invalidateAccess(rejected string) {
 // Code. Unlike token(), this intentionally bypasses a still-valid cached token:
 // it is the explicit account-switch path used by the menu action.
 func (c *Client) UseCurrentAuth() error {
-	access, refresh, exp, ok := c.readKeychain()
+	access, refresh, exp, ok := c.readKeychain(true)
 	if !ok {
 		return &APIError{Msg: "No credentials — sign in to Claude Code"}
 	}
@@ -405,6 +411,7 @@ type CodexClient struct {
 	refreshDirty bool      // refreshToken changed since the last persist
 	accountLabel string    // display-only account hint learned from the access token
 	accountDirty bool      // accountLabel changed since the last persist
+	kc           keychainGate
 }
 
 type CodexWindow struct {
@@ -473,8 +480,10 @@ type codexBootstrapCreds struct {
 }
 
 // bootstrapCreds reads credentials the slow way — env var, auth.json, then
-// keychain (which is the one that can prompt).
-func (c *CodexClient) bootstrapCreds() (*codexBootstrapCreds, error) {
+// keychain (which is the one that can prompt). manual marks a read the user
+// asked for from the menu; background reads are refused once the keychain gate
+// has latched, so a dismissed password dialog isn't re-shown every poll.
+func (c *CodexClient) bootstrapCreds(manual bool) (*codexBootstrapCreds, error) {
 	if tok := strings.TrimSpace(os.Getenv(codexAccessEnvVar)); tok != "" {
 		return &codexBootstrapCreds{access: tok, source: codexAccessEnvVar}, nil
 	}
@@ -493,8 +502,7 @@ func (c *CodexClient) bootstrapCreds() (*codexBootstrapCreds, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command("security", "find-generic-password",
-		"-s", codexAuthService, "-a", key, "-w").Output()
+	out, err := c.kc.find("Codex", manual, "-s", codexAuthService, "-a", key, "-w")
 	if err == nil {
 		if access, refresh, err := codexTokensFromJSON(out); err == nil && access != "" {
 			return &codexBootstrapCreds{
@@ -504,13 +512,18 @@ func (c *CodexClient) bootstrapCreds() (*codexBootstrapCreds, error) {
 			}, nil
 		}
 	}
+	// A refused or latched keychain read is the more useful thing to report; a
+	// missing item means there is genuinely nothing to log in with.
+	if blocked, reason := c.kc.state(); blocked {
+		return nil, &APIError{Msg: reason}
+	}
 	return nil, &APIError{Msg: "No Codex ChatGPT credentials — run codex login"}
 }
 
 // bootstrap reads current Codex credentials and caches them so the next poll can
 // refresh silently instead of hitting the keychain again.
 func (c *CodexClient) bootstrap() (string, error) {
-	creds, err := c.bootstrapCreds()
+	creds, err := c.bootstrapCreds(false)
 	if err != nil {
 		return "", err
 	}
@@ -522,7 +535,7 @@ func (c *CodexClient) bootstrap() (string, error) {
 // configured Codex login (env/auth.json/keychain), returning a display label for
 // the account it switched to.
 func (c *CodexClient) UseCurrentAuth() (string, error) {
-	creds, err := c.bootstrapCreds()
+	creds, err := c.bootstrapCreds(true)
 	if err != nil {
 		return "", err
 	}
