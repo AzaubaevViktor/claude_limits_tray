@@ -9,6 +9,43 @@ import (
 	"time"
 )
 
+func TestPollSchedulerSerialisesProviders(t *testing.T) {
+	now := time.Now()
+	a := &App{inflight: true}
+	if got := a.nextDueRequest(now); got != pollNone {
+		t.Fatalf("in-flight request must block another provider, got %v", got)
+	}
+}
+
+func TestPollSchedulerDoesNotShareProviderBackoff(t *testing.T) {
+	now := time.Now()
+	a := &App{
+		nextPoll:      now.Add(10 * time.Minute), // Claude is backing off.
+		nextCodexPoll: now.Add(-time.Second),
+	}
+	if got := a.nextDueRequest(now); got != pollCodex {
+		t.Fatalf("Codex should remain due while Claude backs off, got %v", got)
+	}
+
+	a.nextPoll = now.Add(-time.Second)
+	a.nextCodexPoll = now.Add(10 * time.Minute) // Codex is backing off.
+	if got := a.nextDueRequest(now); got != pollClaude {
+		t.Fatalf("Claude should remain due while Codex backs off, got %v", got)
+	}
+}
+
+func TestPollSchedulerAlternatesWhenBothDue(t *testing.T) {
+	now := time.Now()
+	a := &App{lastReqSource: pollClaude}
+	if got := a.nextDueRequest(now); got != pollCodex {
+		t.Fatalf("after Claude, Codex should run next, got %v", got)
+	}
+	a.lastReqSource = pollCodex
+	if got := a.nextDueRequest(now); got != pollClaude {
+		t.Fatalf("after Codex, Claude should run next, got %v", got)
+	}
+}
+
 // After a restart the rate history is empty, so a naive tracker needs two fresh
 // polls before "Last 5m" can leave zero. Seeding from the last persisted sample
 // lets the very first poll measure a rate.

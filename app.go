@@ -46,6 +46,7 @@ var planNames = map[string]string{
 }
 
 type pollResult struct {
+	source               pollSource
 	raw                  []byte
 	usage                *Usage
 	prof                 *Profile
@@ -54,6 +55,21 @@ type pollResult struct {
 	codexUsage           *CodexUsage
 	codexErr             error
 	err                  error
+}
+
+type pollSource uint8
+
+const (
+	pollNone pollSource = iota
+	pollClaude
+	pollCodex
+)
+
+func (s pollSource) String() string {
+	if s == pollCodex {
+		return "Codex"
+	}
+	return "Claude"
 }
 
 type hourItem struct {
@@ -89,10 +105,13 @@ type App struct {
 	pollInterval     float64 // adaptive steady-state poll interval (seconds)
 	okStreak         int     // consecutive successes since the last 429
 	nextPoll         time.Time
+	nextCodexPoll    time.Time
 	nextAllowedEpoch float64
 	lastSave         time.Time
 	inflight         bool
 	reqStart         time.Time
+	reqSource        pollSource
+	lastReqSource    pollSource
 	results          chan pollResult
 	iconKey          string
 	// Incremented when the user explicitly reloads Claude Code credentials, so
@@ -120,6 +139,7 @@ type App struct {
 	lastCodexOk      time.Time
 	lastCodexFail    time.Time
 	lastCodexFailMsg string
+	codexFailCount   int
 	codexPrimaryRate float64
 	codexSecondRate  float64
 	codexRateSpan    float64 // seconds the recent Codex rate was measured over
@@ -223,8 +243,8 @@ func (a *App) tickLoop() {
 	for range time.Tick(time.Second) {
 		a.mu.Lock()
 		a.drain()
-		if !a.inflight && !time.Now().Before(a.nextPoll) {
-			a.startRequest()
+		if !a.inflight {
+			a.startDueRequest()
 		}
 		a.updateStatus()
 		a.mu.Unlock()
@@ -244,40 +264,79 @@ func (a *App) blinkLoop() {
 
 // --- polling ----------------------------------------------------------------
 
-func (a *App) startRequest() {
+func (a *App) nextDueRequest(now time.Time) pollSource {
+	if a.inflight {
+		return pollNone
+	}
+	claudeDue := !now.Before(a.nextPoll)
+	codexDue := !now.Before(a.nextCodexPoll)
+	switch {
+	case claudeDue && codexDue:
+		// Alternate when both are waiting so a permanently failing provider can
+		// never monopolise the single request slot.
+		if a.lastReqSource == pollClaude {
+			return pollCodex
+		}
+		return pollClaude
+	case claudeDue:
+		return pollClaude
+	case codexDue:
+		return pollCodex
+	default:
+		return pollNone
+	}
+}
+
+func (a *App) startDueRequest() {
+	if source := a.nextDueRequest(time.Now()); source != pollNone {
+		a.startRequest(source)
+	}
+}
+
+// startRequest starts exactly one provider request. Claude and Codex have
+// independent schedules, but share this single in-flight slot so their HTTP
+// calls never overlap.
+func (a *App) startRequest(source pollSource) {
+	if a.inflight || source == pollNone {
+		return
+	}
 	a.inflight = true
 	a.reqStart = time.Now()
+	a.reqSource = source
+	a.lastReqSource = source
+	results := a.results
+
+	if source == pollCodex {
+		codex := a.codex
+		go func() {
+			raw, usage, err := codex.Usage()
+			results <- pollResult{
+				source:     pollCodex,
+				codexRaw:   raw,
+				codexUsage: usage,
+				codexErr:   err,
+			}
+		}()
+		return
+	}
+
 	a.pollCount++
 	wantProfile := a.profile == nil || a.pollCount%profileEvery == 0
 	client := a.client
-	codex := a.codex
-	results := a.results
 	claudeAuthGeneration := a.claudeAuthGeneration
 	go func() {
-		codexRaw, codexUsage, codexErr := codex.Usage()
 		raw, usage, err := client.Usage()
-		if err != nil {
-			results <- pollResult{
-				claudeAuthGeneration: claudeAuthGeneration,
-				codexRaw:             codexRaw,
-				codexUsage:           codexUsage,
-				codexErr:             codexErr,
-				err:                  err,
-			}
-			return
-		}
 		var prof *Profile
-		if wantProfile {
+		if err == nil && wantProfile {
 			prof, _ = client.Profile()
 		}
 		results <- pollResult{
+			source:               pollClaude,
 			raw:                  raw,
 			usage:                usage,
 			prof:                 prof,
 			claudeAuthGeneration: claudeAuthGeneration,
-			codexRaw:             codexRaw,
-			codexUsage:           codexUsage,
-			codexErr:             codexErr,
+			err:                  err,
 		}
 	}()
 }
@@ -286,11 +345,13 @@ func (a *App) drain() {
 	select {
 	case r := <-a.results:
 		a.inflight = false
-		a.noteCodex(r)
-		if r.claudeAuthGeneration != a.claudeAuthGeneration {
+		a.reqSource = pollNone
+		if r.source == pollCodex {
+			a.noteCodex(r)
+		} else if r.claudeAuthGeneration != a.claudeAuthGeneration {
 			// The Claude half belongs to the login active before the user clicked
-			// "Use current Claude login". Keep the Codex half, discard this half,
-			// and request the newly selected Claude account on the next tick.
+			// "Use current Claude login". Discard it and request the newly selected
+			// Claude account on the next tick.
 			a.nextPoll = time.Time{}
 			a.nextAllowedEpoch = 0
 		} else if r.err != nil {
@@ -340,7 +401,7 @@ func (a *App) useCurrentClaudeLogin() {
 	a.nextPoll = time.Time{}
 	a.nextAllowedEpoch = 0
 	if !a.inflight {
-		a.startRequest()
+		a.startRequest(pollClaude)
 	}
 }
 
@@ -348,6 +409,13 @@ func (a *App) noteCodex(r pollResult) {
 	if r.codexErr != nil {
 		a.lastCodexFail = time.Now()
 		a.lastCodexFailMsg = describe(r.codexErr)
+		a.codexFailCount++
+		status, retryAfter, resetAt := 0, 0, ""
+		if ae, ok := r.codexErr.(*APIError); ok {
+			status, retryAfter, resetAt = ae.Status, ae.RetryAfter, ae.ResetAt
+		}
+		a.scheduleCodexNext(backoffSeconds(a.codexFailCount, status, retryAfter,
+			resetAt, rand.Float64()*0.25))
 		// Keep the last good dial while it's still fresh; otherwise blink red.
 		fresh := !a.lastCodexOk.IsZero() && time.Since(a.lastCodexOk).Seconds() < cacheTTL
 		a.codexErrorOn = !fresh
@@ -360,6 +428,8 @@ func (a *App) noteCodex(r pollResult) {
 	}
 	a.lastCodexOk = time.Now()
 	a.lastCodexFailMsg = ""
+	a.codexFailCount = 0
+	a.scheduleCodexNext(basePollSecs)
 	a.codexErrorOn = false
 	if primary, secondary, ok := codexPercents(r.codexUsage); ok {
 		if p, s, ok := a.cRates.Update(nowSecs(), primary, secondary); ok {
@@ -396,9 +466,9 @@ func (a *App) useCurrentCodexLogin() {
 	a.renderCodex()
 	a.renderIcon()
 	a.saveState(true)
-	a.nextPoll = time.Time{}
+	a.nextCodexPoll = time.Time{}
 	if !a.inflight {
-		a.startRequest()
+		a.startRequest(pollCodex)
 	}
 }
 
@@ -1109,7 +1179,8 @@ func (a *App) updateStatus() {
 	a.ok.SetTitle("✓ Last success: " + agoOf(a.lastOk))
 	a.fail.SetTitle("✗ Last failure: " + agoOf(a.lastFail))
 	if a.inflight {
-		a.status.SetTitle(fmt.Sprintf("⟳ requesting… %.0fs", time.Since(a.reqStart).Seconds()))
+		a.status.SetTitle(fmt.Sprintf("⟳ requesting %s… %.0fs", a.reqSource,
+			time.Since(a.reqStart).Seconds()))
 		return
 	}
 	if a.cached {
@@ -1335,6 +1406,10 @@ func (a *App) scheduleNext(secs float64) {
 	now := time.Now()
 	a.nextPoll = now.Add(time.Duration(secs * float64(time.Second)))
 	a.nextAllowedEpoch = float64(now.Unix()) + secs
+}
+
+func (a *App) scheduleCodexNext(secs float64) {
+	a.nextCodexPoll = time.Now().Add(time.Duration(secs * float64(time.Second)))
 }
 
 func nowSecs() float64 { return float64(time.Now().UnixNano()) / 1e9 }

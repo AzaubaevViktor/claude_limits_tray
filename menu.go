@@ -121,9 +121,10 @@ func (a *App) buildMenu() {
 	}
 
 	a.onClick(refresh, func() {
-		a.nextPoll = time.Time{} // poll on the next tick
+		a.nextPoll = time.Time{} // poll both providers, one after the other
+		a.nextCodexPoll = time.Time{}
 		if !a.inflight {
-			a.startRequest()
+			a.startDueRequest()
 		}
 	})
 	go func() {
