@@ -131,6 +131,14 @@ func TestLimitTimeColor(t *testing.T) {
 	}
 }
 
+func TestLimitTimeColorKeepsModerateHeadroomVivid(t *testing.T) {
+	// A common weekly state is only modestly ahead of elapsed time. It should
+	// still use the explicit purple state instead of a muted green-purple blend.
+	if got := limitTimeColor(0.61, 0.50); got != dialPurple {
+		t.Errorf("moderate headroom should be vivid purple, got %v", got)
+	}
+}
+
 func TestSessionCappedByWeeklyGreyTail(t *testing.T) {
 	grey := svgRGB(dialUnavail)
 	// 3% weekly left, one session costs 15% of the weekly -> only 3/15 = 20% of

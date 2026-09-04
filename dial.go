@@ -41,7 +41,7 @@ var sideLabel = map[string]string{"left": "left", "right": "right"}
 var dialGreen = [3]int{48, 209, 88}
 var dialYellow = [3]int{255, 204, 0}
 var dialRed = [3]int{255, 69, 58}
-var dialPurple = [3]int{175, 82, 222} // more quota left than time — spending under pace
+var dialPurple = [3]int{191, 64, 255} // vivid headroom colour; stays distinct at menu-bar size
 var dialTrack = [3]int{150, 150, 150}
 var dialUnavail = [3]int{200, 200, 200} // session budget unreachable because the weekly cap runs out first
 
@@ -66,7 +66,10 @@ func limitTimeColor(limitLeft, timeLeft float64) [3]int {
 	const band = 0.05 // dead-band around parity that reads as plain green
 	switch {
 	case d > band:
-		return lerpColor(dialGreen, dialPurple, (d-band)/(0.5-band))
+		// This is a categorical state, not a severity scale. Blending green into
+		// purple produced a low-contrast blue-grey on ordinary headroom values,
+		// especially on the small right-hand weekly arc.
+		return dialPurple
 	case d < -band:
 		return lerpColor(dialGreen, dialRed, (-d-band)/(0.5-band))
 	default:
