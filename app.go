@@ -711,10 +711,10 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	sess := codexLimitForDial(primary)
 	week := codexLimitForDial(secondary)
 	if primary != nil {
-		sess.TimeTicks = hourTicks(float64(primary.WindowSeconds))
+		sess.TimeTicks = codexTimeTicks(primary.WindowSeconds)
 	}
 	if secondary != nil {
-		week.TimeTicks = dayTicks(float64(secondary.WindowSeconds))
+		week.TimeTicks = codexTimeTicks(secondary.WindowSeconds)
 	}
 	limits := map[string]Limit{"session": sess, "weekly": week}
 	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
@@ -733,9 +733,10 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	if primary == nil {
 		source = "weekly"
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%v-%v-%s",
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%v-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
+		limits["session"].TimeTicks, limits["weekly"].TimeTicks,
 		iround(worst.Pos()*60), int(timeFill), active, full, source)
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source}, key
 }
@@ -745,6 +746,17 @@ func codexLimitForDial(w *CodexWindow) Limit {
 		return Limit{Pct: 100, TimeLeft: 1}
 	}
 	return Limit{Pct: w.UsedPercent, TimeLeft: codexTimeFraction(w)}
+}
+
+// codexTimeTicks derives the inner-ring unit from the actual API window rather
+// than from whether Codex called it primary or secondary. Codex can expose its
+// only weekly window as primary; that full circle must still show seven days,
+// not 168 hours clamped to 24 marks.
+func codexTimeTicks(windowSeconds int64) int {
+	if windowSeconds >= 24*60*60 {
+		return dayTicks(float64(windowSeconds))
+	}
+	return hourTicks(float64(windowSeconds))
 }
 
 func codexTimeFraction(w *CodexWindow) float64 {

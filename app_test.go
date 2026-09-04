@@ -46,6 +46,15 @@ func TestPollSchedulerAlternatesWhenBothDue(t *testing.T) {
 	}
 }
 
+func TestCodexTimeTicksUseDaysForLongPrimaryWindow(t *testing.T) {
+	if got := codexTimeTicks(7 * 24 * 60 * 60); got != 7 {
+		t.Fatalf("weekly Codex window should have 7 daily segments, got %d", got)
+	}
+	if got := codexTimeTicks(5 * 60 * 60); got != 5 {
+		t.Fatalf("short Codex window should keep 5 hourly segments, got %d", got)
+	}
+}
+
 // After a restart the rate history is empty, so a naive tracker needs two fresh
 // polls before "Last 5m" can leave zero. Seeding from the last persisted sample
 // lets the very first poll measure a rate.
