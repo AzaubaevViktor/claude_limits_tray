@@ -55,6 +55,43 @@ func TestCodexTimeTicksUseDaysForLongPrimaryWindow(t *testing.T) {
 	}
 }
 
+func TestCodexHistoryPlacesSoleWeeklyPrimaryInLongRow(t *testing.T) {
+	primaryHistory := []histSample{{T: 1, V: 10}, {T: 2, V: 20}}
+	a := &App{
+		history: map[string][]histSample{seriesCodexPrimary: primaryHistory},
+		lastCodex: &CodexUsage{Limits: []CodexLimit{{
+			Primary: &CodexWindow{WindowSeconds: int64(weekSecs)},
+		}}},
+	}
+	short, long := a.codexHistoryWindows()
+	if short.present {
+		t.Fatal("sole weekly primary must not occupy the short-window card")
+	}
+	if !long.present || long.secs != int64(weekSecs) || len(long.samples) != len(primaryHistory) {
+		t.Fatalf("long window mapped incorrectly: %+v", long)
+	}
+}
+
+func TestCodexHistoryOrdersWindowsByDuration(t *testing.T) {
+	a := &App{
+		history: map[string][]histSample{
+			seriesCodexPrimary:   {{T: 1, V: 7}},
+			seriesCodexSecondary: {{T: 1, V: 3}},
+		},
+		lastCodex: &CodexUsage{Limits: []CodexLimit{{
+			Primary:   &CodexWindow{WindowSeconds: int64(weekSecs)},
+			Secondary: &CodexWindow{WindowSeconds: int64(fiveHourSecs)},
+		}}},
+	}
+	short, long := a.codexHistoryWindows()
+	if short.secs != int64(fiveHourSecs) || long.secs != int64(weekSecs) {
+		t.Fatalf("windows not ordered short/long: %v / %v", short.secs, long.secs)
+	}
+	if short.samples[0].V != 3 || long.samples[0].V != 7 {
+		t.Fatal("history series did not follow their windows during reordering")
+	}
+}
+
 func TestClaudeDialCentreMatchesWorstOuterPace(t *testing.T) {
 	now := time.Now()
 	a := &App{

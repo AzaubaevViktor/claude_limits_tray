@@ -11,7 +11,7 @@ import (
 // into a burn-rate (first-derivative) view: how much of a window's quota was
 // spent inside each grid interval. Unlike the live rate/forecast, the charts
 // here never extrapolate — they only ever show measured spend, so a wrong
-// estimate can't creep in. See renderBurnChart for the drawing.
+// estimate can't creep in. See renderPairedBurnChart for the drawing.
 
 // histSample is one utilisation reading: cumulative used-% (0..100) at unix
 // second T. A window reset shows up as V dropping below the previous sample.
@@ -326,76 +326,4 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	b.WriteString(fmt.Sprintf(
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
 		plotX, plotBase, plotX+plotW, plotBase))
-}
-
-// renderBurnChart draws the burn-rate bars for one horizon as SVG bytes, ready
-// to hang off a menu item via SetIcon. Each bucket is a full-width bar so its
-// area reads as the spend (no invisibly-thin lines); the height auto-scales to
-// the busiest bar so the shape always fills the strip. Bars are coloured by how
-// the interval's spend compares to the sustainable share of windowSecs. A faint
-// grid marks the bucket boundaries and off-hours are shaded darker.
-func renderBurnChart(buckets []burnBucket, windowSecs, bucketSecs, start, now int64, ws, we int) []byte {
-	const W, H = 120.0, 18.0
-	const base, top = 16.5, 2.0
-	usable := base - top
-	n := len(buckets)
-	horizon := now - start
-	if horizon <= 0 {
-		horizon = 1
-	}
-	xOf := func(t int64) float64 { return clamp(float64(t-start)/float64(horizon), 0, 1) * W }
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf(
-		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
-		W, H, W, H))
-
-	// Off-hours shading behind everything.
-	for _, nb := range nightBands(start, now, ws, we) {
-		x0, x1 := xOf(nb[0]), xOf(nb[1])
-		b.WriteString(fmt.Sprintf(
-			`<rect x="%.2f" y="0" width="%.2f" height="%.0f" fill="rgb(120,120,120)" fill-opacity="0.16"/>`,
-			x0, x1-x0, H))
-	}
-
-	// Grid at every bucket boundary + the baseline.
-	barW := W / float64(n)
-	for i := 0; i <= n; i++ {
-		x := float64(i) * barW
-		b.WriteString(fmt.Sprintf(
-			`<line x1="%.2f" y1="0.5" x2="%.2f" y2="%.2f" stroke="rgb(150,150,150)" stroke-width="0.35" stroke-opacity="0.35"/>`,
-			x, x, base))
-	}
-	b.WriteString(fmt.Sprintf(
-		`<line x1="0" y1="%.2f" x2="%.0f" y2="%.2f" stroke="rgb(150,150,150)" stroke-width="0.4" stroke-opacity="0.55"/>`,
-		base, W, base))
-
-	maxSpent := 0.0
-	for _, bk := range buckets {
-		if bk.Spent > maxSpent {
-			maxSpent = bk.Spent
-		}
-	}
-	sustain := 100 * float64(bucketSecs) / float64(windowSecs)
-	for i, bk := range buckets {
-		if bk.Spent <= 0 || maxSpent <= 0 {
-			continue
-		}
-		h := usable * bk.Spent / maxSpent
-		if h < 1.4 { // never let a real spend vanish into the baseline
-			h = 1.4
-		}
-		c := burnColor(bk.Spent / sustain)
-		x := float64(i)*barW + 0.5
-		w := barW - 1.0
-		if w < 0.6 {
-			w = barW
-		}
-		b.WriteString(fmt.Sprintf(
-			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" fill-opacity="0.9" rx="0.4"/>`,
-			x, base-h, w, h, svgRGB(c)))
-	}
-
-	b.WriteString(`</svg>`)
-	return []byte(b.String())
 }

@@ -162,9 +162,6 @@ type App struct {
 	codexBurnSecondary                         *systray.MenuItem
 	codexSpeed, codexSpeedLeft                 *systray.MenuItem
 	codexSpeedAvg, codexSpeedAvgLeft           *systray.MenuItem
-	codexHistParent                            *systray.MenuItem
-	codexHistHour, codexHistPrimary            *systray.MenuItem
-	codexHistSecondary                         *systray.MenuItem
 	codexCredits, codexStatus                  *systray.MenuItem
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
@@ -216,6 +213,7 @@ func (a *App) onReady() {
 	systray.SetTooltip("Claude and Codex limits")
 	a.applyIconHeight()
 	a.buildMenu()
+	a.renderHistory()
 	if a.lastUsage != nil {
 		a.apply()
 	} else {
@@ -393,6 +391,7 @@ func (a *App) useCurrentClaudeLogin() {
 	a.cached = false
 	a.failCount = 0
 	a.renderClaudeEmpty("requesting…")
+	a.renderHistory()
 	a.renderIcon()
 	a.saveState(true)
 	a.nextPoll = time.Time{}
@@ -615,7 +614,7 @@ func (a *App) apply() {
 	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())
 
 	a.renderScoped(u.Limits)
-	a.renderClaudeHistory()
+	a.renderHistory()
 	a.status.SetTitle(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
 		100-sessPct, 100-weekPct))
 }
@@ -667,7 +666,7 @@ func (a *App) renderCodex() {
 	}
 	a.codexStatus.SetTitle(status)
 	a.renderCodexScoped(u.Limits)
-	a.renderCodexHistory()
+	a.renderHistory()
 }
 
 func (a *App) renderCodexEmpty() {
@@ -1012,47 +1011,108 @@ func (a *App) recordHistory(series string, v float64) {
 	a.history[series] = addHistSample(a.history[series], time.Now().Unix(), v)
 }
 
-// setBurnRow renders one burn-history row: the total spent over the horizon as
-// the title, and the per-interval burn-rate bar chart as the item's icon.
-func (a *App) setBurnRow(it *systray.MenuItem, label string, s []histSample, horizon, bucket, windowSecs int64) {
-	if it == nil || bucket <= 0 {
-		return
-	}
-	now := time.Now().Unix()
-	buckets := burnBuckets(s, now, horizon, bucket)
-	if len(s) < 2 {
-		it.SetTitle(label + ":  —")
-	} else {
-		it.SetTitle(fmt.Sprintf("%s:  %.1f%%", label, totalSpent(buckets)))
-	}
-	it.SetIcon(renderBurnChart(buckets, windowSecs, bucket, now-horizon, now, a.workStart, a.workEnd))
+type historyWindow struct {
+	samples []histSample
+	secs    int64
+	present bool
 }
 
-func (a *App) renderClaudeHistory() {
+func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket, now int64, accent [3]int) burnChartPanel {
+	if horizon <= 0 {
+		horizon = 1
+	}
+	if bucket <= 0 {
+		bucket = horizon
+	}
+	return burnChartPanel{
+		Provider: provider, Label: label,
+		Buckets:    burnBuckets(series.samples, now, horizon, bucket),
+		WindowSecs: series.secs, BucketSecs: bucket,
+		Start: now - horizon, Now: now,
+		Known:  series.present && len(series.samples) >= 2,
+		Accent: accent,
+	}
+}
+
+// codexHistoryWindows maps the API's primary/secondary names onto visual
+// short/long columns. A sole weekly primary belongs next to Claude's weekly
+// chart, not in the short-window row just because the API called it primary.
+func (a *App) codexHistoryWindows() (short, long historyWindow) {
+	p, s := (*CodexWindow)(nil), (*CodexWindow)(nil)
+	if a.lastCodex != nil {
+		p, s = a.lastCodex.primary(), a.lastCodex.secondary()
+	}
+	pw := historyWindow{samples: a.history[seriesCodexPrimary]}
+	sw := historyWindow{samples: a.history[seriesCodexSecondary]}
+	if p != nil {
+		pw.secs, pw.present = codexWindowSecs(p, 0), true
+	}
+	if s != nil {
+		sw.secs, sw.present = codexWindowSecs(s, 0), true
+	}
+	switch {
+	case pw.present && sw.present && pw.secs <= sw.secs:
+		return pw, sw
+	case pw.present && sw.present:
+		return sw, pw
+	case pw.present && pw.secs < 24*60*60:
+		return pw, historyWindow{}
+	case pw.present:
+		return historyWindow{}, pw
+	case sw.present && sw.secs < 24*60*60:
+		return sw, historyWindow{}
+	case sw.present:
+		return historyWindow{}, sw
+	default:
+		return historyWindow{}, historyWindow{}
+	}
+}
+
+func windowChartLabel(window historyWindow, fallback string) string {
+	if !window.present || window.secs <= 0 {
+		return fallback
+	}
+	if window.secs >= 24*60*60 {
+		return fmt.Sprintf("%dd", int(math.Round(float64(window.secs)/(24*60*60))))
+	}
+	return fmt.Sprintf("%dh", int(math.Round(float64(window.secs)/(60*60))))
+}
+
+func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPanel) {
+	if it == nil {
+		return
+	}
+	it.SetTitle("")
+	it.SetIconSize(renderPairedBurnChart(left, right, a.workStart, a.workEnd), pairedChartWidth, pairedChartHeight)
+}
+
+// renderHistory keeps the two providers visible as peer cards at the top of
+// the menu: Claude on the left, Codex on the right. Each card retains its own
+// buckets and sustainable-pace denominator.
+func (a *App) renderHistory() {
 	if a.histHour == nil {
 		return
 	}
-	sess := a.history[seriesClaudeSession]
-	week := a.history[seriesClaudeWeekly]
-	a.setBurnRow(a.histHour, "Last hour", sess, 3600, 900, int64(fiveHourSecs))
-	a.setBurnRow(a.histSession, "Session", sess, int64(fiveHourSecs), int64(fiveHourSecs)/5, int64(fiveHourSecs))
-	a.setBurnRow(a.histWeek, "Week", week, int64(weekSecs), int64(weekSecs)/7, int64(weekSecs))
-}
+	now := time.Now().Unix()
+	claudeShort := historyWindow{a.history[seriesClaudeSession], int64(fiveHourSecs), a.lastUsage != nil}
+	claudeLong := historyWindow{a.history[seriesClaudeWeekly], int64(weekSecs), a.lastUsage != nil}
+	codexShort, codexLong := a.codexHistoryWindows()
+	codexFocus := codexShort
+	if !codexFocus.present {
+		codexFocus = codexLong
+	}
 
-func (a *App) renderCodexHistory() {
-	if a.codexHistParent == nil {
-		return
-	}
-	primary := a.history[seriesCodexPrimary]
-	secondary := a.history[seriesCodexSecondary]
-	pWin, sWin := int64(fiveHourSecs), int64(weekSecs)
-	if a.lastCodex != nil {
-		pWin = codexWindowSecs(a.lastCodex.primary(), pWin)
-		sWin = codexWindowSecs(a.lastCodex.secondary(), sWin)
-	}
-	a.setBurnRow(a.codexHistHour, "Last hour", primary, 3600, 900, pWin)
-	a.setBurnRow(a.codexHistPrimary, "Primary", primary, pWin, pWin/5, pWin)
-	a.setBurnRow(a.codexHistSecondary, "Secondary", secondary, sWin, sWin/7, sWin)
+	a.setPairedHistoryRow(a.histHour,
+		makeBurnPanel("Claude", "1h", claudeShort, 3600, 15*60, now, claudeChartAccent),
+		makeBurnPanel("Codex", "1h", codexFocus, 3600, 15*60, now, codexChartAccent))
+	a.setPairedHistoryRow(a.histSession,
+		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), int64(fiveHourSecs)/5, now, claudeChartAccent),
+		makeBurnPanel("Codex", windowChartLabel(codexShort, "short"), codexShort,
+			max(int64(fiveHourSecs), codexShort.secs), max(int64(fiveHourSecs), codexShort.secs)/5, now, codexChartAccent))
+	a.setPairedHistoryRow(a.histWeek,
+		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), int64(weekSecs)/7, now, claudeChartAccent),
+		makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
+			max(int64(weekSecs), codexLong.secs), max(int64(weekSecs), codexLong.secs)/7, now, codexChartAccent))
 }
 
 // codexWindowSecs is w's window length in seconds, or def when unknown.

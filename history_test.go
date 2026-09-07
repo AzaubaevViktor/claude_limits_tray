@@ -163,23 +163,6 @@ func TestPctColor(t *testing.T) {
 	}
 }
 
-func TestRenderBurnChartSVG(t *testing.T) {
-	now := int64(1_000_000)
-	s := []histSample{
-		{now - 3600, 0},
-		{now - 1800, 20},
-		{now - 100, 40},
-	}
-	b := burnBuckets(s, now, 3600, 900)
-	svg := string(renderBurnChart(b, int64(fiveHourSecs), 900, now-3600, now, 12*60, 2*60))
-	if !strings.HasPrefix(svg, "<svg") || !strings.HasSuffix(svg, "</svg>") {
-		t.Fatalf("not a well-formed svg: %.40s...", svg)
-	}
-	if !strings.Contains(svg, "<rect") {
-		t.Fatal("expected at least one bar rect")
-	}
-}
-
 func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	now := int64(1_000_000)
 	leftBuckets := []burnBucket{{Start: now - 900, Spent: 2}}
