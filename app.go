@@ -733,11 +733,11 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	if primary == nil {
 		source = "weekly"
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%v-%s",
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%v-%s-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
 		limits["session"].TimeTicks, limits["weekly"].TimeTicks,
-		iround(worst.Pos()*60), int(timeFill), active, full, source)
+		iround(worst.Pos()*60), int(timeFill), active, full, source, dialPaceKey(limits))
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source}, key
 }
 
@@ -745,7 +745,24 @@ func codexLimitForDial(w *CodexWindow) Limit {
 	if w == nil {
 		return Limit{Pct: 100, TimeLeft: 1}
 	}
-	return Limit{Pct: w.UsedPercent, TimeLeft: codexTimeFraction(w)}
+	window := float64(w.WindowSeconds)
+	return Limit{
+		Pct:        w.UsedPercent,
+		TimeLeft:   codexTimeFraction(w),
+		WindowSecs: window,
+		WaitOKSecs: paceWaitOK(window),
+	}
+}
+
+// paceWaitOK applies the statusline's two tolerances to API windows. Claude
+// and Codex currently expose short (~5h) and long (~7d) windows; using one day
+// as the boundary also keeps an unexpected short window from getting a 12h
+// tolerance larger than the window itself.
+func paceWaitOK(windowSecs float64) float64 {
+	if windowSecs >= 24*60*60 {
+		return 12 * 60 * 60
+	}
+	return 30 * 60
 }
 
 // codexTimeTicks derives the inner-ring unit from the actual API window rather
@@ -1107,12 +1124,12 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 	mark := speedColor(sessFc, weekFc, active)
 	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
-		"session": {Pct: sessPct, TimeLeft: sessTf, TimeTicks: hourTicks(fiveHourSecs)},
-		"weekly":  {Pct: weekPct, TimeLeft: weekTf, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
+		"session": {Pct: sessPct, TimeLeft: sessTf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60, TimeTicks: hourTicks(fiveHourSecs)},
+		"weekly":  {Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%v-%d", iround(sessPct), iround(weekPct),
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%v-%d-%s", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
-		active, iround(weekBlock*10))
+		active, iround(weekBlock*10), dialPaceKey(limits))
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true}, key
 }
 

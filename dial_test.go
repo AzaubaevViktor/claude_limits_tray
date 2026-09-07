@@ -116,26 +116,18 @@ func min(a, b int) int {
 	return b
 }
 
-func TestLimitTimeColor(t *testing.T) {
-	// Lots of quota, little time left -> purple (spending under pace).
-	if got := limitTimeColor(0.9, 0.2); got != dialPurple {
-		t.Errorf("surplus should be purple, got %v", got)
+func TestQuotaPaceColors(t *testing.T) {
+	want := map[quotaPace][3]int{
+		paceUnknown: dialGray,
+		pacePurple:  dialPurple,
+		paceGreen:   dialGreen,
+		paceAmber:   dialYellow,
+		paceRed:     dialRed,
 	}
-	// Quota and time about equal -> green (on pace).
-	if got := limitTimeColor(0.5, 0.5); got != dialGreen {
-		t.Errorf("parity should be green, got %v", got)
-	}
-	// Little quota, lots of time -> red (will run out first).
-	if got := limitTimeColor(0.2, 0.9); got != dialRed {
-		t.Errorf("deficit should be red, got %v", got)
-	}
-}
-
-func TestLimitTimeColorKeepsModerateHeadroomVivid(t *testing.T) {
-	// A common weekly state is only modestly ahead of elapsed time. It should
-	// still use the explicit purple state instead of a muted green-purple blend.
-	if got := limitTimeColor(0.61, 0.50); got != dialPurple {
-		t.Errorf("moderate headroom should be vivid purple, got %v", got)
+	for pace, color := range want {
+		if got := quotaPaceColor(pace); got != color {
+			t.Errorf("pace %v color = %v, want %v", pace, got, color)
+		}
 	}
 }
 
@@ -172,14 +164,14 @@ func TestOuterRingColorReflectsCap(t *testing.T) {
 	tf := 0.5
 	// 92% session left but only 2% weekly at 15%/session -> usable 2/15 ≈ 0.133.
 	limits := map[string]Limit{
-		"session": {Pct: 8, TimeLeft: tf},                // 92% session left
-		"weekly":  {Pct: 98, TimeLeft: tf, BlockPct: 15}, // 2% weekly left
+		"session": {Pct: 8, TimeLeft: tf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60}, // 92% session left
+		"weekly":  {Pct: 98, TimeLeft: tf, BlockPct: 15},                                 // 2% weekly left
 	}
 	svg := string(renderDial(limits, [3]int{0, 0, 0}, false))
 	// The lit session arc must be coloured by the usable (capped) fraction, which
 	// trails the time left -> red, NOT the plentiful raw 92% -> purple.
-	capped := svgRGB(limitTimeColor(0.02/0.15, tf))
-	raw := svgRGB(limitTimeColor(0.92, tf))
+	capped := svgRGB(quotaPaceColor(limitPace(limits["session"], 0.02/0.15)))
+	raw := svgRGB(dialPurple)
 	if !strings.Contains(svg, capped) {
 		t.Fatalf("outer session colour should follow the cap (%s):\n%s", capped, svg)
 	}

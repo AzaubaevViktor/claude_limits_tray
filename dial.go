@@ -8,10 +8,12 @@ import (
 
 // Limit is the per-window input to the dial.
 type Limit struct {
-	Pct       float64 // used 0..100
-	TimeLeft  float64 // fraction of window remaining 0..1
-	BlockPct  float64 // weekly % per 5-hour-session block; 0 = no separators
-	TimeTicks int     // segments to split the time ring into (hours/days); <2 = none
+	Pct        float64 // used 0..100
+	TimeLeft   float64 // fraction of window remaining 0..1
+	WindowSecs float64 // whole window; 0 means its clock is unknown
+	WaitOKSecs float64 // tolerable gap between exhaustion and reset
+	BlockPct   float64 // weekly % per 5-hour-session block; 0 = no separators
+	TimeTicks  int     // segments to split the time ring into (hours/days); <2 = none
 }
 
 // maxWeekTicks caps how many 5-hour-block separators the weekly semicircle can
@@ -55,26 +57,50 @@ func lerpColor(a, b [3]int, t float64) [3]int {
 	return out
 }
 
-// limitTimeColor colours the outer (quota) ring by how the fraction of quota
-// left compares to the fraction of the window's time left:
-//
-//	purple  quota left clearly exceeds time left (spending below pace, headroom)
-//	green   the two are about equal (on pace to finish right around the reset)
-//	red     quota left trails time left (you'll run out before the reset)
-func limitTimeColor(limitLeft, timeLeft float64) [3]int {
-	d := clamp(limitLeft, 0, 1) - clamp(timeLeft, 0, 1)
-	const band = 0.05 // dead-band around parity that reads as plain green
-	switch {
-	case d > band:
-		// This is a categorical state, not a severity scale. Blending green into
-		// purple produced a low-contrast blue-grey on ordinary headroom values,
-		// especially on the small right-hand weekly arc.
+func quotaPaceColor(pace quotaPace) [3]int {
+	switch pace {
+	case pacePurple:
 		return dialPurple
-	case d < -band:
-		return lerpColor(dialGreen, dialRed, (-d-band)/(0.5-band))
-	default:
+	case paceGreen:
 		return dialGreen
+	case paceAmber:
+		return dialYellow
+	case paceRed:
+		return dialRed
+	default:
+		return dialGray
 	}
+}
+
+func limitPace(l Limit, limitLeft float64) quotaPace {
+	return quotaPaceFor(
+		100*(1-clamp(limitLeft, 0, 1)),
+		clamp(l.TimeLeft, 0, 1)*l.WindowSecs,
+		l.WindowSecs,
+		l.WaitOKSecs,
+	)
+}
+
+// effectiveLimitLeft applies the weekly cap to the short/session window. It is
+// shared by rendering and cache keys so a colour transition always invalidates
+// the icon even when the rounded arc lengths have not changed yet.
+func effectiveLimitLeft(limits map[string]Limit, source string) float64 {
+	l := limits[source]
+	left := clamp(1-l.Pct/100, 0, 1)
+	if source == "session" {
+		if weekly, ok := limits["weekly"]; ok && weekly.BlockPct > 0 {
+			weeklyLeft := clamp(1-weekly.Pct/100, 0, 1)
+			left = math.Min(left, clamp(weeklyLeft/(weekly.BlockPct/100), 0, 1))
+		}
+	}
+	return left
+}
+
+func dialPaceKey(limits map[string]Limit) string {
+	return fmt.Sprintf("%d-%d",
+		limitPace(limits["session"], effectiveLimitLeft(limits, "session")),
+		limitPace(limits["weekly"], effectiveLimitLeft(limits, "weekly")),
+	)
 }
 
 // timeFill selects how the inner (time) ring fills. The colour is the same
@@ -131,7 +157,7 @@ func legendRows() [][2]string {
 		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
 	rows = append(rows,
-		[2]string{"Outer colour", "purple: more limit than time · green: on pace · red: less limit than time · grey: capped by weekly"},
+		[2]string{"Outer colour", "purple: under pace · green: on pace · yellow: short gap · red: long gap · grey: learning/capped"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "speed — grey idle · green ok · yellow→red running out before reset"},
 	)
@@ -189,14 +215,15 @@ func healthColor(health float64) [3]int {
 	return lerpColor(dialRed, dialYellow, health/0.5)
 }
 
-// segColor picks a segment's colour: the outer quota ring reads quota-left vs
-// time-left (purple/green/red); every other ring uses the health gradient.
+// segColor picks a segment's colour: the outer quota ring reads the statusline
+// pace projection (purple/green/amber/red/unknown); every other ring uses the
+// health gradient.
 // limitLeft is the effective quota fraction left — for the session ring this is
 // the weekly-capped usable amount, not the raw incoming %, so the colour tells
 // the truth (red when the weekly leaves almost nothing spendable).
 func segColor(seg segment, l Limit, limitLeft, health float64) [3]int {
 	if seg.metric == "percent_left" {
-		return limitTimeColor(clamp(limitLeft, 0, 1), clamp(l.TimeLeft, 0, 1))
+		return quotaPaceColor(limitPace(l, limitLeft))
 	}
 	return healthColor(health)
 }
@@ -283,8 +310,7 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		// only the usable head in colour over it, so the tail reads as unavailable.
 		if seg.source == "session" && seg.metric == "percent_left" {
 			if wl, ok := input.limits["weekly"]; ok && wl.BlockPct > 0 {
-				weeklyLeft := clamp(1-wl.Pct/100, 0, 1)
-				if usable := clamp(weeklyLeft/(wl.BlockPct/100), 0, 1); usable < length {
+				if usable := effectiveLimitLeft(input.limits, "session"); usable < length {
 					writeArc(b, xoff+ox, r, sign*endGap, sign*(endGap+length*span),
 						dialUnavail, 0.9, dialSW)
 					length = usable
@@ -336,7 +362,7 @@ func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 
 	limitLeft := clamp(1-l.Pct/100, 0, 1)
 	writeSweep(b, ox, rings["outer"], limitLeft,
-		limitTimeColor(limitLeft, clamp(l.TimeLeft, 0, 1)), 1.0)
+		quotaPaceColor(limitPace(l, limitLeft)), 1.0)
 
 	tlen, thealth := metricFor("time", l)
 	writeSweep(b, ox, rings["inner"], tlen, healthColor(thealth), 0.85)
