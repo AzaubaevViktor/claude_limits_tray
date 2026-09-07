@@ -83,10 +83,14 @@ Click it for everything as numbers, plus your account.
   real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
   manual refresh never misreads as 0).
 - **Paired burn history** at the top of the menu — Claude is always the left
-  card and Codex the right card, with separate totals and scales for the last
-  hour, short window, and long window. Bars are measured spend rather than a
-  forecast; their dashed line marks sustainable pace. A weekly-only Codex limit
-  is placed in the long-window row even when the API calls it `primary`.
+  card and Codex the right card, with large high-resolution timelines and
+  separate totals/scales for the last hour, short window, and long window. Bars
+  are measured spend rather than a forecast; their dashed line marks
+  sustainable pace. Each card also has a coloured speedometer and quota-end ETA
+  based on the **last actual usage increase** (including how long ago it was),
+  not the average since the window opened and not a trailing idle poll. A
+  weekly-only Codex limit is placed in the long-window row even when the API
+  calls it `primary`.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
