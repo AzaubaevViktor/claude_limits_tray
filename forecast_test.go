@@ -90,6 +90,9 @@ func TestRecentRateAndQuotaEndText(t *testing.T) {
 	if got := recentRateText(0, time.Time{}, now, weekSecs); got != "last use —" {
 		t.Fatalf("missing use text = %q", got)
 	}
+	if got := recentRateText(0, now.Add(-2*time.Hour), now, weekSecs); got != "idle · last use 2h00m ago" {
+		t.Fatalf("stale use text = %q", got)
+	}
 
 	rate := 40.0 / (4 * 60 * 60) // 10%/h; 20% left -> empty in two hours
 	if got := quotaEndText(80, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {

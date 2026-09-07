@@ -1026,7 +1026,7 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket
 	if bucket <= 0 {
 		bucket = horizon
 	}
-	lastUse := lastUseRate(series.samples)
+	lastUse := lastUseRate(series.samples, now)
 	return burnChartPanel{
 		Provider: provider, Label: label,
 		Buckets:    burnBuckets(series.samples, now, horizon, bucket),

@@ -98,14 +98,17 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 }
 
 func recentRateText(ratePerSec float64, usedAt, now time.Time, windowSecs float64) string {
-	if usedAt.IsZero() || ratePerSec <= 1e-9 {
+	if usedAt.IsZero() {
 		return "last use —"
+	}
+	age := math.Max(0, now.Sub(usedAt).Seconds())
+	if ratePerSec <= 1e-9 {
+		return fmt.Sprintf("idle · last use %s ago", fmtSpan(age))
 	}
 	unitSecs, unit := 3600.0, "h"
 	if windowSecs >= 24*60*60 {
 		unitSecs, unit = 24*60*60, "d"
 	}
-	age := math.Max(0, now.Sub(usedAt).Seconds())
 	return fmt.Sprintf("last use %s ago · %.1f%%/%s", fmtSpan(age), ratePerSec*unitSecs, unit)
 }
 

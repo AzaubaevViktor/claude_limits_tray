@@ -30,9 +30,10 @@ const (
 )
 
 const (
-	histFullRes  = int64(24 * 3600)     // keep every sample from the last 24h
-	histThinStep = int64(15 * 60)       // older than that: thin to >= 15m apart
-	histMaxAge   = int64(7 * 24 * 3600) // drop anything older than 7 days
+	histFullRes      = int64(24 * 3600)     // keep every sample from the last 24h
+	histThinStep     = int64(15 * 60)       // older than that: thin to >= 15m apart
+	histMaxAge       = int64(7 * 24 * 3600) // drop anything older than 7 days
+	lastUseFreshSecs = int64(10 * 60)       // one maximum adaptive poll interval
 )
 
 // addHistSample appends a reading and re-decimates. Out-of-order or duplicate
@@ -122,7 +123,9 @@ type useRate struct {
 // reset and not a trailing flat poll. Consecutive positive samples are smoothed
 // over at most rateWindow; a flat sample ends the burst. Samples before the most
 // recent counter reset are excluded so an old window cannot drive a new ETA.
-func lastUseRate(samples []histSample) useRate {
+// After one maximum poll interval without another increase, the measurement is
+// retained only as a last-use timestamp and no longer presented as current.
+func lastUseRate(samples []histSample, now int64) useRate {
 	if len(samples) < 2 {
 		return useRate{}
 	}
@@ -143,8 +146,11 @@ func lastUseRate(samples []histSample) useRate {
 			start--
 		}
 		dt := float64(samples[end].T - samples[start].T)
+		if now-samples[end].T > lastUseFreshSecs {
+			return useRate{At: samples[end].T}
+		}
 		if dt < rateMinDt {
-			return useRate{}
+			return useRate{At: samples[end].T}
 		}
 		return useRate{
 			Rate: (samples[end].V - samples[start].V) / dt,

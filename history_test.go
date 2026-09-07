@@ -145,9 +145,21 @@ func TestLastUseRateSkipsTrailingIdlePolls(t *testing.T) {
 		{T: 340, V: 11},
 		{T: 460, V: 11}, // trailing idle polls must not turn the rate into zero
 	}
-	got := lastUseRate(s)
+	got := lastUseRate(s, 460)
 	if !got.OK || got.At != 220 || got.Span != 120 || !near(got.Rate, 1.0/120, 1e-12) {
 		t.Fatalf("last use rate = %+v", got)
+	}
+}
+
+func TestLastUseRateExpiresAfterMaxPollGap(t *testing.T) {
+	s := []histSample{
+		{T: 100, V: 10},
+		{T: 220, V: 11},
+		{T: 340, V: 11},
+	}
+	got := lastUseRate(s, 220+lastUseFreshSecs+1)
+	if got.OK || got.Rate != 0 || got.At != 220 {
+		t.Fatalf("stale use should retain only its timestamp: %+v", got)
 	}
 }
 
@@ -158,11 +170,11 @@ func TestLastUseRateDoesNotCrossReset(t *testing.T) {
 		{T: 340, V: 0}, // reset
 		{T: 460, V: 0},
 	}
-	if got := lastUseRate(s); got.OK {
+	if got := lastUseRate(s, 460); got.OK {
 		t.Fatalf("pre-reset use must not drive a new-window rate: %+v", got)
 	}
 	s = append(s, histSample{T: 580, V: 1})
-	if got := lastUseRate(s); !got.OK || got.At != 580 || !near(got.Rate, 1.0/120, 1e-12) {
+	if got := lastUseRate(s, 580); !got.OK || got.At != 580 || !near(got.Rate, 1.0/120, 1e-12) {
 		t.Fatalf("post-reset use should establish a fresh rate: %+v", got)
 	}
 }
