@@ -25,11 +25,18 @@ dial has two concentric rings, split left/right:
   right    Long-window  % left      Long window:  time since reset
 ```
 
-- **Quota arcs** (outer) — how much quota is left, coloured by how that compares
-  to how much of the window's **time** is left:
-  - 🟣 purple — more quota left than time (you're spending **under** pace — headroom)
-  - 🟢 green — quota and time about equal (**on pace** to finish around the reset)
-  - 🔴 red — less quota left than time (you'll **run out before** the reset)
+- **Quota arcs** (outer) — how much quota is left, coloured by the same
+  since-reset pace projection as the Claude Code statusline. The first 10% of a
+  window stays grey because an early burst is too noisy to extrapolate:
+  - ⚪ grey — reset time is unknown, or the window is still in that learning period
+  - 🟣 purple — projected to leave more than 10% of the quota unused
+  - 🟢 green — projected to use 90–100% by reset
+  - 🟡 yellow — projected to run out, but only for a short tolerable gap before reset
+  - 🔴 red — projected to run out with a longer gap before reset
+
+  The tolerable gap is 30 minutes for a short (5h) window and 12 hours for a
+  long (weekly) window. A light-grey tail on the session arc still means the
+  weekly cap makes that part of the session quota unspendable.
 - **Weekly notches** (outer right) — thin separators slice the weekly arc into
   **"one full 5-hour session" blocks**, so the notches still lit tell you *how
   many more whole sessions* of weekly budget you have. The block size is
@@ -40,11 +47,9 @@ dial has two concentric rings, split left/right:
   time *elapsed* (default) or by time *left*; the colour is the same either way.
   Fixed tick marks split each time ring into known units — the **session by
   hours**, the **weekly by days**.
-- **Centre dot** — your live **burn speed** (the worse of the two windows):
-  - ⚪ grey — nothing being spent right now
-  - 🟢 green — a sustainable pace
-  - 🟡 yellow — spending fast
-  - 🔴 red — spending so fast you'd run out **before** the session or weekly reset
+- **Centre dot** — the worst known outer-ring pace category. An unknown/learning
+  window does not mask a known warning from the other window; the dot is grey
+  only while both windows are still unknown.
 - **Single-limit mode** — when only **one** window is in play (e.g. Codex now
   hands out only a weekly limit) the dial auto-collapses to **one big full
   circle** for that window instead of a half-empty pair of semicircles.

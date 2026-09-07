@@ -155,7 +155,7 @@ var segments = []segment{
 }
 
 // legendRows: one row per dial segment, then three rows explaining the three
-// colour systems (outer quota-vs-time, inner time, centre speed).
+// colour systems (outer pace, inner time, centre aggregate).
 func legendRows() [][2]string {
 	rows := make([][2]string, 0, len(segments)+3)
 	for _, s := range segments {
@@ -240,8 +240,8 @@ func segColor(seg segment, l Limit, limitLeft, health float64) [3]int {
 // phi converts a "clockwise from the top" angle (degrees) to SVG's angle (rad).
 func phi(deg float64) float64 { return deg*math.Pi/180 - math.Pi/2 }
 
-// renderDial draws the dial and returns SVG bytes. markColor is the centre
-// spark colour; pass hasMark=false to omit it (error blink "off" frame).
+// renderDial draws the dial and returns SVG bytes. markColor is the centre pace
+// colour; pass hasMark=false to omit it (error blink "off" frame).
 func renderDial(limits map[string]Limit, markColor [3]int, hasMark bool) []byte {
 	return renderDialSVG([]dialRenderInput{{limits: limits, markColor: markColor, hasMark: hasMark}})
 }

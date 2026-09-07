@@ -2,8 +2,8 @@
 //
 // A paired SVG icon shows Claude on the left and Codex on the right. Each dial
 // has two concentric rings (short window left, long window right; outer = %
-// left, inner = time since reset) plus a centre spark whose colour forecasts
-// whether you'll run out of quota at your current rate.
+// left, inner = time since reset) plus a centre dot that reports the worst
+// since-reset pace category across the two outer quota rings.
 //
 // This is a Go port of the Python app; the dial is emitted as SVG and the menu
 // bar is driven by getlantern/systray.
