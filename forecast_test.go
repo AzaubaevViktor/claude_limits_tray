@@ -5,6 +5,46 @@ import (
 	"time"
 )
 
+func TestQuotaPaceMatchesStatuslineCategories(t *testing.T) {
+	const (
+		window = 5 * 60 * 60
+		waitOK = 30 * 60
+	)
+	tests := []struct {
+		name      string
+		pct       float64
+		remaining float64
+		want      quotaPace
+	}{
+		{"missing clock", 50, 0, paceUnknown},
+		{"fresh window", 1, window, paceUnknown},
+		{"first ten percent untrusted", 20, 0.91 * window, paceUnknown},
+		{"zero spend has headroom", 0, 0.8 * window, pacePurple},
+		{"projects at ninety percent", 18, 0.8 * window, pacePurple},
+		{"projects just above ninety percent", 19, 0.8 * window, paceGreen},
+		{"runs out with short wait", 95, 0.1 * window, paceAmber},
+		{"runs out with long wait", 80, 0.5 * window, paceRed},
+		{"already spent near reset", 100, waitOK, paceAmber},
+		{"already spent far from reset", 100, waitOK + 1, paceRed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quotaPaceFor(tc.pct, tc.remaining, window, waitOK); got != tc.want {
+				t.Fatalf("quotaPaceFor(%v, %v) = %v, want %v", tc.pct, tc.remaining, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorstQuotaPaceIgnoresUnknown(t *testing.T) {
+	if got := worstQuotaPace(paceUnknown, paceGreen, paceAmber); got != paceAmber {
+		t.Fatalf("worst known pace = %v, want amber", got)
+	}
+	if got := worstQuotaPace(paceUnknown, paceUnknown); got != paceUnknown {
+		t.Fatalf("all unknown = %v, want unknown", got)
+	}
+}
+
 func TestForecastCategories(t *testing.T) {
 	cases := []struct {
 		name           string

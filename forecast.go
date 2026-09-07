@@ -6,6 +6,67 @@ import (
 	"time"
 )
 
+// quotaPace is the categorical, since-reset pace of a quota window. Unknown is
+// deliberately not ordered as a danger level: it means there is not enough
+// clock history to make a claim yet.
+type quotaPace uint8
+
+const (
+	paceUnknown quotaPace = iota
+	pacePurple
+	paceGreen
+	paceAmber
+	paceRed
+)
+
+// quotaPaceFor mirrors the Claude Code statusline's limit_color rule. It
+// projects the average pace since the window opened across the whole window,
+// but withholds an opinion for the first 10% because an early burst makes that
+// projection too noisy. If the quota would run out, waitOKSecs separates a
+// tolerable amber gap before reset from a red one.
+func quotaPaceFor(pctUsed, remainingSecs, windowSecs, waitOKSecs float64) quotaPace {
+	if windowSecs <= 0 || remainingSecs <= 0 || remainingSecs >= windowSecs {
+		return paceUnknown
+	}
+	elapsed := windowSecs - remainingSecs
+	if elapsed/windowSecs < 0.10 {
+		return paceUnknown
+	}
+	if pctUsed <= 0 {
+		return pacePurple
+	}
+	if pctUsed < 100 {
+		exhaustAt := elapsed * 100 / pctUsed
+		if exhaustAt >= windowSecs {
+			projected := pctUsed * windowSecs / elapsed
+			if projected <= 90 {
+				return pacePurple
+			}
+			return paceGreen
+		}
+		if windowSecs-exhaustAt <= math.Max(0, waitOKSecs) {
+			return paceAmber
+		}
+		return paceRed
+	}
+	if remainingSecs <= math.Max(0, waitOKSecs) {
+		return paceAmber
+	}
+	return paceRed
+}
+
+// worstQuotaPace returns the most dangerous known pace. Unknown is "no
+// opinion", so it wins only when every input is unknown.
+func worstQuotaPace(paces ...quotaPace) quotaPace {
+	worst := paceUnknown
+	for _, pace := range paces {
+		if pace != paceUnknown && (worst == paceUnknown || pace > worst) {
+			worst = pace
+		}
+	}
+	return worst
+}
+
 // Forecast projects the recent consumption rate forward to a window's reset.
 type Forecast struct {
 	Category  string  // purple | green | yellow | red
