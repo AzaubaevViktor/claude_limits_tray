@@ -34,6 +34,14 @@ func (item *MenuItem) SetIcon(iconBytes []byte) {
 	C.setMenuItemIcon(cstr, (C.int)(len(iconBytes)), C.int(item.id), false)
 }
 
+// SetIconSize sets a menu item's icon at an explicit point size. This is useful
+// for wide inline artwork such as charts; SetIcon retains the upstream 16x16
+// behaviour for ordinary menu glyphs.
+func (item *MenuItem) SetIconSize(iconBytes []byte, width, height float64) {
+	cstr := (*C.char)(unsafe.Pointer(&iconBytes[0]))
+	C.setMenuItemIconSize(cstr, (C.int)(len(iconBytes)), C.int(item.id), C.double(width), C.double(height), false)
+}
+
 // SetTemplateIcon sets the icon of a menu item as a template icon (on macOS). On Windows, it
 // falls back to the regular icon bytes and on Linux it does nothing.
 // templateIconBytes and regularIconBytes should be the content of .ico for windows and

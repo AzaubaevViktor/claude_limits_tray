@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package systray
@@ -896,6 +897,11 @@ func (item *MenuItem) SetIcon(iconBytes []byte) {
 		log.Errorf("Unable to addOrUpdateMenuItem: %v", err)
 		return
 	}
+}
+
+// SetIconSize falls back to the platform's ordinary menu icon size on Windows.
+func (item *MenuItem) SetIconSize(iconBytes []byte, width, height float64) {
+	item.SetIcon(iconBytes)
 }
 
 // SetTooltip sets the systray tooltip to display on mouse hover of the tray icon,
