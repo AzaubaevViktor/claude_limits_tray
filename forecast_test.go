@@ -36,6 +36,23 @@ func TestQuotaPaceMatchesStatuslineCategories(t *testing.T) {
 	}
 }
 
+func TestQuotaPaceSurfacesObviousEarlyWeeklyBurn(t *testing.T) {
+	const window = 7 * 24 * 60 * 60
+	// The real-world case that exposed the blind spot: 21% of a weekly quota
+	// consumed in roughly six hours. That is still inside the old 10% learning
+	// period (~17h), but there is ample evidence that the pace is dangerous.
+	remaining := float64(window - 6*60*60)
+	if got := quotaPaceFor(21, remaining, window, 12*60*60); got != paceRed {
+		t.Fatalf("21%% in 6h = %v, want red", got)
+	}
+
+	// Keep genuinely thin early samples grey: one rounded percentage point in
+	// six hours is not enough evidence to colour a weekly projection.
+	if got := quotaPaceFor(1, remaining, window, 12*60*60); got != paceUnknown {
+		t.Fatalf("1%% in 6h = %v, want unknown", got)
+	}
+}
+
 func TestWorstQuotaPaceIgnoresUnknown(t *testing.T) {
 	if got := worstQuotaPace(paceUnknown, paceGreen, paceAmber); got != paceAmber {
 		t.Fatalf("worst known pace = %v, want amber", got)

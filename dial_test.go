@@ -139,7 +139,7 @@ func TestAggregateDialPaceUsesWorstKnownOuterWindow(t *testing.T) {
 	if got := aggregateDialPace(limits); got != paceRed {
 		t.Fatalf("unknown session + red weekly = %v, want red", got)
 	}
-	limits["weekly"] = Limit{Pct: 20, TimeLeft: 0.95, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60}
+	limits["weekly"] = Limit{Pct: 1, TimeLeft: 0.95, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60}
 	if got := aggregateDialPace(limits); got != paceUnknown {
 		t.Fatalf("two untrusted windows = %v, want unknown", got)
 	}
