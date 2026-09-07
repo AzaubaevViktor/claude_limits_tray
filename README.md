@@ -27,7 +27,9 @@ dial has two concentric rings, split left/right:
 
 - **Quota arcs** (outer) — how much quota is left, coloured by the same
   since-reset pace projection as the Claude Code statusline. The first 10% of a
-  window stays grey because an early burst is too noisy to extrapolate:
+  window normally stays grey because an early burst is too noisy to
+  extrapolate. An obvious early burn (at least 30 minutes of history and 5% of
+  real spend) breaks out of that learning state immediately:
   - ⚪ grey — reset time is unknown, or the window is still in that learning period
   - 🟣 purple — projected to leave more than 10% of the quota unused
   - 🟢 green — projected to use 90–100% by reset
@@ -80,6 +82,11 @@ Click it for everything as numbers, plus your account.
   the **actual span it was measured over** (nominally ~5 min, but widening to the
   real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
   manual refresh never misreads as 0).
+- **Paired burn history** at the top of the menu — Claude is always the left
+  card and Codex the right card, with separate totals and scales for the last
+  hour, short window, and long window. Bars are measured spend rather than a
+  forecast; their dashed line marks sustainable pace. A weekly-only Codex limit
+  is placed in the long-window row even when the API calls it `primary`.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
