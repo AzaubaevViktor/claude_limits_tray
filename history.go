@@ -200,6 +200,134 @@ func burnColor(ratio float64) [3]int {
 	return lerpColor(dialYellow, dialRed, clamp((ratio-1)/0.5, 0, 1))
 }
 
+const (
+	pairedChartWidth  = 320.0
+	pairedChartHeight = 46.0
+)
+
+var claudeChartAccent = [3]int{217, 119, 87}
+var codexChartAccent = [3]int{16, 163, 127}
+
+// burnChartPanel is one self-contained provider chart inside a paired history
+// row. The two panels deliberately keep their own horizon, bucket size and
+// quota-window denominator: Claude and Codex can expose different windows even
+// though their cards sit side by side.
+type burnChartPanel struct {
+	Provider   string
+	Label      string
+	Buckets    []burnBucket
+	WindowSecs int64
+	BucketSecs int64
+	Start      int64
+	Now        int64
+	Known      bool
+	Accent     [3]int
+}
+
+// renderPairedBurnChart draws two independent provider cards in one wide menu
+// image. Bars are measured against sustainable spend for their own interval;
+// the dashed line is exactly sustainable pace, and the y scale always leaves
+// room above it so "healthy" does not look pegged to the ceiling.
+func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
+	const gap = 8.0
+	panelW := (pairedChartWidth - gap) / 2
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
+		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
+	writeBurnPanel(&b, left, 0, panelW, ws, we)
+	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
+	b.WriteString(`</svg>`)
+	return []byte(b.String())
+}
+
+func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, ws, we int) {
+	const (
+		panelTop = 0.5
+		plotTop  = 16.0
+		plotBase = 41.0
+		pad      = 6.0
+	)
+	plotX, plotW := x+pad, width-2*pad
+	accent := svgRGB(panel.Accent)
+	b.WriteString(fmt.Sprintf(
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="44.5" rx="5" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.7" stroke-opacity="0.45"/>`,
+		x+0.35, panelTop, width-0.7, accent))
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="11.2" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7.5" font-weight="700" letter-spacing="0.35" fill="%s">%s · %s</text>`,
+		plotX, accent, svgTextEscape.Replace(strings.ToUpper(panel.Provider)), svgTextEscape.Replace(strings.ToUpper(panel.Label))))
+	total := "—"
+	if panel.Known {
+		total = fmt.Sprintf("%.1f%%", totalSpent(panel.Buckets))
+	}
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="11.2" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7.5" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
+		x+width-pad, svgTextEscape.Replace(total)))
+	b.WriteString(fmt.Sprintf(
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="rgb(48,48,52)"/>`,
+		plotX, plotTop, plotW, plotBase-plotTop))
+
+	horizon := panel.Now - panel.Start
+	if horizon <= 0 {
+		horizon = 1
+	}
+	xOf := func(t int64) float64 {
+		return plotX + clamp(float64(t-panel.Start)/float64(horizon), 0, 1)*plotW
+	}
+	for _, nb := range nightBands(panel.Start, panel.Now, ws, we) {
+		x0, x1 := xOf(nb[0]), xOf(nb[1])
+		b.WriteString(fmt.Sprintf(
+			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="black" fill-opacity="0.24"/>`,
+			x0, plotTop, x1-x0, plotBase-plotTop))
+	}
+
+	n := len(panel.Buckets)
+	if n < 1 {
+		n = 1
+	}
+	barW := plotW / float64(n)
+	for i := 1; i < n; i++ {
+		gx := plotX + float64(i)*barW
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(150,150,155)" stroke-width="0.35" stroke-opacity="0.22"/>`,
+			gx, plotTop+1, gx, plotBase))
+	}
+
+	sustain := 0.0
+	if panel.WindowSecs > 0 && panel.BucketSecs > 0 {
+		sustain = 100 * float64(panel.BucketSecs) / float64(panel.WindowSecs)
+	}
+	maxRatio := 1.35
+	if sustain > 0 {
+		for _, bucket := range panel.Buckets {
+			maxRatio = math.Max(maxRatio, bucket.Spent/sustain*1.08)
+		}
+	}
+	usableH := plotBase - plotTop - 2
+	if sustain > 0 {
+		y := plotBase - usableH/maxRatio
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.55" stroke-opacity="0.72" stroke-dasharray="2 1.5"/>`,
+			plotX, y, plotX+plotW, y, accent))
+	}
+	for i, bucket := range panel.Buckets {
+		if bucket.Spent <= 0 || sustain <= 0 {
+			continue
+		}
+		ratio := bucket.Spent / sustain
+		h := usableH * ratio / maxRatio
+		h = math.Max(h, 1.2)
+		bx := plotX + float64(i)*barW + 0.65
+		bw := math.Max(0.7, barW-1.3)
+		b.WriteString(fmt.Sprintf(
+			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.8" fill="%s" fill-opacity="0.96"/>`,
+			bx, plotBase-h, bw, h, svgRGB(burnColor(ratio))))
+	}
+	b.WriteString(fmt.Sprintf(
+		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
+		plotX, plotBase, plotX+plotW, plotBase))
+}
+
 // renderBurnChart draws the burn-rate bars for one horizon as SVG bytes, ready
 // to hang off a menu item via SetIcon. Each bucket is a full-width bar so its
 // area reads as the spend (no invisibly-thin lines); the height auto-scales to

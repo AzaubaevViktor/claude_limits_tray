@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 	"time"
@@ -176,5 +177,40 @@ func TestRenderBurnChartSVG(t *testing.T) {
 	}
 	if !strings.Contains(svg, "<rect") {
 		t.Fatal("expected at least one bar rect")
+	}
+}
+
+func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
+	now := int64(1_000_000)
+	leftBuckets := []burnBucket{{Start: now - 900, Spent: 2}}
+	rightBuckets := []burnBucket{{Start: now - 900, Spent: 8}}
+	left := burnChartPanel{
+		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
+		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
+		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
+	}
+	right := burnChartPanel{
+		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
+		WindowSecs: int64(weekSecs), BucketSecs: 900,
+		Start: now - 3600, Now: now, Known: true, Accent: codexChartAccent,
+	}
+	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))
+	var root struct {
+		XMLName xml.Name `xml:"svg"`
+	}
+	if err := xml.Unmarshal([]byte(svg), &root); err != nil {
+		t.Fatalf("paired chart is not valid SVG: %v", err)
+	}
+	if !strings.Contains(svg, `width="320" height="46"`) {
+		t.Fatalf("paired dimensions missing: %.100s", svg)
+	}
+	if !strings.Contains(svg, "CLAUDE · 5H") || !strings.Contains(svg, "CODEX · 7D") {
+		t.Fatal("both provider labels should be embedded in their own panels")
+	}
+	if !strings.Contains(svg, svgRGB(claudeChartAccent)) || !strings.Contains(svg, svgRGB(codexChartAccent)) {
+		t.Fatal("provider panels should retain distinct accents")
+	}
+	if got := countSubstr(svg, `stroke-dasharray="2 1.5"`); got != 2 {
+		t.Fatalf("want one sustainable-pace line per provider, got %d", got)
 	}
 }
