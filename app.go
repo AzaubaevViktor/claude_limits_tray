@@ -15,11 +15,8 @@ import (
 )
 
 const (
-	profileEvery = 60
-	cacheTTL     = 600.0
-	// idleRate: a measured burn (% of quota per second) at or below this reads as
-	// "nothing being spent right now" — the centre speed dot goes grey.
-	idleRate       = 1e-9
+	profileEvery   = 60
+	cacheTTL       = 600.0
 	saveEverySecs  = 3600.0 // steady-state throttle; exit/quit/SIGINT force a flush
 	scopedPoolSize = 4
 
@@ -717,14 +714,8 @@ func (a *App) codexDial() (dialRenderInput, string) {
 		week.TimeTicks = codexTimeTicks(secondary.WindowSeconds)
 	}
 	limits := map[string]Limit{"session": sess, "weekly": week}
-	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
-	secondaryFc := a.codexForecast(secondary, a.codexSecondRate)
-	worst := primaryFc
-	if secondaryFc.Pos() > worst.Pos() {
-		worst = secondaryFc
-	}
-	active := a.codexPrimaryRate > idleRate || a.codexSecondRate > idleRate
-	mark := speedColor(primaryFc, secondaryFc, active)
+	pace := aggregateDialPace(limits)
+	mark := quotaPaceColor(pace)
 
 	// Only one window left (e.g. Codex now hands out only a weekly limit) — draw
 	// it as one big full circle instead of a half-empty pair of semicircles.
@@ -733,11 +724,11 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	if primary == nil {
 		source = "weekly"
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%v-%s-%s",
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%s-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
 		limits["session"].TimeTicks, limits["weekly"].TimeTicks,
-		iround(worst.Pos()*60), int(timeFill), active, full, source, dialPaceKey(limits))
+		int(pace), int(timeFill), full, source, dialPaceKey(limits))
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source}, key
 }
 
@@ -1107,29 +1098,18 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 		return dialRenderInput{limits: blankLimits}, "claude-empty"
 	}
 	sessPct, weekPct := u.FiveHour.Utilization, u.SevenDay.Utilization
-	sessLeft, sessKnown := secondsUntil(u.FiveHour.ResetsAt)
-	weekLeft, weekKnown := secondsUntil(u.SevenDay.ResetsAt)
 	sessTf := timeFraction(u.FiveHour.ResetsAt, fiveHourSecs)
 	weekTf := timeFraction(u.SevenDay.ResetsAt, weekSecs)
-	now := time.Now()
-	sessWork, sw := workingSecondsUntil(u.FiveHour.ResetsAt, a.workStart, a.workEnd, now)
-	weekWork, ww := workingSecondsUntil(u.SevenDay.ResetsAt, a.workStart, a.workEnd, now)
-	sessFc := projectForecast(sessPct, forecastRate(a.sessRate, sessPct, sessLeft, fiveHourSecs, sessKnown), sessWork, sw)
-	weekFc := projectForecast(weekPct, forecastRate(a.weekRate, weekPct, weekLeft, weekSecs, weekKnown), weekWork, ww)
-	worst := sessFc
-	if weekFc.Pos() > worst.Pos() {
-		worst = weekFc
-	}
-	active := a.sessRate > idleRate || a.weekRate > idleRate
-	mark := speedColor(sessFc, weekFc, active)
 	weekBlock := a.weeklyBlockPct()
 	limits := map[string]Limit{
 		"session": {Pct: sessPct, TimeLeft: sessTf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60, TimeTicks: hourTicks(fiveHourSecs)},
 		"weekly":  {Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
 	}
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%v-%d-%s", iround(sessPct), iround(weekPct),
-		iround(sessTf*48), iround(weekTf*48), iround(worst.Pos()*60), int(timeFill),
-		active, iround(weekBlock*10), dialPaceKey(limits))
+	pace := aggregateDialPace(limits)
+	mark := quotaPaceColor(pace)
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d-%s", iround(sessPct), iround(weekPct),
+		iround(sessTf*48), iround(weekTf*48), int(pace), int(timeFill),
+		iround(weekBlock*10), dialPaceKey(limits))
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true}, key
 }
 

@@ -55,6 +55,21 @@ func TestCodexTimeTicksUseDaysForLongPrimaryWindow(t *testing.T) {
 	}
 }
 
+func TestClaudeDialCentreMatchesWorstOuterPace(t *testing.T) {
+	now := time.Now()
+	a := &App{
+		calib: &WeeklyCalibrator{},
+		lastUsage: &Usage{
+			FiveHour: Window{Utilization: 80, ResetsAt: now.Add(150 * time.Minute).Format(time.RFC3339)},
+			SevenDay: Window{Utilization: 1, ResetsAt: now.Add(4 * 24 * time.Hour).Format(time.RFC3339)},
+		},
+	}
+	in, _ := a.claudeDial()
+	if in.markColor != dialRed {
+		t.Fatalf("centre = %v, want worst outer colour %v", in.markColor, dialRed)
+	}
+}
+
 // After a restart the rate history is empty, so a naive tracker needs two fresh
 // polls before "Last 5m" can leave zero. Seeding from the last persisted sample
 // lets the very first poll measure a rate.

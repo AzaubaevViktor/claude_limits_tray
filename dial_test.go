@@ -131,6 +131,20 @@ func TestQuotaPaceColors(t *testing.T) {
 	}
 }
 
+func TestAggregateDialPaceUsesWorstKnownOuterWindow(t *testing.T) {
+	limits := map[string]Limit{
+		"session": {Pct: 20, TimeLeft: 0.95, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60},
+		"weekly":  {Pct: 80, TimeLeft: 0.50, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60},
+	}
+	if got := aggregateDialPace(limits); got != paceRed {
+		t.Fatalf("unknown session + red weekly = %v, want red", got)
+	}
+	limits["weekly"] = Limit{Pct: 20, TimeLeft: 0.95, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60}
+	if got := aggregateDialPace(limits); got != paceUnknown {
+		t.Fatalf("two untrusted windows = %v, want unknown", got)
+	}
+}
+
 func TestSessionCappedByWeeklyGreyTail(t *testing.T) {
 	grey := svgRGB(dialUnavail)
 	// 3% weekly left, one session costs 15% of the weekly -> only 3/15 = 20% of

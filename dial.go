@@ -103,6 +103,15 @@ func dialPaceKey(limits map[string]Limit) string {
 	)
 }
 
+// aggregateDialPace is the centre dot's opinion: the worse of the two outer
+// quota windows, with an unknown window ignored unless neither is known yet.
+func aggregateDialPace(limits map[string]Limit) quotaPace {
+	return worstQuotaPace(
+		limitPace(limits["session"], effectiveLimitLeft(limits, "session")),
+		limitPace(limits["weekly"], effectiveLimitLeft(limits, "weekly")),
+	)
+}
+
 // timeFill selects how the inner (time) ring fills. The colour is the same
 // either way — greener the less time is left in the window — only the arc
 // length differs. User-toggled from the menu and persisted.
@@ -159,7 +168,7 @@ func legendRows() [][2]string {
 	rows = append(rows,
 		[2]string{"Outer colour", "purple: under pace · green: on pace · yellow: short gap · red: long gap · grey: learning/capped"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
-		[2]string{"Centre dot", "speed — grey idle · green ok · yellow→red running out before reset"},
+		[2]string{"Centre dot", "worst outer pace — grey while both windows are still learning"},
 	)
 	return rows
 }
@@ -350,8 +359,8 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 }
 
 // renderFullGroup draws one window as a single full circle: the outer quota
-// ring (coloured quota-vs-time), the inner time ring, their ticks, and the
-// centre speed dot. Used when only one limit remains (input.source names it).
+// ring (coloured by projected pace), the inner time ring, their ticks, and the
+// centre pace dot. Used when only one limit remains (input.source names it).
 func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 	ox := xoff + dialCX
 	l := input.limits[input.source]
@@ -509,8 +518,8 @@ func svgRGB(c [3]int) string {
 	return fmt.Sprintf("rgb(%d,%d,%d)", c[0], c[1], c[2])
 }
 
-// writeMark draws the centre speed dot: a filled circle coloured by burn speed
-// (grey idle → green → yellow → red).
+// writeMark draws the centre pace dot: a filled circle matching the worst known
+// outer quota window.
 func writeMark(b *strings.Builder, xoff float64, c [3]int) {
 	b.WriteString(fmt.Sprintf(
 		`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s"/>`,

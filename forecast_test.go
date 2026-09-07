@@ -88,25 +88,6 @@ func TestGradientEndpoints(t *testing.T) {
 	}
 }
 
-func TestSpeedColor(t *testing.T) {
-	idle := projectForecast(20, 0, 3600, true)
-	overshoot := projectForecast(80, 40.0/3600, 4*3600, true)
-
-	// No spend right now -> grey, regardless of the forecast.
-	if got := speedColor(idle, overshoot, false); got != dialGray {
-		t.Fatalf("inactive should be grey, got %v", got)
-	}
-	// Relaxed pace collapses onto green (never purple/head-room on the centre).
-	if got := speedColor(idle, idle, true); got != dialGreen {
-		t.Fatalf("relaxed active should be green, got %v", got)
-	}
-	// A big overshoot in either window drives the dot red-ward (red high, green
-	// low) — distinct from the green "on pace" dot.
-	if got := speedColor(idle, overshoot, true); got[0] < 200 || got[1] > 150 {
-		t.Fatalf("overshoot should be red-ward, got %v", got)
-	}
-}
-
 func TestForecastText(t *testing.T) {
 	if txt := projectForecast(20, 0, 3600, true).Text(); !contains(txt, "spare") {
 		t.Errorf("purple text = %q", txt)
