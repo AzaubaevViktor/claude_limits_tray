@@ -73,6 +73,62 @@ func worstQuotaPace(paces ...quotaPace) quotaPace {
 	return worst
 }
 
+// recentBurnRatio compares the latest measured rate with the rate that would
+// consume exactly one quota over the whole window. It intentionally accepts no
+// elapsed-window input: the chart speedometer must describe the last measured
+// use, never the average since reset.
+func recentBurnRatio(ratePerSec, windowSecs float64) float64 {
+	if ratePerSec <= 0 || windowSecs <= 0 {
+		return 0
+	}
+	return ratePerSec * windowSecs / 100
+}
+
+// projectedQuotaEnd returns when the remaining quota reaches zero if the most
+// recently measured rate holds. A zero/unknown rate has no finite projection.
+func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, bool) {
+	if usedPct >= 100 {
+		return now, true
+	}
+	if ratePerSec <= 1e-9 {
+		return time.Time{}, false
+	}
+	secs := math.Max(0, 100-usedPct) / ratePerSec
+	return now.Add(time.Duration(secs * float64(time.Second))), true
+}
+
+func recentRateText(ratePerSec, spanSecs, windowSecs float64) string {
+	unitSecs, unit := 3600.0, "h"
+	if windowSecs >= 24*60*60 {
+		unitSecs, unit = 24*60*60, "d"
+	}
+	return fmt.Sprintf("last %s · %.1f%%/%s", spanLabel(spanSecs), ratePerSec*unitSecs, unit)
+}
+
+// quotaEndText formats the finite exhaustion time from the latest rate. If it
+// lands after a known reset, the useful answer is that the current quota lasts
+// to reset rather than a misleading time in the next window.
+func quotaEndText(usedPct, ratePerSec float64, resetAt, now time.Time) string {
+	end, ok := projectedQuotaEnd(usedPct, ratePerSec, now)
+	if !ok {
+		return "empty —"
+	}
+	if !resetAt.IsZero() && !end.Before(resetAt) {
+		return "lasts to reset"
+	}
+	if !end.After(now) {
+		return "empty now"
+	}
+	clock := end.Format("15:04")
+	if !sameDay(end, now) {
+		clock = end.Format("Mon 15:04")
+		if end.Sub(now) >= 6*24*time.Hour {
+			clock = end.Format("Jan 2 15:04")
+		}
+	}
+	return fmt.Sprintf("empty %s · %s", fmtRemaining(end.Sub(now).Seconds(), true), clock)
+}
+
 // Forecast projects the recent consumption rate forward to a window's reset.
 type Forecast struct {
 	Category  string  // purple | green | yellow | red

@@ -62,6 +62,47 @@ func TestWorstQuotaPaceIgnoresUnknown(t *testing.T) {
 	}
 }
 
+func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
+	const window = 7 * 24 * 60 * 60
+	rate := 20.0 / (6 * 60 * 60) // latest use: 20% in six hours
+	if got := recentBurnRatio(rate, window); !near(got, 5.6, 1e-9) {
+		t.Fatalf("recent burn ratio = %v, want 5.6x sustainable", got)
+	}
+
+	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
+	end, ok := projectedQuotaEnd(20, rate, now)
+	if !ok {
+		t.Fatal("positive recent rate should have a finite quota end")
+	}
+	if want := now.Add(24 * time.Hour); !end.Equal(want) {
+		t.Fatalf("quota end = %v, want %v", end, want)
+	}
+}
+
+func TestRecentRateAndQuotaEndText(t *testing.T) {
+	if got := recentRateText(10.0/3600, 300, fiveHourSecs); got != "last 5m · 10.0%/h" {
+		t.Fatalf("short rate text = %q", got)
+	}
+	if got := recentRateText(10.0/86400, 720, weekSecs); got != "last 12m · 10.0%/d" {
+		t.Fatalf("long rate text = %q", got)
+	}
+
+	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
+	rate := 40.0 / (4 * 60 * 60) // 10%/h; 20% left -> empty in two hours
+	if got := quotaEndText(80, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {
+		t.Fatalf("finite end text = %q", got)
+	}
+	if got := quotaEndText(80, rate, now.Add(time.Hour), now); got != "lasts to reset" {
+		t.Fatalf("reset-safe text = %q", got)
+	}
+	if got := quotaEndText(80, 0, now.Add(time.Hour), now); got != "empty —" {
+		t.Fatalf("idle end text = %q", got)
+	}
+	if got := quotaEndText(100, rate, now.Add(time.Hour), now); got != "empty now" {
+		t.Fatalf("spent quota text = %q", got)
+	}
+}
+
 func TestForecastCategories(t *testing.T) {
 	cases := []struct {
 		name           string
