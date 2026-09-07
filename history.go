@@ -201,8 +201,8 @@ func burnColor(ratio float64) [3]int {
 }
 
 const (
-	pairedChartWidth  = 320.0
-	pairedChartHeight = 46.0
+	pairedChartWidth  = 480.0
+	pairedChartHeight = 78.0
 )
 
 var claudeChartAccent = [3]int{217, 119, 87}
@@ -222,6 +222,10 @@ type burnChartPanel struct {
 	Now        int64
 	Known      bool
 	Accent     [3]int
+	UsedPct    float64
+	RecentRate float64
+	RateSpan   float64
+	ResetAt    int64
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
@@ -235,6 +239,7 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
+	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(48,209,88)"/><stop offset="50%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
 	writeBurnPanel(&b, left, 0, panelW, ws, we)
 	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
 	b.WriteString(`</svg>`)
@@ -244,24 +249,24 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, ws, we int) {
 	const (
 		panelTop = 0.5
-		plotTop  = 16.0
-		plotBase = 41.0
-		pad      = 6.0
+		plotTop  = 18.0
+		plotBase = 49.0
+		pad      = 8.0
 	)
 	plotX, plotW := x+pad, width-2*pad
 	accent := svgRGB(panel.Accent)
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="44.5" rx="5" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.7" stroke-opacity="0.45"/>`,
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="76.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="11.2" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7.5" font-weight="700" letter-spacing="0.35" fill="%s">%s · %s</text>`,
+		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.45" fill="%s">%s · %s</text>`,
 		plotX, accent, svgTextEscape.Replace(strings.ToUpper(panel.Provider)), svgTextEscape.Replace(strings.ToUpper(panel.Label))))
 	total := "—"
 	if panel.Known {
 		total = fmt.Sprintf("%.1f%%", totalSpent(panel.Buckets))
 	}
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="11.2" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7.5" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
+		`<text x="%.2f" y="12.5" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
 		x+width-pad, svgTextEscape.Replace(total)))
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="rgb(48,48,52)"/>`,
@@ -326,4 +331,47 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	b.WriteString(fmt.Sprintf(
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
 		plotX, plotBase, plotX+plotW, plotBase))
+
+	rateText, endText := "last —", "empty —"
+	rateColor := dialGray
+	if panel.WindowSecs > 0 {
+		rateText = recentRateText(panel.RecentRate, panel.RateSpan, float64(panel.WindowSecs))
+		endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Unix(panel.ResetAt, 0), time.Unix(panel.Now, 0))
+		if panel.ResetAt <= 0 {
+			endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Time{}, time.Unix(panel.Now, 0))
+		}
+		if panel.RecentRate > 1e-9 {
+			rateColor = burnColor(recentBurnRatio(panel.RecentRate, float64(panel.WindowSecs)))
+		}
+	}
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="61.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="650" fill="%s">%s</text>`,
+		plotX, svgRGB(rateColor), svgTextEscape.Replace(strings.ToUpper(rateText))))
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="72.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="600" fill="rgb(215,215,220)">%s</text>`,
+		plotX, svgTextEscape.Replace(strings.ToUpper(endText))))
+	writeBurnSpeedometer(b, panel, x+width-24, 71)
+}
+
+func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float64) {
+	const r = 15.0
+	b.WriteString(fmt.Sprintf(
+		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="rgb(75,75,80)" stroke-width="4" stroke-linecap="round"/>`,
+		cx-r, cy, r, r, cx+r, cy))
+	b.WriteString(fmt.Sprintf(
+		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-speed)" stroke-width="2.8" stroke-linecap="round" opacity="0.95"/>`,
+		cx-r, cy, r, r, cx+r, cy))
+	ratio := recentBurnRatio(panel.RecentRate, float64(panel.WindowSecs))
+	position := clamp(ratio/2, 0, 1)
+	angle := math.Pi * (1 - position)
+	nx := cx + math.Cos(angle)*(r-3)
+	ny := cy - math.Sin(angle)*(r-3)
+	needle := dialGray
+	if panel.WindowSecs > 0 && panel.RecentRate > 1e-9 {
+		needle = burnColor(ratio)
+	}
+	b.WriteString(fmt.Sprintf(
+		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.5" stroke-linecap="round"/>`,
+		cx, cy, nx, ny, svgRGB(needle)))
+	b.WriteString(fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="2.1" fill="%s"/>`, cx, cy, svgRGB(needle)))
 }
