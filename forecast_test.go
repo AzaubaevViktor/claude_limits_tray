@@ -80,14 +80,17 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 }
 
 func TestRecentRateAndQuotaEndText(t *testing.T) {
-	if got := recentRateText(10.0/3600, 300, fiveHourSecs); got != "last 5m · 10.0%/h" {
+	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
+	if got := recentRateText(10.0/3600, now.Add(-5*time.Minute), now, fiveHourSecs); got != "last use 5m ago · 10.0%/h" {
 		t.Fatalf("short rate text = %q", got)
 	}
-	if got := recentRateText(10.0/86400, 720, weekSecs); got != "last 12m · 10.0%/d" {
+	if got := recentRateText(10.0/86400, now.Add(-12*time.Minute), now, weekSecs); got != "last use 12m ago · 10.0%/d" {
 		t.Fatalf("long rate text = %q", got)
 	}
+	if got := recentRateText(0, time.Time{}, now, weekSecs); got != "last use —" {
+		t.Fatalf("missing use text = %q", got)
+	}
 
-	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
 	rate := 40.0 / (4 * 60 * 60) // 10%/h; 20% left -> empty in two hours
 	if got := quotaEndText(80, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {
 		t.Fatalf("finite end text = %q", got)

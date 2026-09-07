@@ -111,6 +111,51 @@ func totalSpent(buckets []burnBucket) float64 {
 	return sum
 }
 
+type useRate struct {
+	Rate float64
+	Span float64
+	At   int64
+	OK   bool
+}
+
+// lastUseRate measures the latest actual quota increase, not the average since
+// reset and not a trailing flat poll. Consecutive positive samples are smoothed
+// over at most rateWindow; a flat sample ends the burst. Samples before the most
+// recent counter reset are excluded so an old window cannot drive a new ETA.
+func lastUseRate(samples []histSample) useRate {
+	if len(samples) < 2 {
+		return useRate{}
+	}
+	floor := 1
+	for i := len(samples) - 1; i >= 1; i-- {
+		if samples[i].V < samples[i-1].V {
+			floor = i
+			break
+		}
+	}
+	for end := len(samples) - 1; end >= floor; end-- {
+		if samples[end].V <= samples[end-1].V {
+			continue
+		}
+		start := end - 1
+		for start > floor-1 && samples[start].V > samples[start-1].V &&
+			float64(samples[end].T-samples[start-1].T) <= rateWindow {
+			start--
+		}
+		dt := float64(samples[end].T - samples[start].T)
+		if dt < rateMinDt {
+			return useRate{}
+		}
+		return useRate{
+			Rate: (samples[end].V - samples[start].V) / dt,
+			Span: dt,
+			At:   samples[end].T,
+			OK:   true,
+		}
+	}
+	return useRate{}
+}
+
 // inWorkWindow reports whether local minute-of-day min falls in the working
 // window [ws, we), which may wrap past midnight (e.g. 12:00 -> 02:00). Matches
 // workingSecondsUntil's semantics so "night" here is exactly "off the clock".
@@ -224,7 +269,7 @@ type burnChartPanel struct {
 	Accent     [3]int
 	UsedPct    float64
 	RecentRate float64
-	RateSpan   float64
+	LastUseAt  int64
 	ResetAt    int64
 }
 
@@ -335,7 +380,10 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	rateText, endText := "last —", "empty —"
 	rateColor := dialGray
 	if panel.WindowSecs > 0 {
-		rateText = recentRateText(panel.RecentRate, panel.RateSpan, float64(panel.WindowSecs))
+		rateText = recentRateText(panel.RecentRate, time.Unix(panel.LastUseAt, 0), time.Unix(panel.Now, 0), float64(panel.WindowSecs))
+		if panel.LastUseAt <= 0 {
+			rateText = recentRateText(panel.RecentRate, time.Time{}, time.Unix(panel.Now, 0), float64(panel.WindowSecs))
+		}
 		endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Unix(panel.ResetAt, 0), time.Unix(panel.Now, 0))
 		if panel.ResetAt <= 0 {
 			endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Time{}, time.Unix(panel.Now, 0))

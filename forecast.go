@@ -97,12 +97,16 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
-func recentRateText(ratePerSec, spanSecs, windowSecs float64) string {
+func recentRateText(ratePerSec float64, usedAt, now time.Time, windowSecs float64) string {
+	if usedAt.IsZero() || ratePerSec <= 1e-9 {
+		return "last use —"
+	}
 	unitSecs, unit := 3600.0, "h"
 	if windowSecs >= 24*60*60 {
 		unitSecs, unit = 24*60*60, "d"
 	}
-	return fmt.Sprintf("last %s · %.1f%%/%s", spanLabel(spanSecs), ratePerSec*unitSecs, unit)
+	age := math.Max(0, now.Sub(usedAt).Seconds())
+	return fmt.Sprintf("last use %s ago · %.1f%%/%s", fmtSpan(age), ratePerSec*unitSecs, unit)
 }
 
 // quotaEndText formats the finite exhaustion time from the latest rate. If it

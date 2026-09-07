@@ -138,6 +138,35 @@ func TestBurnColorThresholds(t *testing.T) {
 	}
 }
 
+func TestLastUseRateSkipsTrailingIdlePolls(t *testing.T) {
+	s := []histSample{
+		{T: 100, V: 10},
+		{T: 220, V: 11}, // latest actual use: +1% over 2m
+		{T: 340, V: 11},
+		{T: 460, V: 11}, // trailing idle polls must not turn the rate into zero
+	}
+	got := lastUseRate(s)
+	if !got.OK || got.At != 220 || got.Span != 120 || !near(got.Rate, 1.0/120, 1e-12) {
+		t.Fatalf("last use rate = %+v", got)
+	}
+}
+
+func TestLastUseRateDoesNotCrossReset(t *testing.T) {
+	s := []histSample{
+		{T: 100, V: 90},
+		{T: 220, V: 95},
+		{T: 340, V: 0}, // reset
+		{T: 460, V: 0},
+	}
+	if got := lastUseRate(s); got.OK {
+		t.Fatalf("pre-reset use must not drive a new-window rate: %+v", got)
+	}
+	s = append(s, histSample{T: 580, V: 1})
+	if got := lastUseRate(s); !got.OK || got.At != 580 || !near(got.Rate, 1.0/120, 1e-12) {
+		t.Fatalf("post-reset use should establish a fresh rate: %+v", got)
+	}
+}
+
 func TestRenderPctBar(t *testing.T) {
 	svg := string(renderPctBar(42, "Session 42%"))
 	if !strings.HasPrefix(svg, "<svg") || !strings.HasSuffix(svg, "</svg>") {
@@ -171,13 +200,13 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
 		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
-		UsedPct: 40, RecentRate: 10.0 / 3600, RateSpan: 300, ResetAt: now + 7*3600,
+		UsedPct: 40, RecentRate: 10.0 / 3600, LastUseAt: now - 300, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
 		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
 		WindowSecs: int64(weekSecs), BucketSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: codexChartAccent,
-		UsedPct: 20, RecentRate: 20.0 / 21600, RateSpan: 720, ResetAt: now + int64(weekSecs),
+		UsedPct: 20, RecentRate: 20.0 / 21600, LastUseAt: now - 720, ResetAt: now + int64(weekSecs),
 	}
 	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))
 	var root struct {
@@ -201,7 +230,7 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
-	if !strings.Contains(svg, "LAST 5M · 10.0%/H") || !strings.Contains(svg, "EMPTY 6H00M") {
+	if !strings.Contains(svg, "LAST USE 5M AGO · 10.0%/H") || !strings.Contains(svg, "EMPTY 6H00M") {
 		t.Fatal("recent speed and quota-end forecast should be embedded in the panel")
 	}
 }
