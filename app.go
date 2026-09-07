@@ -1015,6 +1015,8 @@ type historyWindow struct {
 	samples []histSample
 	secs    int64
 	present bool
+	used    float64
+	resetAt int64
 }
 
 func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket, now int64, accent [3]int) burnChartPanel {
@@ -1024,13 +1026,15 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket
 	if bucket <= 0 {
 		bucket = horizon
 	}
+	lastUse := lastUseRate(series.samples)
 	return burnChartPanel{
 		Provider: provider, Label: label,
 		Buckets:    burnBuckets(series.samples, now, horizon, bucket),
 		WindowSecs: series.secs, BucketSecs: bucket,
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
-		Accent: accent,
+		Accent: accent, UsedPct: series.used,
+		RecentRate: lastUse.Rate, LastUseAt: lastUse.At, ResetAt: series.resetAt,
 	}
 }
 
@@ -1046,9 +1050,11 @@ func (a *App) codexHistoryWindows() (short, long historyWindow) {
 	sw := historyWindow{samples: a.history[seriesCodexSecondary]}
 	if p != nil {
 		pw.secs, pw.present = codexWindowSecs(p, 0), true
+		pw.used, pw.resetAt = p.UsedPercent, p.ResetsAt
 	}
 	if s != nil {
 		sw.secs, sw.present = codexWindowSecs(s, 0), true
+		sw.used, sw.resetAt = s.UsedPercent, s.ResetsAt
 	}
 	switch {
 	case pw.present && sw.present && pw.secs <= sw.secs:
@@ -1078,6 +1084,13 @@ func windowChartLabel(window historyWindow, fallback string) string {
 	return fmt.Sprintf("%dh", int(math.Round(float64(window.secs)/(60*60))))
 }
 
+func chartBucket(horizon int64, targetBuckets int) int64 {
+	if horizon <= 0 || targetBuckets <= 0 {
+		return 1
+	}
+	return max(int64(60), horizon/int64(targetBuckets))
+}
+
 func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPanel) {
 	if it == nil {
 		return
@@ -1094,8 +1107,20 @@ func (a *App) renderHistory() {
 		return
 	}
 	now := time.Now().Unix()
-	claudeShort := historyWindow{a.history[seriesClaudeSession], int64(fiveHourSecs), a.lastUsage != nil}
-	claudeLong := historyWindow{a.history[seriesClaudeWeekly], int64(weekSecs), a.lastUsage != nil}
+	claudeShort := historyWindow{samples: a.history[seriesClaudeSession], secs: int64(fiveHourSecs)}
+	claudeLong := historyWindow{samples: a.history[seriesClaudeWeekly], secs: int64(weekSecs)}
+	if a.lastUsage != nil {
+		claudeShort.present = true
+		claudeShort.used = a.lastUsage.FiveHour.Utilization
+		if reset, ok := parseISO(a.lastUsage.FiveHour.ResetsAt); ok {
+			claudeShort.resetAt = reset.Unix()
+		}
+		claudeLong.present = true
+		claudeLong.used = a.lastUsage.SevenDay.Utilization
+		if reset, ok := parseISO(a.lastUsage.SevenDay.ResetsAt); ok {
+			claudeLong.resetAt = reset.Unix()
+		}
+	}
 	codexShort, codexLong := a.codexHistoryWindows()
 	codexFocus := codexShort
 	if !codexFocus.present {
@@ -1103,16 +1128,24 @@ func (a *App) renderHistory() {
 	}
 
 	a.setPairedHistoryRow(a.histHour,
-		makeBurnPanel("Claude", "1h", claudeShort, 3600, 15*60, now, claudeChartAccent),
-		makeBurnPanel("Codex", "1h", codexFocus, 3600, 15*60, now, codexChartAccent))
+		makeBurnPanel("Claude", "1h", claudeShort, 3600, 5*60, now, claudeChartAccent),
+		makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent))
+	shortHorizon := int64(fiveHourSecs)
+	if codexShort.secs > 0 {
+		shortHorizon = codexShort.secs
+	}
 	a.setPairedHistoryRow(a.histSession,
-		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), int64(fiveHourSecs)/5, now, claudeChartAccent),
+		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), chartBucket(int64(fiveHourSecs), 20), now, claudeChartAccent),
 		makeBurnPanel("Codex", windowChartLabel(codexShort, "short"), codexShort,
-			max(int64(fiveHourSecs), codexShort.secs), max(int64(fiveHourSecs), codexShort.secs)/5, now, codexChartAccent))
+			shortHorizon, chartBucket(shortHorizon, 20), now, codexChartAccent))
+	longHorizon := int64(weekSecs)
+	if codexLong.secs > 0 {
+		longHorizon = codexLong.secs
+	}
 	a.setPairedHistoryRow(a.histWeek,
-		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), int64(weekSecs)/7, now, claudeChartAccent),
+		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartBucket(int64(weekSecs), 28), now, claudeChartAccent),
 		makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
-			max(int64(weekSecs), codexLong.secs), max(int64(weekSecs), codexLong.secs)/7, now, codexChartAccent))
+			longHorizon, chartBucket(longHorizon, 28), now, codexChartAccent))
 }
 
 // codexWindowSecs is w's window length in seconds, or def when unknown.

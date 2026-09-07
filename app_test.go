@@ -60,7 +60,7 @@ func TestCodexHistoryPlacesSoleWeeklyPrimaryInLongRow(t *testing.T) {
 	a := &App{
 		history: map[string][]histSample{seriesCodexPrimary: primaryHistory},
 		lastCodex: &CodexUsage{Limits: []CodexLimit{{
-			Primary: &CodexWindow{WindowSeconds: int64(weekSecs)},
+			Primary: &CodexWindow{UsedPercent: 20, WindowSeconds: int64(weekSecs), ResetsAt: 12345},
 		}}},
 	}
 	short, long := a.codexHistoryWindows()
@@ -69,6 +69,18 @@ func TestCodexHistoryPlacesSoleWeeklyPrimaryInLongRow(t *testing.T) {
 	}
 	if !long.present || long.secs != int64(weekSecs) || len(long.samples) != len(primaryHistory) {
 		t.Fatalf("long window mapped incorrectly: %+v", long)
+	}
+	if long.used != 20 || long.resetAt != 12345 {
+		t.Fatalf("projection inputs did not follow weekly primary: %+v", long)
+	}
+}
+
+func TestChartBucketsIncreaseTimelineResolution(t *testing.T) {
+	if got := int64(fiveHourSecs) / chartBucket(int64(fiveHourSecs), 20); got != 20 {
+		t.Fatalf("5h chart has %d buckets, want 20", got)
+	}
+	if got := int64(weekSecs) / chartBucket(int64(weekSecs), 28); got != 28 {
+		t.Fatalf("7d chart has %d buckets, want 28", got)
 	}
 }
 
