@@ -88,7 +88,9 @@ Click it for everything as numbers, plus your account.
   are measured spend rather than a forecast; their dashed line marks
   sustainable pace. Each card also has a coloured speedometer and quota-end ETA
   based on the **last actual usage increase** (including how long ago it was),
-  not the average since the window opened and not a trailing idle poll. A
+  not the average since the window opened and not a trailing idle poll. If no
+  further use arrives for 10 minutes, that rate expires: the card switches to
+  **idle**, keeps the last-use age, and stops projecting an exhaustion time. A
   weekly-only Codex limit is placed in the long-window row even when the API
   calls it `primary`.
 - **Per-model** weekly limits.
