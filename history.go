@@ -300,13 +300,26 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 
 func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, ws, we int) {
 	const (
-		panelTop = 0.5
-		plotTop  = 18.0
-		plotBase = 49.0
-		pad      = 8.0
+		panelTop   = 0.5
+		plotTop    = 18.0
+		plotBase   = 49.0
+		pad        = 8.0
+		axisGutter = 27.0
 	)
-	plotX, plotW := x+pad, width-2*pad
+	plotX, plotW := x+pad, width-2*pad-axisGutter
+	axisX := plotX + plotW + 4
 	accent := svgRGB(panel.Accent)
+	sustain := 0.0
+	if panel.WindowSecs > 0 && panel.BucketSecs > 0 {
+		sustain = 100 * float64(panel.BucketSecs) / float64(panel.WindowSecs)
+	}
+	maxRatio := 1.35
+	if sustain > 0 {
+		for _, bucket := range panel.Buckets {
+			maxRatio = math.Max(maxRatio, bucket.Spent/sustain*1.08)
+		}
+	}
+	axisMax := sustain * maxRatio
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="90.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
@@ -350,15 +363,16 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			gx, plotTop+1, gx, plotBase))
 	}
 
-	sustain := 0.0
-	if panel.WindowSecs > 0 && panel.BucketSecs > 0 {
-		sustain = 100 * float64(panel.BucketSecs) / float64(panel.WindowSecs)
-	}
-	maxRatio := 1.35
-	if sustain > 0 {
-		for _, bucket := range panel.Buckets {
-			maxRatio = math.Max(maxRatio, bucket.Spent/sustain*1.08)
-		}
+	// Three labelled horizontal levels make the independently scaled cards
+	// readable. Values are quota percentage spent per bar interval.
+	for _, fraction := range []float64{1, 0.5, 0} {
+		y := plotTop + (1-fraction)*(plotBase-plotTop)
+		b.WriteString(fmt.Sprintf(
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.35" stroke-opacity="0.30"/>`,
+			plotX, y, plotX+plotW, y))
+		b.WriteString(fmt.Sprintf(
+			`<text data-axis-label="true" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
+			axisX, y+2, axisPctText(axisMax*fraction)))
 	}
 	usableH := plotBase - plotTop - 2
 	if sustain > 0 {
@@ -411,6 +425,17 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		`<text x="%.2f" y="86" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7" font-weight="600" fill="rgb(215,215,220)">%s</text>`,
 		plotX, svgTextEscape.Replace(strings.ToUpper(endText))))
 	writeBurnSpeedometer(b, panel, x+width-20, 86)
+}
+
+func axisPctText(v float64) string {
+	switch {
+	case v >= 10:
+		return fmt.Sprintf("%.0f%%", v)
+	case v >= 1:
+		return fmt.Sprintf("%.1f%%", v)
+	default:
+		return fmt.Sprintf("%.2f%%", v)
+	}
 }
 
 func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float64) {

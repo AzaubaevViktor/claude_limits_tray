@@ -243,9 +243,28 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
+	if got := countSubstr(svg, `data-axis-label="true"`); got != 6 {
+		t.Fatalf("want three numeric y-axis labels per provider, got %d", got)
+	}
+	if !strings.Contains(svg, "0.00%") {
+		t.Fatal("y-axis labels should state quota percent per bucket")
+	}
 	if !strings.Contains(svg, "10.0%/H · 240.0%/D") ||
 		!strings.Contains(svg, "MEASURED OVER 2M · LAST USE 5M AGO") ||
 		!strings.Contains(svg, "EMPTY 6H00M") {
 		t.Fatal("dual-unit speed, measurement span, and quota-end forecast should be embedded in the panel")
+	}
+}
+
+func TestAxisPctTextKeepsSmallScaleReadable(t *testing.T) {
+	for value, want := range map[float64]string{
+		0:   "0.00%",
+		0.4: "0.40%",
+		4.2: "4.2%",
+		42:  "42%",
+	} {
+		if got := axisPctText(value); got != want {
+			t.Errorf("axisPctText(%v) = %q, want %q", value, got, want)
+		}
 	}
 }
