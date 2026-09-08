@@ -127,14 +127,17 @@ func TestNightBandsSplit(t *testing.T) {
 }
 
 func TestBurnColorThresholds(t *testing.T) {
-	if burnColor(0) != dialGreen {
-		t.Errorf("ratio 0 should be green, got %v", burnColor(0))
+	if burnColor(0) != dialPurple {
+		t.Errorf("ratio 0 should be purple, got %v", burnColor(0))
+	}
+	if burnColor(0.5) != dialGreen {
+		t.Errorf("ratio 0.5 should be green, got %v", burnColor(0.5))
 	}
 	if burnColor(1) != dialYellow {
 		t.Errorf("ratio 1 should be yellow, got %v", burnColor(1))
 	}
-	if burnColor(2) != dialRed {
-		t.Errorf("ratio 2 should be red, got %v", burnColor(2))
+	if burnColor(1.5) != dialRed {
+		t.Errorf("ratio 1.5 should be red, got %v", burnColor(1.5))
 	}
 }
 
@@ -218,7 +221,7 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	right := burnChartPanel{
 		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
 		WindowSecs: int64(weekSecs), BucketSecs: 900,
-		Start: now - 3600, Now: now, Known: true, Accent: codexChartAccent,
+		Start: now - int64(weekSecs), Now: now, Known: true, Accent: codexChartAccent,
 		UsedPct: 20, RecentRate: 20.0 / 21600, LastUseAt: now - 720, ResetAt: now + int64(weekSecs),
 	}
 	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))
@@ -249,10 +252,13 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if !strings.Contains(svg, "0.00%") {
 		t.Fatal("y-axis labels should state quota percent per bucket")
 	}
-	if !strings.Contains(svg, "10.0%/H · 240.0%/D") ||
+	if !strings.Contains(svg, "SPENT 2.0%") || !strings.Contains(svg, "SPENT 8.0%") {
+		t.Fatal("top-right totals should be explicitly labelled as spent quota")
+	}
+	if !strings.Contains(svg, "10.0%/H") || !strings.Contains(svg, "80.0%/D") ||
 		!strings.Contains(svg, "MEASURED OVER 2M · LAST USE 5M AGO") ||
 		!strings.Contains(svg, "EMPTY 6H00M") {
-		t.Fatal("dual-unit speed, measurement span, and quota-end forecast should be embedded in the panel")
+		t.Fatal("scale-specific speed, measurement span, and quota-end forecast should be embedded in the panel")
 	}
 }
 

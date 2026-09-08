@@ -97,13 +97,17 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
-// recentRateText always renders the same measured rate in both useful units so
-// short and long quota cards can be compared without mental conversion.
-func recentRateText(ratePerSec float64) string {
+// recentRateText follows the chart's time scale: hourly for sub-day charts and
+// daily for day-scale charts.
+func recentRateText(ratePerSec, chartSpanSecs float64) string {
 	if ratePerSec <= 1e-9 {
-		return "speed —"
+		return "—"
 	}
-	return fmt.Sprintf("%.1f%%/h · %.1f%%/d", ratePerSec*3600, ratePerSec*24*3600)
+	unitSecs, unit := 3600.0, "h"
+	if chartSpanSecs >= 24*60*60 {
+		unitSecs, unit = 24*60*60, "d"
+	}
+	return fmt.Sprintf("%.1f%%/%s", ratePerSec*unitSecs, unit)
 }
 
 // recentMeasurementText says how wide the actual measurement interval was.

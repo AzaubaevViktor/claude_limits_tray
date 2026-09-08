@@ -87,9 +87,11 @@ Click it for everything as numbers, plus your account.
   separate totals/scales for the last hour, short window, and long window. Each
   independent scale has three numeric labels on the right, in quota-% spent per
   bar interval. Bars are measured spend rather than a forecast; their dashed
-  line marks sustainable pace. Each card also has a coloured speedometer, speed
-  in both **%/hour and %/day**, its actual **measurement span**, and quota-end
-  ETA based on the **last actual usage increase** (including how long ago it was),
+  line marks sustainable pace. The top-right total is explicitly labelled
+  **SPENT**. Each card also has a purple → green → yellow → red speedometer with
+  its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
+  charts. The actual **measurement span** and quota-end ETA are based on the
+  **last actual usage increase** (including how long ago it was),
   not the average since the window opened and not a trailing idle poll. If no
   further use arrives for 10 minutes, that rate expires: the card switches to
   **idle**, keeps the last-use age, and stops projecting an exhaustion time. A

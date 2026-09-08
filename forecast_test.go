@@ -81,10 +81,13 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 
 func TestRecentRateAndQuotaEndText(t *testing.T) {
 	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	if got := recentRateText(10.0 / 3600); got != "10.0%/h · 240.0%/d" {
-		t.Fatalf("dual-unit rate text = %q", got)
+	if got := recentRateText(10.0/3600, 5*60*60); got != "10.0%/h" {
+		t.Fatalf("hourly rate text = %q", got)
 	}
-	if got := recentRateText(0); got != "speed —" {
+	if got := recentRateText(10.0/86400, 7*24*60*60); got != "10.0%/d" {
+		t.Fatalf("daily rate text = %q", got)
+	}
+	if got := recentRateText(0, 5*60*60); got != "—" {
 		t.Fatalf("missing rate text = %q", got)
 	}
 	if got := recentMeasurementText(10.0/3600, 2*60, now.Add(-5*time.Minute), now); got != "measured over 2m · last use 5m ago" {
