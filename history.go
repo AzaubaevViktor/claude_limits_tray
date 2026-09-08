@@ -400,6 +400,19 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	b.WriteString(fmt.Sprintf(
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
 		plotX, plotBase, plotX+plotW, plotBase))
+	for _, mark := range []struct {
+		fraction float64
+		anchor   string
+	}{
+		{0, "start"},
+		{0.5, "middle"},
+		{1, "end"},
+	} {
+		t := panel.Start + int64(float64(horizon)*mark.fraction)
+		b.WriteString(fmt.Sprintf(
+			`<text data-time-label="true" x="%.2f" y="57" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
+			plotX+plotW*mark.fraction, mark.anchor, chartTimeText(time.Unix(t, 0), horizon)))
+	}
 
 	measurementText, endText := "measured —", "empty —"
 	if panel.WindowSecs > 0 {
@@ -431,6 +444,13 @@ func axisPctText(v float64) string {
 	default:
 		return fmt.Sprintf("%.2f%%", v)
 	}
+}
+
+func chartTimeText(t time.Time, horizonSecs int64) string {
+	if horizonSecs >= 24*60*60 {
+		return t.Format("Jan 02")
+	}
+	return t.Format("15:04")
 }
 
 func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float64) {

@@ -249,6 +249,9 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `data-axis-label="true"`); got != 6 {
 		t.Fatalf("want three numeric y-axis labels per provider, got %d", got)
 	}
+	if got := countSubstr(svg, `data-time-label="true"`); got != 6 {
+		t.Fatalf("want start, midpoint, and end labels under each provider, got %d", got)
+	}
 	if !strings.Contains(svg, "0.00%") {
 		t.Fatal("y-axis labels should state quota percent per bucket")
 	}
@@ -272,5 +275,15 @@ func TestAxisPctTextKeepsSmallScaleReadable(t *testing.T) {
 		if got := axisPctText(value); got != want {
 			t.Errorf("axisPctText(%v) = %q, want %q", value, got, want)
 		}
+	}
+}
+
+func TestChartTimeTextMatchesChartScale(t *testing.T) {
+	at := time.Date(2026, 9, 8, 16, 42, 0, 0, time.UTC)
+	if got := chartTimeText(at, 5*60*60); got != "16:42" {
+		t.Fatalf("sub-day axis label = %q", got)
+	}
+	if got := chartTimeText(at, 7*24*60*60); got != "Sep 08" {
+		t.Fatalf("daily axis label = %q", got)
 	}
 }

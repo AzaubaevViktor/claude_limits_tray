@@ -86,9 +86,10 @@ Click it for everything as numbers, plus your account.
   card and Codex the right card, with large high-resolution timelines and
   separate totals/scales for the last hour, short window, and long window. Each
   independent scale has three numeric labels on the right, in quota-% spent per
-  bar interval. Bars are measured spend rather than a forecast; their dashed
-  line marks sustainable pace. The top-right total is explicitly labelled
-  **SPENT**. Each card also has a purple → green → yellow → red speedometer with
+  bar interval, plus start/midpoint/end time labels along the bottom. Bars are
+  measured spend rather than a forecast; their dashed line marks sustainable
+  pace. The top-right total is explicitly labelled **SPENT**. Each card also has
+  a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
   charts. The actual **measurement span** and quota-end ETA are based on the
   **last actual usage increase** (including how long ago it was),
