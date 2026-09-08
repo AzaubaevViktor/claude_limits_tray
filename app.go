@@ -1034,7 +1034,8 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
 		Accent: accent, UsedPct: series.used,
-		RecentRate: lastUse.Rate, LastUseAt: lastUse.At, ResetAt: series.resetAt,
+		RecentRate: lastUse.Rate, RateSpan: lastUse.Span,
+		LastUseAt: lastUse.At, ResetAt: series.resetAt,
 	}
 }
 

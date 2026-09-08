@@ -81,16 +81,19 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 
 func TestRecentRateAndQuotaEndText(t *testing.T) {
 	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	if got := recentRateText(10.0/3600, now.Add(-5*time.Minute), now, fiveHourSecs); got != "last use 5m ago · 10.0%/h" {
-		t.Fatalf("short rate text = %q", got)
+	if got := recentRateText(10.0 / 3600); got != "10.0%/h · 240.0%/d" {
+		t.Fatalf("dual-unit rate text = %q", got)
 	}
-	if got := recentRateText(10.0/86400, now.Add(-12*time.Minute), now, weekSecs); got != "last use 12m ago · 10.0%/d" {
-		t.Fatalf("long rate text = %q", got)
+	if got := recentRateText(0); got != "speed —" {
+		t.Fatalf("missing rate text = %q", got)
 	}
-	if got := recentRateText(0, time.Time{}, now, weekSecs); got != "last use —" {
-		t.Fatalf("missing use text = %q", got)
+	if got := recentMeasurementText(10.0/3600, 2*60, now.Add(-5*time.Minute), now); got != "measured over 2m · last use 5m ago" {
+		t.Fatalf("measurement text = %q", got)
 	}
-	if got := recentRateText(0, now.Add(-2*time.Hour), now, weekSecs); got != "idle · last use 2h00m ago" {
+	if got := recentMeasurementText(0, 0, time.Time{}, now); got != "measured —" {
+		t.Fatalf("missing measurement text = %q", got)
+	}
+	if got := recentMeasurementText(0, 0, now.Add(-2*time.Hour), now); got != "idle · last use 2h00m ago" {
 		t.Fatalf("stale use text = %q", got)
 	}
 

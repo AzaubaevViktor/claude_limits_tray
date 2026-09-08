@@ -97,19 +97,27 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
-func recentRateText(ratePerSec float64, usedAt, now time.Time, windowSecs float64) string {
+// recentRateText always renders the same measured rate in both useful units so
+// short and long quota cards can be compared without mental conversion.
+func recentRateText(ratePerSec float64) string {
+	if ratePerSec <= 1e-9 {
+		return "speed —"
+	}
+	return fmt.Sprintf("%.1f%%/h · %.1f%%/d", ratePerSec*3600, ratePerSec*24*3600)
+}
+
+// recentMeasurementText says how wide the actual measurement interval was.
+// Last-use age answers a separate question: a two-minute sample may itself
+// have happened five minutes ago.
+func recentMeasurementText(ratePerSec, measuredSpan float64, usedAt, now time.Time) string {
 	if usedAt.IsZero() {
-		return "last use —"
+		return "measured —"
 	}
 	age := math.Max(0, now.Sub(usedAt).Seconds())
 	if ratePerSec <= 1e-9 {
 		return fmt.Sprintf("idle · last use %s ago", fmtSpan(age))
 	}
-	unitSecs, unit := 3600.0, "h"
-	if windowSecs >= 24*60*60 {
-		unitSecs, unit = 24*60*60, "d"
-	}
-	return fmt.Sprintf("last use %s ago · %.1f%%/%s", fmtSpan(age), ratePerSec*unitSecs, unit)
+	return fmt.Sprintf("measured over %s · last use %s ago", spanLabel(measuredSpan), fmtSpan(age))
 }
 
 // quotaEndText formats the finite exhaustion time from the latest rate. If it

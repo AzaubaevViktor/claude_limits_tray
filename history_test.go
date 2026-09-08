@@ -212,7 +212,8 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
 		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
-		UsedPct: 40, RecentRate: 10.0 / 3600, LastUseAt: now - 300, ResetAt: now + 7*3600,
+		UsedPct: 40, RecentRate: 10.0 / 3600, RateSpan: 120,
+		LastUseAt: now - 300, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
 		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
@@ -227,7 +228,7 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if err := xml.Unmarshal([]byte(svg), &root); err != nil {
 		t.Fatalf("paired chart is not valid SVG: %v", err)
 	}
-	if !strings.Contains(svg, `width="480" height="78"`) {
+	if !strings.Contains(svg, `width="480" height="92"`) {
 		t.Fatalf("paired dimensions missing: %.100s", svg)
 	}
 	if !strings.Contains(svg, "CLAUDE · 5H") || !strings.Contains(svg, "CODEX · 7D") {
@@ -242,7 +243,9 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
-	if !strings.Contains(svg, "LAST USE 5M AGO · 10.0%/H") || !strings.Contains(svg, "EMPTY 6H00M") {
-		t.Fatal("recent speed and quota-end forecast should be embedded in the panel")
+	if !strings.Contains(svg, "10.0%/H · 240.0%/D") ||
+		!strings.Contains(svg, "MEASURED OVER 2M · LAST USE 5M AGO") ||
+		!strings.Contains(svg, "EMPTY 6H00M") {
+		t.Fatal("dual-unit speed, measurement span, and quota-end forecast should be embedded in the panel")
 	}
 }
