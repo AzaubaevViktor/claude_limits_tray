@@ -1021,20 +1021,20 @@ type historyWindow struct {
 	resetAt int64
 }
 
-func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket, now int64, accent [3]int) burnChartPanel {
+func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, now int64, accent [3]int) burnChartPanel {
 	if horizon <= 0 {
 		horizon = 1
 	}
-	if bucket <= 0 {
-		bucket = horizon
+	if grid <= 0 {
+		grid = horizon
 	}
 	fifteenMin := windowUseRate(series.samples, now, int64(rateWindow))
 	fiveMin := windowUseRate(series.samples, now, 5*60)
 	trend, trendKnown := rateTrend(fiveMin, fifteenMin)
 	return burnChartPanel{
 		Provider: provider, Label: label,
-		Buckets:    burnBuckets(series.samples, now, horizon, bucket),
-		WindowSecs: series.secs, BucketSecs: bucket,
+		Intervals:  burnIntervals(series.samples, now, horizon),
+		WindowSecs: series.secs, GridSecs: grid,
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
 		Accent: accent, UsedPct: series.used,
@@ -1089,11 +1089,11 @@ func windowChartLabel(window historyWindow, fallback string) string {
 	return fmt.Sprintf("%dh", int(math.Round(float64(window.secs)/(60*60))))
 }
 
-func chartBucket(horizon int64, targetBuckets int) int64 {
-	if horizon <= 0 || targetBuckets <= 0 {
+func chartGrid(horizon int64, targetLines int) int64 {
+	if horizon <= 0 || targetLines <= 0 {
 		return 1
 	}
-	return max(int64(60), horizon/int64(targetBuckets))
+	return max(int64(60), horizon/int64(targetLines))
 }
 
 func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPanel) {
@@ -1106,7 +1106,7 @@ func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPan
 
 // renderHistory keeps the two providers visible as peer cards at the top of
 // the menu: Claude on the left, Codex on the right. Each card retains its own
-// buckets and sustainable-pace denominator.
+// update intervals and sustainable-pace denominator.
 func (a *App) renderHistory() {
 	if a.histHour == nil {
 		return
@@ -1140,17 +1140,17 @@ func (a *App) renderHistory() {
 		shortHorizon = codexShort.secs
 	}
 	a.setPairedHistoryRow(a.histSession,
-		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), chartBucket(int64(fiveHourSecs), 20), now, claudeChartAccent),
+		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), chartGrid(int64(fiveHourSecs), 20), now, claudeChartAccent),
 		makeBurnPanel("Codex", windowChartLabel(codexShort, "short"), codexShort,
-			shortHorizon, chartBucket(shortHorizon, 20), now, codexChartAccent))
+			shortHorizon, chartGrid(shortHorizon, 20), now, codexChartAccent))
 	longHorizon := int64(weekSecs)
 	if codexLong.secs > 0 {
 		longHorizon = codexLong.secs
 	}
 	a.setPairedHistoryRow(a.histWeek,
-		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartBucket(int64(weekSecs), 28), now, claudeChartAccent),
+		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent),
 		makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
-			longHorizon, chartBucket(longHorizon, 28), now, codexChartAccent))
+			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent))
 }
 
 // codexWindowSecs is w's window length in seconds, or def when unknown.

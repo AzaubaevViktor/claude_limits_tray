@@ -9,9 +9,9 @@ import (
 
 // history.go stores a per-series log of raw utilisation readings and turns it
 // into a burn-rate (first-derivative) view: how much of a window's quota was
-// spent inside each grid interval. Unlike the live rate/forecast, the charts
-// here never extrapolate — they only ever show measured spend, so a wrong
-// estimate can't creep in. See renderPairedBurnChart for the drawing.
+// spent between each pair of successful updates. Unlike the live rate/forecast,
+// the charts here never extrapolate — they only ever show measured spend, so an
+// incorrect estimate cannot creep in. See renderPairedBurnChart for the drawing.
 
 // histSample is one utilisation reading: cumulative used-% (0..100) at unix
 // second T. A window reset shows up as V dropping below the previous sample.
@@ -69,45 +69,55 @@ func decimateHistory(s []histSample, now int64) []histSample {
 	return kept
 }
 
-// burnBucket is the quota spent inside one grid interval starting at Start.
-type burnBucket struct {
+// burnInterval is one observed change between two successful API updates.
+// Rate is normalised per second so uneven polling gaps remain comparable.
+type burnInterval struct {
 	Start int64
-	Spent float64 // sum of positive utilisation deltas landing in the bucket (%)
+	End   int64
+	Spent float64
+	Rate  float64
 }
 
-// burnBuckets slices [now-horizon, now] into buckets of bucketSecs and sums the
-// positive utilisation deltas in each. A reset (value drop) contributes 0, so
-// spend is counted correctly even across a window wrap. horizon should be a
-// whole multiple of bucketSecs.
-func burnBuckets(s []histSample, now, horizon, bucketSecs int64) []burnBucket {
+// burnIntervals turns every pair of readings inside the horizon into its own
+// bar. A boundary-crossing interval is clipped and its spend prorated; a reset
+// contributes a zero-rate interval rather than a false negative burn.
+func burnIntervals(s []histSample, now, horizon int64) []burnInterval {
 	start := now - horizon
-	n := int(horizon / bucketSecs)
-	if n < 1 {
-		n = 1
-	}
-	buckets := make([]burnBucket, n)
-	for i := range buckets {
-		buckets[i].Start = start + int64(i)*bucketSecs
-	}
+	intervals := make([]burnInterval, 0, len(s))
 	for i := 1; i < len(s); i++ {
-		d := s[i].V - s[i-1].V
-		if d <= 0 || s[i].T <= start {
+		from, to := s[i-1].T, s[i].T
+		if to <= start || from >= now || to <= from {
 			continue
 		}
-		idx := int((s[i].T - start) / bucketSecs)
-		if idx < 0 || idx >= n {
+		drawStart := from
+		if drawStart < start {
+			drawStart = start
+		}
+		drawEnd := to
+		if drawEnd > now {
+			drawEnd = now
+		}
+		if drawEnd <= drawStart {
 			continue
 		}
-		buckets[idx].Spent += d
+		delta := math.Max(0, s[i].V-s[i-1].V)
+		rate := delta / float64(to-from)
+		spent := rate * float64(drawEnd-drawStart)
+		intervals = append(intervals, burnInterval{
+			Start: drawStart,
+			End:   drawEnd,
+			Spent: spent,
+			Rate:  rate,
+		})
 	}
-	return buckets
+	return intervals
 }
 
 // totalSpent is the quota consumed across the whole horizon.
-func totalSpent(buckets []burnBucket) float64 {
+func totalSpent(intervals []burnInterval) float64 {
 	sum := 0.0
-	for _, b := range buckets {
-		sum += b.Spent
+	for _, interval := range intervals {
+		sum += interval.Spent
 	}
 	return sum
 }
@@ -301,15 +311,15 @@ var claudeChartAccent = [3]int{217, 119, 87}
 var codexChartAccent = [3]int{16, 163, 127}
 
 // burnChartPanel is one self-contained provider chart inside a paired history
-// row. The two panels deliberately keep their own horizon, bucket size and
+// row. The two panels deliberately keep their own horizon, grid size and
 // quota-window denominator: Claude and Codex can expose different windows even
 // though their cards sit side by side.
 type burnChartPanel struct {
 	Provider   string
 	Label      string
-	Buckets    []burnBucket
+	Intervals  []burnInterval
 	WindowSecs int64
-	BucketSecs int64
+	GridSecs   int64
 	Start      int64
 	Now        int64
 	Known      bool
@@ -325,9 +335,9 @@ type burnChartPanel struct {
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
-// image. Connected line points are measured against sustainable spend for their
-// own interval; the dashed line is exactly sustainable pace, and the y scale
-// always leaves room above it so "healthy" does not look pegged to the ceiling.
+// image. Every bar is one real interval between API updates, normalised to a
+// speed; the dashed line is exactly sustainable pace, and the y scale always
+// leaves room above it so "healthy" does not look pegged to the ceiling.
 func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	const gap = 8.0
 	panelW := (pairedChartWidth - gap) / 2
@@ -353,17 +363,25 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	plotX, plotW := x+pad, width-2*pad-axisGutter
 	axisX := plotX + plotW + 4
 	accent := svgRGB(panel.Accent)
-	sustain := 0.0
-	if panel.WindowSecs > 0 && panel.BucketSecs > 0 {
-		sustain = 100 * float64(panel.BucketSecs) / float64(panel.WindowSecs)
+	sustainableRate := 0.0
+	if panel.WindowSecs > 0 {
+		sustainableRate = 100 / float64(panel.WindowSecs)
+	}
+	horizon := panel.Now - panel.Start
+	if horizon <= 0 {
+		horizon = 1
+	}
+	unitSecs := 3600.0
+	if horizon >= 24*60*60 {
+		unitSecs = 24 * 60 * 60
 	}
 	maxRatio := 1.35
-	if sustain > 0 {
-		for _, bucket := range panel.Buckets {
-			maxRatio = math.Max(maxRatio, bucket.Spent/sustain*1.08)
+	if sustainableRate > 0 {
+		for _, interval := range panel.Intervals {
+			maxRatio = math.Max(maxRatio, interval.Rate/sustainableRate*1.08)
 		}
 	}
-	axisMax := sustain * maxRatio
+	axisMax := sustainableRate * unitSecs * maxRatio
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="90.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
@@ -372,7 +390,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		plotX, accent, svgTextEscape.Replace(strings.ToUpper(panel.Provider)), svgTextEscape.Replace(strings.ToUpper(panel.Label))))
 	total := "SPENT —"
 	if panel.Known {
-		total = fmt.Sprintf("SPENT %.1f%%", totalSpent(panel.Buckets))
+		total = fmt.Sprintf("SPENT %.1f%%", totalSpent(panel.Intervals))
 	}
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
@@ -381,10 +399,6 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="rgb(48,48,52)"/>`,
 		plotX, plotTop, plotW, plotBase-plotTop))
 
-	horizon := panel.Now - panel.Start
-	if horizon <= 0 {
-		horizon = 1
-	}
 	xOf := func(t int64) float64 {
 		return plotX + clamp(float64(t-panel.Start)/float64(horizon), 0, 1)*plotW
 	}
@@ -395,20 +409,23 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			x0, plotTop, x1-x0, plotBase-plotTop))
 	}
 
-	n := len(panel.Buckets)
+	n := 1
+	if panel.GridSecs > 0 {
+		n = int(horizon / panel.GridSecs)
+	}
 	if n < 1 {
 		n = 1
 	}
-	bucketW := plotW / float64(n)
+	gridW := plotW / float64(n)
 	for i := 1; i < n; i++ {
-		gx := plotX + float64(i)*bucketW
+		gx := plotX + float64(i)*gridW
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(150,150,155)" stroke-width="0.35" stroke-opacity="0.22"/>`,
 			gx, plotTop+1, gx, plotBase))
 	}
 
 	// Three labelled horizontal levels make the independently scaled cards
-	// readable. Values are quota percentage spent per sampling interval.
+	// readable. Values are quota consumption speed per hour/day.
 	for _, fraction := range []float64{1, 0.5, 0} {
 		y := plotTop + (1-fraction)*(plotBase-plotTop)
 		b.WriteString(fmt.Sprintf(
@@ -416,42 +433,25 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			plotX, y, plotX+plotW, y))
 		b.WriteString(fmt.Sprintf(
 			`<text data-axis-label="true" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
-			axisX, y+2, axisPctText(axisMax*fraction)))
+			axisX, y+2, axisRateText(axisMax*fraction, horizon)))
 	}
 	usableH := plotBase - plotTop - 2
-	if sustain > 0 {
+	if sustainableRate > 0 {
 		y := plotBase - usableH/maxRatio
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.55" stroke-opacity="0.72" stroke-dasharray="2 1.5"/>`,
 			plotX, y, plotX+plotW, y, accent))
 	}
-	if panel.Known && sustain > 0 && len(panel.Buckets) > 0 {
-		type linePoint struct {
-			x, y  float64
-			ratio float64
-		}
-		points := make([]linePoint, len(panel.Buckets))
-		for i, bucket := range panel.Buckets {
-			ratio := math.Max(0, bucket.Spent/sustain)
-			points[i] = linePoint{
-				x:     plotX + (float64(i)+0.5)*bucketW,
-				y:     plotBase - usableH*ratio/maxRatio,
-				ratio: ratio,
-			}
-		}
-		for i := 1; i < len(points); i++ {
-			p0, p1 := points[i-1], points[i]
-			// Use the hotter endpoint so a short over-budget interval stays
-			// visibly warning-coloured on both its rising and falling edges.
-			segmentRatio := math.Max(p0.ratio, p1.ratio)
+	if panel.Known && sustainableRate > 0 {
+		for _, interval := range panel.Intervals {
+			ratio := math.Max(0, interval.Rate/sustainableRate)
+			h := math.Max(1, usableH*ratio/maxRatio)
+			x0, x1 := xOf(interval.Start), xOf(interval.End)
+			barW := math.Max(0.55, x1-x0-0.35)
+			barX := clamp((x0+x1-barW)/2, plotX, plotX+plotW-barW)
 			b.WriteString(fmt.Sprintf(
-				`<line data-burn-line="true" data-burn-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`,
-				segmentRatio, p0.x, p0.y, p1.x, p1.y, svgRGB(burnColor(segmentRatio))))
-		}
-		for _, point := range points {
-			b.WriteString(fmt.Sprintf(
-				`<circle data-burn-point="true" cx="%.2f" cy="%.2f" r="1.15" fill="%s"/>`,
-				point.x, point.y, svgRGB(burnColor(point.ratio))))
+				`<rect data-burn-bar="true" data-burn-ratio="%.3f" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.55" fill="%s" fill-opacity="0.96"/>`,
+				ratio, barX, plotBase-h, barW, h, svgRGB(burnColor(ratio))))
 		}
 	}
 	b.WriteString(fmt.Sprintf(
@@ -501,6 +501,14 @@ func axisPctText(v float64) string {
 	default:
 		return fmt.Sprintf("%.2f%%", v)
 	}
+}
+
+func axisRateText(v float64, horizonSecs int64) string {
+	unit := "h"
+	if horizonSecs >= 24*60*60 {
+		unit = "d"
+	}
+	return axisPctText(v) + "/" + unit
 }
 
 func chartTimeText(t time.Time, horizonSecs int64) string {

@@ -85,10 +85,11 @@ Click it for everything as numbers, plus your account.
 - **Paired burn history** at the top of the menu — Claude is always the left
   card and Codex the right card, with large high-resolution timelines and
   separate totals/scales for the last hour, short window, and long window. Each
-  independent scale has three numeric labels on the right, in quota-% spent per
-  interval, plus start/midpoint/end time labels along the bottom. Connected
-  lines show measured spend rather than a forecast; every segment is coloured
-  by its consumption rate relative to the dashed sustainable pace. The
+  independent scale has three speed labels on the right in `%/h` or `%/d`, plus
+  start/midpoint/end time labels along the bottom. Every bar is one real interval
+  between successful API updates, with its width matching the polling gap; its
+  height and colour show consumption speed relative to the dashed sustainable
+  pace. The
   top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily

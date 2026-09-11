@@ -84,12 +84,12 @@ func TestCodexHistoryPlacesSoleWeeklyPrimaryInLongRow(t *testing.T) {
 	}
 }
 
-func TestChartBucketsIncreaseTimelineResolution(t *testing.T) {
-	if got := int64(fiveHourSecs) / chartBucket(int64(fiveHourSecs), 20); got != 20 {
-		t.Fatalf("5h chart has %d buckets, want 20", got)
+func TestChartGridKeepsTimelineResolution(t *testing.T) {
+	if got := int64(fiveHourSecs) / chartGrid(int64(fiveHourSecs), 20); got != 20 {
+		t.Fatalf("5h chart has %d grid columns, want 20", got)
 	}
-	if got := int64(weekSecs) / chartBucket(int64(weekSecs), 28); got != 28 {
-		t.Fatalf("7d chart has %d buckets, want 28", got)
+	if got := int64(weekSecs) / chartGrid(int64(weekSecs), 28); got != 28 {
+		t.Fatalf("7d chart has %d grid columns, want 28", got)
 	}
 }
 

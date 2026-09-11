@@ -59,31 +59,40 @@ func TestDecimateHistory(t *testing.T) {
 	}
 }
 
-func TestBurnBucketsDerivative(t *testing.T) {
+func TestBurnIntervalsFollowEveryUpdate(t *testing.T) {
 	now := int64(1_000_000)
 	horizon := int64(3600)
-	bucket := int64(900) // 4 buckets of 15 min
-	// Sample times sit mid-bucket (deltas land in the bucket of the later sample).
 	s := []histSample{
 		{now - 3600, 0}, // baseline at start
-		{now - 3150, 5}, // +5 in bucket 0 (450s in)
-		{now - 2250, 8}, // +3 in bucket 1 (1350s in)
-		{now - 2200, 2}, // reset (drop) -> ignored
-		{now - 1350, 6}, // +4 in bucket 2 (2250s in)
-		{now - 450, 10}, // +4 in bucket 3 (3150s in)
+		{now - 3150, 5}, // +5 over 450s
+		{now - 2250, 8}, // +3 over 900s
+		{now - 2200, 2}, // reset (drop) -> zero-rate update
+		{now - 1350, 6}, // +4 over 850s
+		{now - 450, 10}, // +4 over 900s
 	}
-	b := burnBuckets(s, now, horizon, bucket)
-	if len(b) != 4 {
-		t.Fatalf("want 4 buckets, got %d", len(b))
+	intervals := burnIntervals(s, now, horizon)
+	if len(intervals) != len(s)-1 {
+		t.Fatalf("want one interval per update, got %d", len(intervals))
 	}
-	want := []float64{5, 3, 4, 4}
-	for i, w := range want {
-		if b[i].Spent != w {
-			t.Fatalf("bucket %d: want %.0f, got %.2f", i, w, b[i].Spent)
-		}
+	if got := intervals[0].Rate; !near(got, 5.0/450, 1e-12) {
+		t.Fatalf("first update rate = %v", got)
 	}
-	if got := totalSpent(b); got != 16 {
+	if intervals[2].Rate != 0 || intervals[2].Spent != 0 {
+		t.Fatalf("reset interval should be zero, got %+v", intervals[2])
+	}
+	if got := totalSpent(intervals); got != 16 {
 		t.Fatalf("total: want 16, got %.2f", got)
+	}
+}
+
+func TestBurnIntervalsProrateHorizonBoundary(t *testing.T) {
+	now := int64(10_000)
+	intervals := burnIntervals([]histSample{{T: now - 1200, V: 0}, {T: now - 600, V: 6}}, now, 900)
+	if len(intervals) != 1 {
+		t.Fatalf("intervals = %+v", intervals)
+	}
+	if intervals[0].Start != now-900 || intervals[0].End != now-600 || !near(intervals[0].Spent, 3, 1e-12) {
+		t.Fatalf("boundary interval = %+v", intervals[0])
 	}
 }
 
@@ -241,18 +250,24 @@ func TestPctColor(t *testing.T) {
 
 func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	now := int64(1_000_000)
-	leftBuckets := []burnBucket{{Start: now - 2700}, {Start: now - 1800, Spent: 2}, {Start: now - 900}}
-	rightBuckets := []burnBucket{{Start: now - 2700}, {Start: now - 1800, Spent: 8}, {Start: now - 900}}
+	leftIntervals := []burnInterval{
+		{Start: now - 2700, End: now - 1800, Spent: 2, Rate: 2.0 / 900},
+		{Start: now - 1800, End: now - 900, Spent: 8, Rate: 8.0 / 900},
+	}
+	rightIntervals := []burnInterval{
+		{Start: now - 2700, End: now - 1800, Spent: 1, Rate: 1.0 / 900},
+		{Start: now - 1800, End: now - 900, Spent: 4, Rate: 4.0 / 900},
+	}
 	left := burnChartPanel{
-		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
-		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
+		Provider: "Claude", Label: "5h", Intervals: leftIntervals,
+		WindowSecs: int64(fiveHourSecs), GridSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
 		UsedPct: 40, RecentRate: 10.0 / 3600, RateKnown: true, RateSpan: 900,
 		LastUseAt: now - 300, Trend: 0.5, TrendKnown: true, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
-		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
-		WindowSecs: int64(weekSecs), BucketSecs: 900,
+		Provider: "Codex", Label: "7d", Intervals: rightIntervals,
+		WindowSecs: int64(weekSecs), GridSecs: 900,
 		Start: now - int64(weekSecs), Now: now, Known: true, Accent: codexChartAccent,
 		UsedPct: 20, RecentRate: 20.0 / 21600, RateKnown: true, RateSpan: 900,
 		LastUseAt: now - 720, Trend: -0.5, TrendKnown: true, ResetAt: now + int64(weekSecs),
@@ -276,14 +291,11 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke-dasharray="2 1.5"`); got != 2 {
 		t.Fatalf("want one sustainable-pace line per provider, got %d", got)
 	}
-	if got := countSubstr(svg, `data-burn-line="true"`); got != 4 {
-		t.Fatalf("want two connected consumption segments per provider, got %d", got)
+	if got := countSubstr(svg, `data-burn-bar="true"`); got != 4 {
+		t.Fatalf("want one granular bar per update interval, got %d", got)
 	}
-	if got := countSubstr(svg, `data-burn-point="true"`); got != 6 {
-		t.Fatalf("want one coloured point per interval and provider, got %d", got)
-	}
-	if !strings.Contains(svg, `data-burn-ratio="0.400"`) || !strings.Contains(svg, `data-burn-ratio="53.760"`) {
-		t.Fatal("line segments should carry their provider-specific burn ratio")
+	if !strings.Contains(svg, `data-burn-ratio="0.400"`) || !strings.Contains(svg, `data-burn-ratio="26.880"`) {
+		t.Fatal("bars should carry their provider-specific speed ratio")
 	}
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
@@ -303,10 +315,10 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `data-time-label="true"`); got != 6 {
 		t.Fatalf("want start, midpoint, and end labels under each provider, got %d", got)
 	}
-	if !strings.Contains(svg, "0.00%") {
-		t.Fatal("y-axis labels should state quota percent per bucket")
+	if !strings.Contains(svg, "0.00%/h") || !strings.Contains(svg, "0.00%/d") {
+		t.Fatal("y-axis labels should state quota consumption speed")
 	}
-	if !strings.Contains(svg, "SPENT 2.0%") || !strings.Contains(svg, "SPENT 8.0%") {
+	if !strings.Contains(svg, "SPENT 10.0%") || !strings.Contains(svg, "SPENT 5.0%") {
 		t.Fatal("top-right totals should be explicitly labelled as spent quota")
 	}
 	if !strings.Contains(svg, "10.0%/H") || !strings.Contains(svg, "80.0%/D") ||
