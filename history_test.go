@@ -241,8 +241,8 @@ func TestPctColor(t *testing.T) {
 
 func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	now := int64(1_000_000)
-	leftBuckets := []burnBucket{{Start: now - 900, Spent: 2}}
-	rightBuckets := []burnBucket{{Start: now - 900, Spent: 8}}
+	leftBuckets := []burnBucket{{Start: now - 2700}, {Start: now - 1800, Spent: 2}, {Start: now - 900}}
+	rightBuckets := []burnBucket{{Start: now - 2700}, {Start: now - 1800, Spent: 8}, {Start: now - 900}}
 	left := burnChartPanel{
 		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
 		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
@@ -275,6 +275,15 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	}
 	if got := countSubstr(svg, `stroke-dasharray="2 1.5"`); got != 2 {
 		t.Fatalf("want one sustainable-pace line per provider, got %d", got)
+	}
+	if got := countSubstr(svg, `data-burn-line="true"`); got != 4 {
+		t.Fatalf("want two connected consumption segments per provider, got %d", got)
+	}
+	if got := countSubstr(svg, `data-burn-point="true"`); got != 6 {
+		t.Fatalf("want one coloured point per interval and provider, got %d", got)
+	}
+	if !strings.Contains(svg, `data-burn-ratio="0.400"`) || !strings.Contains(svg, `data-burn-ratio="53.760"`) {
+		t.Fatal("line segments should carry their provider-specific burn ratio")
 	}
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)

@@ -325,9 +325,9 @@ type burnChartPanel struct {
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
-// image. Bars are measured against sustainable spend for their own interval;
-// the dashed line is exactly sustainable pace, and the y scale always leaves
-// room above it so "healthy" does not look pegged to the ceiling.
+// image. Connected line points are measured against sustainable spend for their
+// own interval; the dashed line is exactly sustainable pace, and the y scale
+// always leaves room above it so "healthy" does not look pegged to the ceiling.
 func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	const gap = 8.0
 	panelW := (pairedChartWidth - gap) / 2
@@ -399,16 +399,16 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	if n < 1 {
 		n = 1
 	}
-	barW := plotW / float64(n)
+	bucketW := plotW / float64(n)
 	for i := 1; i < n; i++ {
-		gx := plotX + float64(i)*barW
+		gx := plotX + float64(i)*bucketW
 		b.WriteString(fmt.Sprintf(
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(150,150,155)" stroke-width="0.35" stroke-opacity="0.22"/>`,
 			gx, plotTop+1, gx, plotBase))
 	}
 
 	// Three labelled horizontal levels make the independently scaled cards
-	// readable. Values are quota percentage spent per bar interval.
+	// readable. Values are quota percentage spent per sampling interval.
 	for _, fraction := range []float64{1, 0.5, 0} {
 		y := plotTop + (1-fraction)*(plotBase-plotTop)
 		b.WriteString(fmt.Sprintf(
@@ -425,18 +425,34 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.55" stroke-opacity="0.72" stroke-dasharray="2 1.5"/>`,
 			plotX, y, plotX+plotW, y, accent))
 	}
-	for i, bucket := range panel.Buckets {
-		if bucket.Spent <= 0 || sustain <= 0 {
-			continue
+	if panel.Known && sustain > 0 && len(panel.Buckets) > 0 {
+		type linePoint struct {
+			x, y  float64
+			ratio float64
 		}
-		ratio := bucket.Spent / sustain
-		h := usableH * ratio / maxRatio
-		h = math.Max(h, 1.2)
-		bx := plotX + float64(i)*barW + 0.65
-		bw := math.Max(0.7, barW-1.3)
-		b.WriteString(fmt.Sprintf(
-			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.8" fill="%s" fill-opacity="0.96"/>`,
-			bx, plotBase-h, bw, h, svgRGB(burnColor(ratio))))
+		points := make([]linePoint, len(panel.Buckets))
+		for i, bucket := range panel.Buckets {
+			ratio := math.Max(0, bucket.Spent/sustain)
+			points[i] = linePoint{
+				x:     plotX + (float64(i)+0.5)*bucketW,
+				y:     plotBase - usableH*ratio/maxRatio,
+				ratio: ratio,
+			}
+		}
+		for i := 1; i < len(points); i++ {
+			p0, p1 := points[i-1], points[i]
+			// Use the hotter endpoint so a short over-budget interval stays
+			// visibly warning-coloured on both its rising and falling edges.
+			segmentRatio := math.Max(p0.ratio, p1.ratio)
+			b.WriteString(fmt.Sprintf(
+				`<line data-burn-line="true" data-burn-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`,
+				segmentRatio, p0.x, p0.y, p1.x, p1.y, svgRGB(burnColor(segmentRatio))))
+		}
+		for _, point := range points {
+			b.WriteString(fmt.Sprintf(
+				`<circle data-burn-point="true" cx="%.2f" cy="%.2f" r="1.15" fill="%s"/>`,
+				point.x, point.y, svgRGB(burnColor(point.ratio))))
+		}
 	}
 	b.WriteString(fmt.Sprintf(
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
