@@ -119,47 +119,65 @@ type useRate struct {
 	OK   bool
 }
 
-// lastUseRate measures the latest actual quota increase, not the average since
-// reset and not a trailing flat poll. Consecutive positive samples are smoothed
-// over at most rateWindow; a flat sample ends the burst. Samples before the most
-// recent counter reset are excluded so an old window cannot drive a new ETA.
-// After one maximum poll interval without another increase, the measurement is
-// retained only as a last-use timestamp and no longer presented as current.
-func lastUseRate(samples []histSample, now int64) useRate {
+// windowUseRate measures the utilisation change over the most recent sampling
+// window. Flat polls remain in the interval, so this is a real rolling rate
+// rather than the rate of only the last positive burst. Samples before the most
+// recent counter reset are excluded. When polling is sparse, the immediately
+// preceding sample is used so the result still has a real denominator.
+func windowUseRate(samples []histSample, now, windowSecs int64) useRate {
 	if len(samples) < 2 {
 		return useRate{}
 	}
-	floor := 1
+	floor := 0
 	for i := len(samples) - 1; i >= 1; i-- {
 		if samples[i].V < samples[i-1].V {
 			floor = i
 			break
 		}
 	}
-	for end := len(samples) - 1; end >= floor; end-- {
-		if samples[end].V <= samples[end-1].V {
-			continue
-		}
-		start := end - 1
-		for start > floor-1 && samples[start].V > samples[start-1].V &&
-			float64(samples[end].T-samples[start-1].T) <= rateWindow {
-			start--
-		}
-		dt := float64(samples[end].T - samples[start].T)
-		if now-samples[end].T > lastUseFreshSecs {
-			return useRate{At: samples[end].T}
-		}
-		if dt < rateMinDt {
-			return useRate{At: samples[end].T}
-		}
-		return useRate{
-			Rate: (samples[end].V - samples[start].V) / dt,
-			Span: dt,
-			At:   samples[end].T,
-			OK:   true,
+	end := len(samples) - 1
+	lastUseAt := int64(0)
+	for i := end; i > floor; i-- {
+		if samples[i].V > samples[i-1].V {
+			lastUseAt = samples[i].T
+			break
 		}
 	}
-	return useRate{}
+	if end <= floor || now-samples[end].T > lastUseFreshSecs {
+		return useRate{At: lastUseAt}
+	}
+	start := end - 1
+	cutoff := samples[end].T - windowSecs
+	for i := floor; i < end; i++ {
+		if samples[i].T >= cutoff {
+			start = i
+			break
+		}
+	}
+	dt := float64(samples[end].T - samples[start].T)
+	if dt < rateMinDt {
+		return useRate{At: lastUseAt}
+	}
+	return useRate{
+		Rate: math.Max(0, samples[end].V-samples[start].V) / dt,
+		Span: dt,
+		At:   lastUseAt,
+		OK:   true,
+	}
+}
+
+// rateTrend compares the immediate five-minute speed with the primary
+// fifteen-minute speed. The symmetric result maps -1..1 to the left/right
+// halves of the trend bar; zero means the rates are equal.
+func rateTrend(fast, slow useRate) (float64, bool) {
+	if !fast.OK || !slow.OK {
+		return 0, false
+	}
+	scale := math.Max(fast.Rate, slow.Rate)
+	if scale <= 1e-9 {
+		return 0, true
+	}
+	return clamp((fast.Rate-slow.Rate)/scale, -1, 1), true
 }
 
 // inWorkWindow reports whether local minute-of-day min falls in the working
@@ -254,6 +272,26 @@ func burnColor(ratio float64) [3]int {
 	return lerpColor(dialYellow, dialRed, clamp((ratio-1)/0.5, 0, 1))
 }
 
+var trendBlue = [3]int{10, 132, 255}
+
+// trendColor follows the two-sided acceleration scale. The unchanged centre
+// is green; acceleration moves through yellow to red, while deceleration moves
+// through blue to purple.
+func trendColor(trend float64) [3]int {
+	trend = clamp(trend, -1, 1)
+	if trend >= 0 {
+		if trend <= 0.5 {
+			return lerpColor(dialGreen, dialYellow, trend/0.5)
+		}
+		return lerpColor(dialYellow, dialRed, (trend-0.5)/0.5)
+	}
+	strength := -trend
+	if strength <= 0.5 {
+		return lerpColor(dialGreen, trendBlue, strength/0.5)
+	}
+	return lerpColor(trendBlue, dialPurple, (strength-0.5)/0.5)
+}
+
 const (
 	pairedChartWidth  = 480.0
 	pairedChartHeight = 92.0
@@ -278,8 +316,11 @@ type burnChartPanel struct {
 	Accent     [3]int
 	UsedPct    float64
 	RecentRate float64
+	RateKnown  bool
 	RateSpan   float64
 	LastUseAt  int64
+	Trend      float64
+	TrendKnown bool
 	ResetAt    int64
 }
 
@@ -294,7 +335,7 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
-	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(48,209,88)"/><stop offset="50%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
+	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(48,209,88)"/><stop offset="50%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
 	writeBurnPanel(&b, left, 0, panelW, ws, we)
 	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
 	b.WriteString(`</svg>`)
@@ -457,19 +498,20 @@ func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float
 	const r = 15.0
 	ratio := recentBurnRatio(panel.RecentRate, float64(panel.WindowSecs))
 	needle := dialGray
-	if panel.WindowSecs > 0 && panel.RecentRate > 1e-9 {
+	if panel.WindowSecs > 0 && panel.RateKnown {
 		needle = burnColor(ratio)
 	}
 	chartSpan := float64(panel.Now - panel.Start)
 	b.WriteString(fmt.Sprintf(
 		`<text data-speed-label="true" x="%.2f" y="%.2f" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="700" fill="%s">%s</text>`,
-		cx, cy-r-4, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(recentRateText(panel.RecentRate, chartSpan)))))
+		cx, cy-r-4, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(recentRateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
 	b.WriteString(fmt.Sprintf(
 		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="rgb(75,75,80)" stroke-width="4" stroke-linecap="round"/>`,
 		cx-r, cy, r, r, cx+r, cy))
 	b.WriteString(fmt.Sprintf(
 		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-speed)" stroke-width="2.8" stroke-linecap="round" opacity="0.95"/>`,
 		cx-r, cy, r, r, cx+r, cy))
+	writeBurnTrendBar(b, panel, cx, cy, r-6)
 	position := clamp(ratio/2, 0, 1)
 	angle := math.Pi * (1 - position)
 	nx := cx + math.Cos(angle)*(r-3)
@@ -478,4 +520,32 @@ func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.5" stroke-linecap="round"/>`,
 		cx, cy, nx, ny, svgRGB(needle)))
 	b.WriteString(fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="2.1" fill="%s"/>`, cx, cy, svgRGB(needle)))
+}
+
+// writeBurnTrendBar draws a smaller concentric semicircular bar beneath the
+// speedometer needle. It compares 5m with 15m: centre is unchanged, right is
+// accelerating, and left is decelerating. The value is an arc, never a second
+// needle, so the two readings remain visually distinct.
+func writeBurnTrendBar(b *strings.Builder, panel burnChartPanel, cx, cy, r float64) {
+	b.WriteString(fmt.Sprintf(
+		`<path data-trend-bar="true" d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-trend)" stroke-width="2.2" stroke-linecap="round" opacity="0.35"/>`,
+		cx-r, cy, r, r, cx+r, cy))
+	if !panel.TrendKnown {
+		return
+	}
+	trend := clamp(panel.Trend, -1, 1)
+	from, to := math.Min(0, trend), math.Max(0, trend)
+	if math.Abs(trend) < 0.04 {
+		from, to = -0.04, 0.04
+	}
+	x0, y0 := trendPoint(cx, cy, r, from)
+	x1, y1 := trendPoint(cx, cy, r, to)
+	b.WriteString(fmt.Sprintf(
+		`<path data-trend-value="true" data-trend="%.3f" d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="%s" stroke-width="3.4" stroke-linecap="round"/>`,
+		trend, x0, y0, r, r, x1, y1, svgRGB(trendColor(trend))))
+}
+
+func trendPoint(cx, cy, r, position float64) (float64, float64) {
+	angle := math.Pi * (1 - clamp((position+1)/2, 0, 1))
+	return cx + math.Cos(angle)*r, cy - math.Sin(angle)*r
 }

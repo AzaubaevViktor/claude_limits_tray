@@ -141,44 +141,76 @@ func TestBurnColorThresholds(t *testing.T) {
 	}
 }
 
-func TestLastUseRateSkipsTrailingIdlePolls(t *testing.T) {
+func TestWindowUseRateIncludesTrailingIdlePolls(t *testing.T) {
 	s := []histSample{
 		{T: 100, V: 10},
-		{T: 220, V: 11}, // latest actual use: +1% over 2m
+		{T: 220, V: 11},
 		{T: 340, V: 11},
-		{T: 460, V: 11}, // trailing idle polls must not turn the rate into zero
+		{T: 460, V: 11},
 	}
-	got := lastUseRate(s, 460)
-	if !got.OK || got.At != 220 || got.Span != 120 || !near(got.Rate, 1.0/120, 1e-12) {
-		t.Fatalf("last use rate = %+v", got)
+	got := windowUseRate(s, 460, 15*60)
+	if !got.OK || got.At != 220 || got.Span != 360 || !near(got.Rate, 1.0/360, 1e-12) {
+		t.Fatalf("rolling rate = %+v", got)
 	}
 }
 
-func TestLastUseRateExpiresAfterMaxPollGap(t *testing.T) {
+func TestWindowUseRateExpiresAfterMaxPollGap(t *testing.T) {
 	s := []histSample{
 		{T: 100, V: 10},
 		{T: 220, V: 11},
 		{T: 340, V: 11},
 	}
-	got := lastUseRate(s, 220+lastUseFreshSecs+1)
+	got := windowUseRate(s, 340+lastUseFreshSecs+1, 15*60)
 	if got.OK || got.Rate != 0 || got.At != 220 {
 		t.Fatalf("stale use should retain only its timestamp: %+v", got)
 	}
 }
 
-func TestLastUseRateDoesNotCrossReset(t *testing.T) {
+func TestWindowUseRateDoesNotCrossReset(t *testing.T) {
 	s := []histSample{
 		{T: 100, V: 90},
 		{T: 220, V: 95},
 		{T: 340, V: 0}, // reset
 		{T: 460, V: 0},
 	}
-	if got := lastUseRate(s, 460); got.OK {
+	if got := windowUseRate(s, 460, 15*60); !got.OK || got.Rate != 0 || got.At != 0 {
 		t.Fatalf("pre-reset use must not drive a new-window rate: %+v", got)
 	}
 	s = append(s, histSample{T: 580, V: 1})
-	if got := lastUseRate(s, 580); !got.OK || got.At != 580 || !near(got.Rate, 1.0/120, 1e-12) {
+	if got := windowUseRate(s, 580, 15*60); !got.OK || got.At != 580 || !near(got.Rate, 1.0/240, 1e-12) {
 		t.Fatalf("post-reset use should establish a fresh rate: %+v", got)
+	}
+}
+
+func TestRateTrendComparesFiveMinutesWithFifteen(t *testing.T) {
+	s := []histSample{
+		{T: 0, V: 0},
+		{T: 300, V: 1},
+		{T: 600, V: 3},
+		{T: 900, V: 6},
+	}
+	fifteen := windowUseRate(s, 900, 15*60)
+	five := windowUseRate(s, 900, 5*60)
+	trend, ok := rateTrend(five, fifteen)
+	if !ok || !near(fifteen.Rate, 6.0/900, 1e-12) || !near(five.Rate, 3.0/300, 1e-12) {
+		t.Fatalf("rates = five %+v, fifteen %+v", five, fifteen)
+	}
+	if !near(trend, 1.0/3, 1e-12) {
+		t.Fatalf("trend = %v, want 1/3 acceleration", trend)
+	}
+	if stable, ok := rateTrend(fifteen, fifteen); !ok || stable != 0 {
+		t.Fatalf("equal rates should sit at centre, got %v ok=%v", stable, ok)
+	}
+}
+
+func TestTrendColorRunsThroughBothScales(t *testing.T) {
+	for value, want := range map[float64][3]int{
+		-1: dialPurple, -0.5: trendBlue, 0: dialGreen,
+		0.5: dialYellow, 1: dialRed,
+	} {
+		if got := trendColor(value); got != want {
+			t.Errorf("trendColor(%v) = %v, want %v", value, got, want)
+		}
 	}
 }
 
@@ -215,14 +247,15 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		Provider: "Claude", Label: "5h", Buckets: leftBuckets,
 		WindowSecs: int64(fiveHourSecs), BucketSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
-		UsedPct: 40, RecentRate: 10.0 / 3600, RateSpan: 120,
-		LastUseAt: now - 300, ResetAt: now + 7*3600,
+		UsedPct: 40, RecentRate: 10.0 / 3600, RateKnown: true, RateSpan: 900,
+		LastUseAt: now - 300, Trend: 0.5, TrendKnown: true, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
 		Provider: "Codex", Label: "7d", Buckets: rightBuckets,
 		WindowSecs: int64(weekSecs), BucketSecs: 900,
 		Start: now - int64(weekSecs), Now: now, Known: true, Accent: codexChartAccent,
-		UsedPct: 20, RecentRate: 20.0 / 21600, LastUseAt: now - 720, ResetAt: now + int64(weekSecs),
+		UsedPct: 20, RecentRate: 20.0 / 21600, RateKnown: true, RateSpan: 900,
+		LastUseAt: now - 720, Trend: -0.5, TrendKnown: true, ResetAt: now + int64(weekSecs),
 	}
 	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))
 	var root struct {
@@ -246,6 +279,15 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
+	if got := countSubstr(svg, `data-trend-bar="true"`); got != 2 {
+		t.Fatalf("want one semicircular trend bar per provider, got %d", got)
+	}
+	if got := countSubstr(svg, `data-trend-value="true"`); got != 2 {
+		t.Fatalf("want one trend value arc per provider, got %d", got)
+	}
+	if !strings.Contains(svg, `data-trend="0.500"`) || !strings.Contains(svg, `data-trend="-0.500"`) {
+		t.Fatal("trend bars should independently show acceleration and deceleration")
+	}
 	if got := countSubstr(svg, `data-axis-label="true"`); got != 6 {
 		t.Fatalf("want three numeric y-axis labels per provider, got %d", got)
 	}
@@ -259,7 +301,7 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		t.Fatal("top-right totals should be explicitly labelled as spent quota")
 	}
 	if !strings.Contains(svg, "10.0%/H") || !strings.Contains(svg, "80.0%/D") ||
-		!strings.Contains(svg, "MEASURED OVER 2M · LAST USE 5M AGO") ||
+		!strings.Contains(svg, "MEASURED OVER 15M · LAST USE 5M AGO") ||
 		!strings.Contains(svg, "EMPTY 6H00M") {
 		t.Fatal("scale-specific speed, measurement span, and quota-end forecast should be embedded in the panel")
 	}

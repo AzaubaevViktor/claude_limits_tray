@@ -79,7 +79,7 @@ Click it for everything as numbers, plus your account.
 - Consumption **speed** two ways — a **recent** rate and the **average since the
   window opened** — with session in **%/h** and weekly in **%/d**, each with the
   **spare left at reset** if that pace holds. The recent line is labelled with
-  the **actual span it was measured over** (nominally ~5 min, but widening to the
+  the **actual span it was measured over** (nominally ~15 min, but widening to the
   real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
   manual refresh never misreads as 0).
 - **Paired burn history** at the top of the menu — Claude is always the left
@@ -91,11 +91,13 @@ Click it for everything as numbers, plus your account.
   pace. The top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
-  charts. The actual **measurement span** and quota-end ETA are based on the
-  **last actual usage increase** (including how long ago it was),
-  not the average since the window opened and not a trailing idle poll. If no
-  further use arrives for 10 minutes, that rate expires: the card switches to
-  **idle**, keeps the last-use age, and stops projecting an exhaustion time. A
+  charts. The main needle and quota-end ETA use the rolling **last 15 minutes**
+  (including how long ago the last increase was), not the average since the
+  window opened. A smaller concentric semicircular bar compares the last 5
+  minutes with the 15-minute rate: centre means unchanged, right means
+  accelerating (green → yellow → red), and left means slowing
+  (green → blue → purple). If polling data goes stale, the rate expires and the
+  card stops projecting an exhaustion time. A
   weekly-only Codex limit is placed in the long-window row even when the API
   calls it `primary`.
 - **Per-model** weekly limits.

@@ -81,14 +81,17 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 
 func TestRecentRateAndQuotaEndText(t *testing.T) {
 	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	if got := recentRateText(10.0/3600, 5*60*60); got != "10.0%/h" {
+	if got := recentRateText(10.0/3600, 5*60*60, true); got != "10.0%/h" {
 		t.Fatalf("hourly rate text = %q", got)
 	}
-	if got := recentRateText(10.0/86400, 7*24*60*60); got != "10.0%/d" {
+	if got := recentRateText(10.0/86400, 7*24*60*60, true); got != "10.0%/d" {
 		t.Fatalf("daily rate text = %q", got)
 	}
-	if got := recentRateText(0, 5*60*60); got != "—" {
+	if got := recentRateText(0, 5*60*60, false); got != "—" {
 		t.Fatalf("missing rate text = %q", got)
+	}
+	if got := recentRateText(0, 5*60*60, true); got != "0.0%/h" {
+		t.Fatalf("known idle rate text = %q", got)
 	}
 	if got := recentMeasurementText(10.0/3600, 2*60, now.Add(-5*time.Minute), now); got != "measured over 2m · last use 5m ago" {
 		t.Fatalf("measurement text = %q", got)
@@ -206,17 +209,17 @@ func TestRateTracker(t *testing.T) {
 	approx(t, sess, 1.0, 1e-3, "sess rate")
 	approx(t, week, 0.0, 1e-3, "week rate")
 
-	// A poll gap longer than the 5-minute window must still yield a rate,
+	// A poll gap longer than the 15-minute window must still yield a rate,
 	// measured over the actual gap — not read 0 because only the newest sample
 	// falls inside the window.
 	rtGap := &RateTracker{}
 	rtGap.Update(0, 10, 5)
-	sess, week, ok = rtGap.Update(600, 40, 11) // 600s > rateWindow (300s)
+	sess, week, ok = rtGap.Update(1200, 40, 11) // 1200s > rateWindow (900s)
 	if !ok {
 		t.Fatal("a poll gap longer than the window should still yield a rate")
 	}
-	approx(t, sess, 30.0/600, 1e-6, "sess rate over the real gap")
-	approx(t, week, 6.0/600, 1e-6, "week rate over the real gap")
+	approx(t, sess, 30.0/1200, 1e-6, "sess rate over the real gap")
+	approx(t, week, 6.0/1200, 1e-6, "week rate over the real gap")
 
 	rt2 := &RateTracker{}
 	rt2.Update(1000, 80, 50)

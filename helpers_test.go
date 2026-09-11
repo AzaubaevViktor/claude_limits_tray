@@ -52,8 +52,8 @@ func TestFmtSpanAndLabel(t *testing.T) {
 			t.Errorf("fmtSpan(%v) = %q, want %q", c.secs, got, c.want)
 		}
 	}
-	if got := spanLabel(0); got != "~5m" {
-		t.Errorf("unmeasured span should be nominal ~5m, got %q", got)
+	if got := spanLabel(0); got != "~15m" {
+		t.Errorf("unmeasured span should be nominal ~15m, got %q", got)
 	}
 	if got := spanLabel(720); got != "12m" {
 		t.Errorf("measured span should format, got %q", got)
@@ -171,15 +171,15 @@ func TestForecastRate(t *testing.T) {
 	// 20% used 1h into the 5h window -> 20 %/h since reset ≈ 0.005556 %/s.
 	since := 20.0 / 3600
 	left, win := fiveHourSecs-3600, fiveHourSecs
-	// A calmer last-5m rate is overridden by the faster since-reset pace.
+	// A calmer recent rate is overridden by the faster since-reset pace.
 	approx(t, forecastRate(since/4, 20, left, win, true), since, 1e-9,
-		"since-reset wins when 5m is calmer")
-	// A hotter last-5m rate is kept.
+		"since-reset wins when recent is calmer")
+	// A hotter recent rate is kept.
 	approx(t, forecastRate(since*4, 20, left, win, true), since*4, 1e-9,
-		"5m wins when it's hotter")
-	// Unknown reset -> the 5m rate is used as-is.
+		"recent wins when it's hotter")
+	// Unknown reset -> the recent rate is used as-is.
 	approx(t, forecastRate(0.01, 20, 0, win, false), 0.01, 1e-9,
-		"unknown reset falls back to 5m")
+		"unknown reset falls back to recent")
 }
 
 func TestBackoff(t *testing.T) {

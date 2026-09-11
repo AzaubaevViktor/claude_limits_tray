@@ -99,8 +99,8 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 
 // recentRateText follows the chart's time scale: hourly for sub-day charts and
 // daily for day-scale charts.
-func recentRateText(ratePerSec, chartSpanSecs float64) string {
-	if ratePerSec <= 1e-9 {
+func recentRateText(ratePerSec, chartSpanSecs float64, known bool) string {
+	if !known {
 		return "—"
 	}
 	unitSecs, unit := 3600.0, "h"
@@ -388,7 +388,7 @@ type RateTracker struct {
 func (r *RateTracker) Span() float64 { return r.lastDt }
 
 const (
-	rateWindow = 300.0
+	rateWindow = 15 * 60.0
 	rateMinDt  = 10.0
 	rateMaxLen = 64
 )
@@ -407,7 +407,7 @@ func (r *RateTracker) Update(now, sess, week float64) (float64, float64, bool) {
 		r.history = r.history[len(r.history)-rateMaxLen:]
 	}
 	// Base the rate on the oldest sample still inside the window, so a burst is
-	// smoothed over ~5 min. But when the poll gap is itself longer than the
+	// smoothed over ~15 min. But when the poll gap is itself longer than the
 	// window (slow/manual refresh, or a grown backoff interval), that leaves only
 	// the just-added sample in range — measuring over dt=0 would wrongly read 0.
 	// Fall back to the previous sample so we always span at least the last gap.

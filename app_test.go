@@ -129,7 +129,7 @@ func TestClaudeDialCentreMatchesWorstOuterPace(t *testing.T) {
 }
 
 // After a restart the rate history is empty, so a naive tracker needs two fresh
-// polls before "Last 5m" can leave zero. Seeding from the last persisted sample
+// polls before "Last 15m" can leave zero. Seeding from the last persisted sample
 // lets the very first poll measure a rate.
 func TestSeedRatesEnablesFirstPollRate(t *testing.T) {
 	a := newApp()

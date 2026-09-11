@@ -685,7 +685,7 @@ func (a *App) renderCodexEmpty() {
 	a.codexBurn.SetTitle("Forecast @ rate · —")
 	a.codexBurnPrimary.SetTitle("Primary:  —")
 	a.codexBurnSecondary.SetTitle("Secondary:  —")
-	a.codexSpeed.SetTitle("Last 5m:  —")
+	a.codexSpeed.SetTitle("Last 15m:  —")
 	a.codexSpeedLeft.SetTitle("      ↳ spare at reset:  —")
 	a.codexSpeedAvg.SetTitle("Since reset:  —")
 	a.codexSpeedAvgLeft.SetTitle("      ↳ spare at reset:  —")
@@ -921,7 +921,7 @@ func (a *App) renderClaudeEmpty(account string) {
 	a.burn.SetTitle("Forecast @ rate · —")
 	a.burnSession.SetTitle("Session (5h): —")
 	a.burnWeekly.SetTitle("Weekly: —")
-	a.speed.SetTitle("Last 5m: —")
+	a.speed.SetTitle("Last 15m: —")
 	a.speedLeft.SetTitle("      ↳ spare at reset: —")
 	a.speedAvg.SetTitle("Since reset: —")
 	a.speedAvgLeft.SetTitle("      ↳ spare at reset: —")
@@ -1028,7 +1028,9 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket
 	if bucket <= 0 {
 		bucket = horizon
 	}
-	lastUse := lastUseRate(series.samples, now)
+	fifteenMin := windowUseRate(series.samples, now, int64(rateWindow))
+	fiveMin := windowUseRate(series.samples, now, 5*60)
+	trend, trendKnown := rateTrend(fiveMin, fifteenMin)
 	return burnChartPanel{
 		Provider: provider, Label: label,
 		Buckets:    burnBuckets(series.samples, now, horizon, bucket),
@@ -1036,8 +1038,8 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, bucket
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
 		Accent: accent, UsedPct: series.used,
-		RecentRate: lastUse.Rate, RateSpan: lastUse.Span,
-		LastUseAt: lastUse.At, ResetAt: series.resetAt,
+		RecentRate: fifteenMin.Rate, RateKnown: fifteenMin.OK, RateSpan: fifteenMin.Span,
+		LastUseAt: fifteenMin.At, Trend: trend, TrendKnown: trendKnown, ResetAt: series.resetAt,
 	}
 }
 
@@ -1429,7 +1431,7 @@ func (a *App) loadState() {
 
 // seedRates primes the rate trackers with the last persisted sample, timestamped
 // at the last successful poll, so the FIRST poll after a restart measures a rate
-// straight away instead of needing two fresh polls before "Last 5m" leaves zero.
+// straight away instead of needing two fresh polls before "Last 15m" leaves zero.
 // (Claude and Codex are fetched in one poll cycle, so lastOk stands in for the
 // Codex sample time too.) A window that reset during downtime self-corrects:
 // RateTracker.Update drops the seed when the new utilisation comes in lower.

@@ -206,11 +206,11 @@ func fmtSpan(secs float64) string {
 	return fmt.Sprintf("%dh%02dm", m/60, m%60)
 }
 
-// spanLabel is fmtSpan for a measured span, or the nominal "~5m" window before
+// spanLabel is fmtSpan for a measured span, or the nominal "~15m" window before
 // any rate has been measured yet (span 0).
 func spanLabel(secs float64) string {
 	if secs <= 0 {
-		return "~5m"
+		return "~15m"
 	}
 	return fmtSpan(secs)
 }
@@ -245,11 +245,11 @@ func avgRate(pct, leftSecs, windowSecs, perUnitSecs float64, known bool) (float6
 }
 
 // forecastRate picks the worse (faster) of two consumption rates, both in % of
-// quota per second: the recent 5-minute rate and the average since the window
-// opened. A green spark off a quiet last-5-minutes is misleading when the
+// quota per second: the recent 15-minute rate and the average since the window
+// opened. A green spark off a quiet last 15 minutes is misleading when the
 // long-run pace since reset is high, so the forecast uses whichever is higher.
-func forecastRate(fiveMin, pct, leftSecs, windowSecs float64, known bool) float64 {
-	rate := fiveMin
+func forecastRate(recent, pct, leftSecs, windowSecs float64, known bool) float64 {
+	rate := recent
 	if since, ok := avgRate(pct, leftSecs, windowSecs, 1, known); ok && since > rate {
 		rate = since
 	}
