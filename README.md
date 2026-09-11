@@ -101,7 +101,7 @@ Click it for everything as numbers, plus your account.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
-  also shows the signed-in account and credits).
+  also shows the signed-in account, credits, and available rate-limit resets).
 - Shows the active Claude account and provides **Use current Claude login** to
   reload `Claude Code-credentials` immediately after switching accounts.
 - Polls in the background with a live "requesting…" indicator; on errors it

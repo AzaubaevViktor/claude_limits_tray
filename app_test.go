@@ -55,6 +55,15 @@ func TestCodexTimeTicksUseDaysForLongPrimaryWindow(t *testing.T) {
 	}
 }
 
+func TestCodexResetsText(t *testing.T) {
+	if got := codexResetsText(&CodexUsage{ResetCredits: 0, ResetCreditsKnown: true}); got != "Resets available: 0" {
+		t.Fatalf("known zero resets = %q", got)
+	}
+	if got := codexResetsText(&CodexUsage{}); got != "Resets available: —" {
+		t.Fatalf("missing resets = %q", got)
+	}
+}
+
 func TestCodexHistoryPlacesSoleWeeklyPrimaryInLongRow(t *testing.T) {
 	primaryHistory := []histSample{{T: 1, V: 10}, {T: 2, V: 20}}
 	a := &App{

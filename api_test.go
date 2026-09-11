@@ -50,7 +50,7 @@ func TestParseCodexUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCodexUsage: %v", err)
 	}
-	if u.PlanType != "pro" || u.ResetCredits != 2 || u.ReachedType != "rate_limit_reached" {
+	if u.PlanType != "pro" || u.ResetCredits != 2 || !u.ResetCreditsKnown || u.ReachedType != "rate_limit_reached" {
 		t.Fatalf("summary = %#v", u)
 	}
 	if len(u.Limits) != 2 {
@@ -68,6 +68,24 @@ func TestParseCodexUsage(t *testing.T) {
 	}
 	if u.Limits[1].ID != "gpt-5.5" || u.Limits[1].Name != "GPT-5.5" {
 		t.Errorf("additional limit = %#v", u.Limits[1])
+	}
+}
+
+func TestParseCodexUsageDistinguishesZeroResetsFromMissing(t *testing.T) {
+	withZero, err := parseCodexUsage([]byte(`{"rate_limit_reset_credits":{"available_count":0}}`))
+	if err != nil {
+		t.Fatalf("parse zero resets: %v", err)
+	}
+	if !withZero.ResetCreditsKnown || withZero.ResetCredits != 0 {
+		t.Fatalf("zero resets = %#v", withZero)
+	}
+
+	withoutField, err := parseCodexUsage([]byte(`{}`))
+	if err != nil {
+		t.Fatalf("parse missing resets: %v", err)
+	}
+	if withoutField.ResetCreditsKnown {
+		t.Fatalf("missing resets reported as known: %#v", withoutField)
 	}
 }
 

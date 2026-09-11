@@ -162,7 +162,7 @@ type App struct {
 	codexBurnSecondary                         *systray.MenuItem
 	codexSpeed, codexSpeedLeft                 *systray.MenuItem
 	codexSpeedAvg, codexSpeedAvgLeft           *systray.MenuItem
-	codexCredits, codexStatus                  *systray.MenuItem
+	codexCredits, codexResets, codexStatus     *systray.MenuItem
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
 	legendParent                               *systray.MenuItem
@@ -660,6 +660,7 @@ func (a *App) renderCodex() {
 	a.codexSpeedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
 		a.codexSpare(primary, codexSinceRate(primary)), a.codexSpare(secondary, codexSinceRate(secondary))))
 	a.codexCredits.SetTitle(codexCreditsText(u))
+	a.codexResets.SetTitle(codexResetsText(u))
 	status := "Last success: " + agoOf(a.lastCodexOk)
 	if a.lastCodexFailMsg != "" {
 		status += " · last failure: " + a.lastCodexFailMsg
@@ -689,6 +690,7 @@ func (a *App) renderCodexEmpty() {
 	a.codexSpeedAvg.SetTitle("Since reset:  —")
 	a.codexSpeedAvgLeft.SetTitle("      ↳ spare at reset:  —")
 	a.codexCredits.SetTitle("Credits: —")
+	a.codexResets.SetTitle("Resets available: —")
 	msg := "Last success: " + agoOf(a.lastCodexOk)
 	if a.lastCodexFailMsg != "" {
 		msg += " · last failure: " + a.lastCodexFailMsg
@@ -1600,9 +1602,6 @@ func codexPlanLabel(plan string) string {
 
 func codexCreditsText(u *CodexUsage) string {
 	if u == nil || len(u.Limits) == 0 || u.Limits[0].Credits == nil {
-		if u != nil && u.ResetCredits > 0 {
-			return fmt.Sprintf("Credits: %d reset", u.ResetCredits)
-		}
 		return "Credits: —"
 	}
 	c := u.Limits[0].Credits
@@ -1616,6 +1615,13 @@ func codexCreditsText(u *CodexUsage) string {
 	default:
 		return "Credits: none"
 	}
+}
+
+func codexResetsText(u *CodexUsage) string {
+	if u == nil || !u.ResetCreditsKnown {
+		return "Resets available: —"
+	}
+	return fmt.Sprintf("Resets available: %d", u.ResetCredits)
 }
 
 func fmtHHMM(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }

@@ -63,6 +63,7 @@ func (a *App) buildMenu() {
 	a.codexSpeedAvg = a.codexBurn.AddSubMenuItem("Speed (since reset)", "")
 	a.codexSpeedAvgLeft = a.codexBurn.AddSubMenuItem("Spare at reset (since reset)", "")
 	a.codexCredits = a.codexParent.AddSubMenuItem("Credits: —", "")
+	a.codexResets = a.codexParent.AddSubMenuItem("Resets available: —", "")
 	a.codexScopedParent = a.codexParent.AddSubMenuItem("Additional limits: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
 		it := a.codexScopedParent.AddSubMenuItem("", "")
@@ -110,7 +111,7 @@ func (a *App) buildMenu() {
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
-		a.codexCredits, a.codexStatus,
+		a.codexCredits, a.codexResets, a.codexStatus,
 	} {
 		it.Disable()
 	}

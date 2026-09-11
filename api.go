@@ -435,10 +435,11 @@ type CodexLimit struct {
 }
 
 type CodexUsage struct {
-	PlanType     string
-	ReachedType  string
-	ResetCredits int
-	Limits       []CodexLimit
+	PlanType          string
+	ReachedType       string
+	ResetCredits      int
+	ResetCreditsKnown bool
+	Limits            []CodexLimit
 }
 
 // token returns a usable access token. It prefers a still-valid cached token,
@@ -964,6 +965,7 @@ func parseCodexUsage(raw []byte) (*CodexUsage, error) {
 	}
 	if p.RateLimitResetCredits != nil {
 		u.ResetCredits = p.RateLimitResetCredits.AvailableCount
+		u.ResetCreditsKnown = true
 	}
 	for _, l := range p.AdditionalRateLimits {
 		id := l.MeteredFeature
