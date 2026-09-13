@@ -385,9 +385,11 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="90.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
+	title := fmt.Sprintf("%s %s: %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label),
+		quotaRunwayText(panel.UsedPct, panel.RecentRate, panel.RateKnown))
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.45" fill="%s">%s · %s</text>`,
-		plotX, accent, svgTextEscape.Replace(strings.ToUpper(panel.Provider)), svgTextEscape.Replace(strings.ToUpper(panel.Label))))
+		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
+		plotX, accent, svgTextEscape.Replace(title)))
 	total := "SPENT —"
 	if panel.Known {
 		total = fmt.Sprintf("SPENT %.1f%%", totalSpent(panel.Intervals))

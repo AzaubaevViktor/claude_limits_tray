@@ -79,6 +79,30 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 	}
 }
 
+func TestQuotaRunwayText(t *testing.T) {
+	tests := []struct {
+		name          string
+		usedPct, rate float64
+		known         bool
+		want          string
+	}{
+		{"unknown rate", 20, 0, false, "— left"},
+		{"idle", 20, 0, true, "∞ left"},
+		{"empty", 100, 1, true, "0H left"},
+		{"sub-hour fraction", 50, 75.0 / 3600, true, "⅔H left"},
+		{"fractional hours", 50, 15.0 / 3600, true, "3⅓H left"},
+		{"fractional days", 50, 15.0 / 86400, true, "3⅓D left"},
+		{"very short", 99, 12.0 / 3600, true, "<⅓H left"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quotaRunwayText(tc.usedPct, tc.rate, tc.known); got != tc.want {
+				t.Fatalf("quotaRunwayText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRecentRateAndQuotaEndText(t *testing.T) {
 	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
 	if got := recentRateText(10.0/3600, 5*60*60, true); got != "10.0%/h" {

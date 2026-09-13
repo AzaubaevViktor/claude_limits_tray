@@ -282,8 +282,8 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if !strings.Contains(svg, `width="480" height="92"`) {
 		t.Fatalf("paired dimensions missing: %.100s", svg)
 	}
-	if !strings.Contains(svg, "CLAUDE · 5H") || !strings.Contains(svg, "CODEX · 7D") {
-		t.Fatal("both provider labels should be embedded in their own panels")
+	if !strings.Contains(svg, "CLAUDE 5H: 6H left") || !strings.Contains(svg, "CODEX 7D: 1D left") {
+		t.Fatal("both provider labels and current-rate runway should be embedded in their own panels")
 	}
 	if !strings.Contains(svg, svgRGB(claudeChartAccent)) || !strings.Contains(svg, svgRGB(codexChartAccent)) {
 		t.Fatal("provider panels should retain distinct accents")

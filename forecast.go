@@ -97,6 +97,43 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
+// quotaRunwayText says how long the remaining quota would last if the latest
+// measured rate stayed constant. Hours and days are rounded to thirds to keep
+// the chart header compact while still making e.g. 3h20m visible as 3⅓H.
+func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
+	if !known {
+		return "— left"
+	}
+	remaining := math.Max(0, 100-usedPct)
+	if remaining <= 0 {
+		return "0H left"
+	}
+	if ratePerSec <= 1e-9 {
+		return "∞ left"
+	}
+	seconds := remaining / ratePerSec
+	unitSecs, unit := 3600.0, "H"
+	if seconds >= 24*60*60 {
+		unitSecs, unit = 24*60*60, "D"
+	}
+	thirds := int(math.Round(seconds / unitSecs * 3))
+	if thirds < 1 {
+		return "<⅓" + unit + " left"
+	}
+	whole, fraction := thirds/3, thirds%3
+	fractionText := ""
+	if fraction == 1 {
+		fractionText = "⅓"
+	} else if fraction == 2 {
+		fractionText = "⅔"
+	}
+	wholeText := ""
+	if whole > 0 {
+		wholeText = fmt.Sprintf("%d", whole)
+	}
+	return wholeText + fractionText + unit + " left"
+}
+
 // recentRateText follows the chart's time scale: hourly for sub-day charts and
 // daily for day-scale charts.
 func recentRateText(ratePerSec, chartSpanSecs float64, known bool) string {
