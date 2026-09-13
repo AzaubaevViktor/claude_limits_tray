@@ -262,14 +262,16 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		Provider: "Claude", Label: "5h", Intervals: leftIntervals,
 		WindowSecs: int64(fiveHourSecs), GridSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
-		UsedPct: 40, RecentRate: 10.0 / 3600, RateKnown: true, RateSpan: 900,
+		UsedPct: 40, RecentRate: 10.0 / 3600, RateKnown: true,
+		RunwayRate: 10.0 / 3600, RunwayKnown: true, RateSpan: 900,
 		LastUseAt: now - 300, Trend: 0.5, TrendKnown: true, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
 		Provider: "Codex", Label: "7d", Intervals: rightIntervals,
 		WindowSecs: int64(weekSecs), GridSecs: 900,
 		Start: now - int64(weekSecs), Now: now, Known: true, Accent: codexChartAccent,
-		UsedPct: 20, RecentRate: 20.0 / 21600, RateKnown: true, RateSpan: 900,
+		UsedPct: 20, RecentRate: 20.0 / 21600, RateKnown: true,
+		RunwayRate: 20.0 / 21600, RunwayKnown: true, RateSpan: 900,
 		LastUseAt: now - 720, Trend: -0.5, TrendKnown: true, ResetAt: now + int64(weekSecs),
 	}
 	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))

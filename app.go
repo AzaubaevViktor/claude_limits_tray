@@ -1031,6 +1031,8 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 	fifteenMin := windowUseRate(series.samples, now, int64(rateWindow))
 	fiveMin := windowUseRate(series.samples, now, 5*60)
 	trend, trendKnown := rateTrend(fiveMin, fifteenMin)
+	runwayRate, runwayKnown := quotaRunwayRate(fifteenMin.Rate, fifteenMin.OK,
+		series.used, float64(series.resetAt-now), float64(series.secs), series.resetAt > now)
 	return burnChartPanel{
 		Provider: provider, Label: label,
 		Intervals:  burnIntervals(series.samples, now, horizon),
@@ -1038,7 +1040,8 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
 		Accent: accent, UsedPct: series.used,
-		RecentRate: fifteenMin.Rate, RateKnown: fifteenMin.OK, RateSpan: fifteenMin.Span,
+		RecentRate: fifteenMin.Rate, RateKnown: fifteenMin.OK,
+		RunwayRate: runwayRate, RunwayKnown: runwayKnown, RateSpan: fifteenMin.Span,
 		LastUseAt: fifteenMin.At, Trend: trend, TrendKnown: trendKnown, ResetAt: series.resetAt,
 	}
 }

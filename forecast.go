@@ -134,6 +134,20 @@ func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
 	return wholeText + fractionText + unit + " left"
 }
 
+// quotaRunwayRate prefers a real recent burn rate. When recent activity is
+// absent or flat, it falls back to the average consumption since this quota
+// window opened, so the runway does not misleadingly become unknown/infinite
+// just because the user paused for the latest sampling interval.
+func quotaRunwayRate(recent float64, recentKnown bool, usedPct, leftSecs, windowSecs float64, windowKnown bool) (float64, bool) {
+	if recentKnown && recent > 1e-9 {
+		return recent, true
+	}
+	if average, ok := avgRate(usedPct, leftSecs, windowSecs, 1, windowKnown); ok {
+		return average, true
+	}
+	return recent, recentKnown
+}
+
 // recentRateText follows the chart's time scale: hourly for sub-day charts and
 // daily for day-scale charts.
 func recentRateText(ratePerSec, chartSpanSecs float64, known bool) string {

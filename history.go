@@ -315,23 +315,25 @@ var codexChartAccent = [3]int{16, 163, 127}
 // quota-window denominator: Claude and Codex can expose different windows even
 // though their cards sit side by side.
 type burnChartPanel struct {
-	Provider   string
-	Label      string
-	Intervals  []burnInterval
-	WindowSecs int64
-	GridSecs   int64
-	Start      int64
-	Now        int64
-	Known      bool
-	Accent     [3]int
-	UsedPct    float64
-	RecentRate float64
-	RateKnown  bool
-	RateSpan   float64
-	LastUseAt  int64
-	Trend      float64
-	TrendKnown bool
-	ResetAt    int64
+	Provider    string
+	Label       string
+	Intervals   []burnInterval
+	WindowSecs  int64
+	GridSecs    int64
+	Start       int64
+	Now         int64
+	Known       bool
+	Accent      [3]int
+	UsedPct     float64
+	RecentRate  float64
+	RateKnown   bool
+	RunwayRate  float64
+	RunwayKnown bool
+	RateSpan    float64
+	LastUseAt   int64
+	Trend       float64
+	TrendKnown  bool
+	ResetAt     int64
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
@@ -386,7 +388,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="90.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
 	title := fmt.Sprintf("%s %s: %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label),
-		quotaRunwayText(panel.UsedPct, panel.RecentRate, panel.RateKnown))
+		quotaRunwayText(panel.UsedPct, panel.RunwayRate, panel.RunwayKnown))
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		plotX, accent, svgTextEscape.Replace(title)))
@@ -480,9 +482,9 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			usedAt = time.Time{}
 		}
 		measurementText = recentMeasurementText(panel.RecentRate, panel.RateSpan, usedAt, time.Unix(panel.Now, 0))
-		endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Unix(panel.ResetAt, 0), time.Unix(panel.Now, 0))
+		endText = quotaEndText(panel.UsedPct, panel.RunwayRate, time.Unix(panel.ResetAt, 0), time.Unix(panel.Now, 0))
 		if panel.ResetAt <= 0 {
-			endText = quotaEndText(panel.UsedPct, panel.RecentRate, time.Time{}, time.Unix(panel.Now, 0))
+			endText = quotaEndText(panel.UsedPct, panel.RunwayRate, time.Time{}, time.Unix(panel.Now, 0))
 		}
 	}
 	b.WriteString(fmt.Sprintf(
