@@ -304,36 +304,41 @@ func trendColor(trend float64) [3]int {
 
 const (
 	pairedChartWidth  = 480.0
-	pairedChartHeight = 92.0
+	pairedChartHeight = 104.0
 )
 
 var claudeChartAccent = [3]int{217, 119, 87}
 var codexChartAccent = [3]int{16, 163, 127}
+var periodRunwayColor = [3]int{100, 210, 255}
+var currentRunwayColor = [3]int{255, 159, 10}
+var averageRunwayColor = [3]int{191, 64, 255}
 
 // burnChartPanel is one self-contained provider chart inside a paired history
 // row. The two panels deliberately keep their own horizon, grid size and
 // quota-window denominator: Claude and Codex can expose different windows even
 // though their cards sit side by side.
 type burnChartPanel struct {
-	Provider    string
-	Label       string
-	Intervals   []burnInterval
-	WindowSecs  int64
-	GridSecs    int64
-	Start       int64
-	Now         int64
-	Known       bool
-	Accent      [3]int
-	UsedPct     float64
-	RecentRate  float64
-	RateKnown   bool
-	RunwayRate  float64
-	RunwayKnown bool
-	RateSpan    float64
-	LastUseAt   int64
-	Trend       float64
-	TrendKnown  bool
-	ResetAt     int64
+	Provider     string
+	Label        string
+	Intervals    []burnInterval
+	WindowSecs   int64
+	GridSecs     int64
+	Start        int64
+	Now          int64
+	Known        bool
+	Accent       [3]int
+	UsedPct      float64
+	RecentRate   float64
+	RateKnown    bool
+	AverageRate  float64
+	AverageKnown bool
+	PeriodLeft   float64
+	PeriodKnown  bool
+	RateSpan     float64
+	LastUseAt    int64
+	Trend        float64
+	TrendKnown   bool
+	ResetAt      int64
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
@@ -385,10 +390,9 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	}
 	axisMax := sustainableRate * unitSecs * maxRatio
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="90.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="102.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
-	title := fmt.Sprintf("%s %s: %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label),
-		quotaRunwayText(panel.UsedPct, panel.RunwayRate, panel.RunwayKnown))
+	title := fmt.Sprintf("%s %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label))
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		plotX, accent, svgTextEscape.Replace(title)))
@@ -474,26 +478,52 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			`<text data-time-label="true" x="%.2f" y="57" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
 			plotX+plotW*mark.fraction, mark.anchor, chartTimeText(time.Unix(t, 0), horizon)))
 	}
+	writeRunwayStats(b, panel, plotX, x+width-pad, 69)
 
-	measurementText, endText := "measured —", "empty —"
+	measurementText, endText := "measured —", "current empty —"
 	if panel.WindowSecs > 0 {
 		usedAt := time.Unix(panel.LastUseAt, 0)
 		if panel.LastUseAt <= 0 {
 			usedAt = time.Time{}
 		}
 		measurementText = recentMeasurementText(panel.RecentRate, panel.RateSpan, usedAt, time.Unix(panel.Now, 0))
-		endText = quotaEndText(panel.UsedPct, panel.RunwayRate, time.Unix(panel.ResetAt, 0), time.Unix(panel.Now, 0))
+		resetAt := time.Unix(panel.ResetAt, 0)
 		if panel.ResetAt <= 0 {
-			endText = quotaEndText(panel.UsedPct, panel.RunwayRate, time.Time{}, time.Unix(panel.Now, 0))
+			resetAt = time.Time{}
+		}
+		if panel.RateKnown && panel.RecentRate <= 1e-9 {
+			endText = "current lasts to reset"
+		} else if panel.RateKnown {
+			endText = "current " + quotaEndText(panel.UsedPct, panel.RecentRate, resetAt, time.Unix(panel.Now, 0))
 		}
 	}
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="73" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="550" fill="rgb(180,180,186)">%s</text>`,
+		`<text x="%.2f" y="85" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="550" fill="rgb(180,180,186)">%s</text>`,
 		plotX, svgTextEscape.Replace(strings.ToUpper(measurementText))))
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="86" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7" font-weight="600" fill="rgb(215,215,220)">%s</text>`,
-		plotX, svgTextEscape.Replace(strings.ToUpper(endText))))
-	writeBurnSpeedometer(b, panel, x+width-20, 86)
+		`<text x="%.2f" y="98" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7" font-weight="600" fill="%s">%s</text>`,
+		plotX, svgRGB(currentRunwayColor), svgTextEscape.Replace(strings.ToUpper(endText))))
+	writeBurnSpeedometer(b, panel, x+width-20, 98)
+}
+
+func writeRunwayStats(b *strings.Builder, panel burnChartPanel, left, right, y float64) {
+	current := quotaRunwayText(panel.UsedPct, panel.RecentRate, panel.RateKnown)
+	average := quotaRunwayText(panel.UsedPct, panel.AverageRate, panel.AverageKnown)
+	averageRate := recentRateText(panel.AverageRate, float64(panel.WindowSecs), panel.AverageKnown)
+	stats := []struct {
+		kind, anchor, text string
+		x                  float64
+		color              [3]int
+	}{
+		{"period", "start", "RESET " + quotaDurationText(panel.PeriodLeft, panel.PeriodKnown), left, periodRunwayColor},
+		{"current", "middle", "CURRENT " + strings.TrimSuffix(current, " left"), (left + right) / 2, currentRunwayColor},
+		{"average", "end", "AVG " + strings.TrimSuffix(average, " left") + " · " + averageRate, right, averageRunwayColor},
+	}
+	for _, stat := range stats {
+		b.WriteString(fmt.Sprintf(
+			`<text data-runway-kind="%s" x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.8" font-weight="700" fill="%s">%s</text>`,
+			stat.kind, stat.x, y, stat.anchor, svgRGB(stat.color), svgTextEscape.Replace(stat.text)))
+	}
 }
 
 func axisPctText(v float64) string {

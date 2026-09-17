@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math"
 	"testing"
 	"time"
 )
@@ -104,34 +103,12 @@ func TestQuotaRunwayText(t *testing.T) {
 	}
 }
 
-func TestQuotaRunwayRateFallsBackToWindowAverage(t *testing.T) {
-	const window = 5 * 60 * 60
-	left := float64(3 * 60 * 60) // 2h elapsed
-
-	if got, ok := quotaRunwayRate(12.0/3600, true, 20, left, window, true); !ok || got != 12.0/3600 {
-		t.Fatalf("positive recent rate = %v/%v, want recent rate", got, ok)
+func TestQuotaDurationText(t *testing.T) {
+	if got := quotaDurationText(3*3600+20*60, true); got != "3⅓H" {
+		t.Fatalf("duration = %q, want 3⅓H", got)
 	}
-	wantAverage := 10.0 / 3600 // 20% / 2h
-	for _, tc := range []struct {
-		name        string
-		recent      float64
-		recentKnown bool
-	}{
-		{"flat recent interval", 0, true},
-		{"missing recent interval", 0, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := quotaRunwayRate(tc.recent, tc.recentKnown, 20, left, window, true)
-			if !ok || math.Abs(got-wantAverage) > 1e-12 {
-				t.Fatalf("fallback rate = %v/%v, want %v/true", got, ok, wantAverage)
-			}
-		})
-	}
-	if got, ok := quotaRunwayRate(0, true, 20, 0, window, false); !ok || got != 0 {
-		t.Fatalf("known idle without window clock = %v/%v, want 0/true", got, ok)
-	}
-	if _, ok := quotaRunwayRate(0, false, 20, 0, window, false); ok {
-		t.Fatal("missing recent rate and window clock should remain unknown")
+	if got := quotaDurationText(0, false); got != "—" {
+		t.Fatalf("unknown duration = %q, want dash", got)
 	}
 }
 

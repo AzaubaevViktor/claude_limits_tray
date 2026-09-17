@@ -97,28 +97,24 @@ func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, b
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
-// quotaRunwayText says how long the remaining quota would last if the latest
-// measured rate stayed constant. Hours and days are rounded to thirds to keep
-// the chart header compact while still making e.g. 3h20m visible as 3⅓H.
-func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
+// quotaDurationText formats a compact duration in thirds of an hour/day. The
+// chart uses it for both the wall-clock reset countdown and quota runway, so
+// those values remain directly comparable without pretending they mean the
+// same thing.
+func quotaDurationText(seconds float64, known bool) string {
 	if !known {
-		return "— left"
+		return "—"
 	}
-	remaining := math.Max(0, 100-usedPct)
-	if remaining <= 0 {
-		return "0H left"
+	if seconds <= 0 {
+		return "0H"
 	}
-	if ratePerSec <= 1e-9 {
-		return "∞ left"
-	}
-	seconds := remaining / ratePerSec
 	unitSecs, unit := 3600.0, "H"
 	if seconds >= 24*60*60 {
 		unitSecs, unit = 24*60*60, "D"
 	}
 	thirds := int(math.Round(seconds / unitSecs * 3))
 	if thirds < 1 {
-		return "<⅓" + unit + " left"
+		return "<⅓" + unit
 	}
 	whole, fraction := thirds/3, thirds%3
 	fractionText := ""
@@ -131,21 +127,24 @@ func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
 	if whole > 0 {
 		wholeText = fmt.Sprintf("%d", whole)
 	}
-	return wholeText + fractionText + unit + " left"
+	return wholeText + fractionText + unit
 }
 
-// quotaRunwayRate prefers a real recent burn rate. When recent activity is
-// absent or flat, it falls back to the average consumption since this quota
-// window opened, so the runway does not misleadingly become unknown/infinite
-// just because the user paused for the latest sampling interval.
-func quotaRunwayRate(recent float64, recentKnown bool, usedPct, leftSecs, windowSecs float64, windowKnown bool) (float64, bool) {
-	if recentKnown && recent > 1e-9 {
-		return recent, true
+// quotaRunwayText says how long the remaining quota would last at one explicit
+// consumption rate. Hours and days are rounded to thirds to keep chart labels
+// compact while still making e.g. 3h20m visible as 3⅓H.
+func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
+	if !known {
+		return "— left"
 	}
-	if average, ok := avgRate(usedPct, leftSecs, windowSecs, 1, windowKnown); ok {
-		return average, true
+	remaining := math.Max(0, 100-usedPct)
+	if remaining <= 0 {
+		return "0H left"
 	}
-	return recent, recentKnown
+	if ratePerSec <= 1e-9 {
+		return "∞ left"
+	}
+	return quotaDurationText(remaining/ratePerSec, true) + " left"
 }
 
 // recentRateText follows the chart's time scale: hourly for sub-day charts and

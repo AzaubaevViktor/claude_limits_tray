@@ -95,7 +95,11 @@ Click it for everything as numbers, plus your account.
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
   charts. The main needle and quota-end ETA use the rolling **last 15 minutes**
   (including how long ago the last increase was), not the average since the
-  window opened. A smaller concentric semicircular bar compares the last 5
+  window opened. Each card separately labels, in fixed distinct colours, the
+  **time to reset**, the quota runway at the **current 15-minute rate**, and the
+  runway at the **average rate since reset**; the average label also includes
+  that rate (`%/h` for 5-hour windows, `%/d` for weekly windows), including on
+  the Codex 5-hour card. A smaller concentric semicircular bar compares the last 5
   minutes with the 15-minute rate: centre means unchanged, right means
   accelerating (green → yellow → red), and left means slowing
   (green → blue → purple). If polling data goes stale, the rate expires and the

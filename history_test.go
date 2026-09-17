@@ -263,7 +263,8 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		WindowSecs: int64(fiveHourSecs), GridSecs: 900,
 		Start: now - 3600, Now: now, Known: true, Accent: claudeChartAccent,
 		UsedPct: 40, RecentRate: 10.0 / 3600, RateKnown: true,
-		RunwayRate: 10.0 / 3600, RunwayKnown: true, RateSpan: 900,
+		AverageRate: 5.0 / 3600, AverageKnown: true,
+		PeriodLeft: 7 * 3600, PeriodKnown: true, RateSpan: 900,
 		LastUseAt: now - 300, Trend: 0.5, TrendKnown: true, ResetAt: now + 7*3600,
 	}
 	right := burnChartPanel{
@@ -271,7 +272,8 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 		WindowSecs: int64(weekSecs), GridSecs: 900,
 		Start: now - int64(weekSecs), Now: now, Known: true, Accent: codexChartAccent,
 		UsedPct: 20, RecentRate: 20.0 / 21600, RateKnown: true,
-		RunwayRate: 20.0 / 21600, RunwayKnown: true, RateSpan: 900,
+		AverageRate: 10.0 / 86400, AverageKnown: true,
+		PeriodLeft: weekSecs, PeriodKnown: true, RateSpan: 900,
 		LastUseAt: now - 720, Trend: -0.5, TrendKnown: true, ResetAt: now + int64(weekSecs),
 	}
 	svg := string(renderPairedBurnChart(left, right, 9*60, 18*60))
@@ -281,11 +283,27 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if err := xml.Unmarshal([]byte(svg), &root); err != nil {
 		t.Fatalf("paired chart is not valid SVG: %v", err)
 	}
-	if !strings.Contains(svg, `width="480" height="92"`) {
+	if !strings.Contains(svg, `width="480" height="104"`) {
 		t.Fatalf("paired dimensions missing: %.100s", svg)
 	}
-	if !strings.Contains(svg, "CLAUDE 5H: 6H left") || !strings.Contains(svg, "CODEX 7D: 1D left") {
-		t.Fatal("both provider labels and current-rate runway should be embedded in their own panels")
+	if !strings.Contains(svg, "CLAUDE 5H") || !strings.Contains(svg, "CODEX 7D") {
+		t.Fatal("both provider labels should be embedded in their own panels")
+	}
+	for _, kind := range []string{"period", "current", "average"} {
+		if got := countSubstr(svg, `data-runway-kind="`+kind+`"`); got != 2 {
+			t.Fatalf("want one %s runway per provider, got %d", kind, got)
+		}
+	}
+	if !strings.Contains(svg, "RESET 7H") || !strings.Contains(svg, "CURRENT 6H") ||
+		!strings.Contains(svg, "AVG 12H · 5.0%/h") ||
+		!strings.Contains(svg, "RESET 7D") || !strings.Contains(svg, "CURRENT 1D") ||
+		!strings.Contains(svg, "AVG 8D · 10.0%/d") {
+		t.Fatal("reset, current-rate, and average-rate runway labels should remain separate")
+	}
+	if !strings.Contains(svg, svgRGB(periodRunwayColor)) ||
+		!strings.Contains(svg, svgRGB(currentRunwayColor)) ||
+		!strings.Contains(svg, svgRGB(averageRunwayColor)) {
+		t.Fatal("the three runway meanings should have distinct fixed colors")
 	}
 	if !strings.Contains(svg, svgRGB(claudeChartAccent)) || !strings.Contains(svg, svgRGB(codexChartAccent)) {
 		t.Fatal("provider panels should retain distinct accents")
@@ -325,8 +343,42 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	}
 	if !strings.Contains(svg, "10.0%/H") || !strings.Contains(svg, "80.0%/D") ||
 		!strings.Contains(svg, "MEASURED OVER 15M · LAST USE 5M AGO") ||
-		!strings.Contains(svg, "EMPTY 6H00M") {
+		!strings.Contains(svg, "CURRENT EMPTY 6H00M") {
 		t.Fatal("scale-specific speed, measurement span, and quota-end forecast should be embedded in the panel")
+	}
+}
+
+func TestMakeBurnPanelShowsCodexFiveHourAverage(t *testing.T) {
+	now := int64(1_000_000)
+	series := historyWindow{
+		samples: []histSample{{T: now - 900, V: 20}, {T: now, V: 30}},
+		secs:    int64(fiveHourSecs), present: true, used: 30, resetAt: now + 3*3600,
+	}
+	panel := makeBurnPanel("Codex", "5h", series, int64(fiveHourSecs), 900, now, codexChartAccent)
+	if !panel.RateKnown || !near(panel.RecentRate, 10.0/900, 1e-12) {
+		t.Fatalf("current rate = %v known=%v", panel.RecentRate, panel.RateKnown)
+	}
+	if !panel.AverageKnown || !near(panel.AverageRate, 15.0/3600, 1e-12) {
+		t.Fatalf("5h average = %v known=%v, want 15%%/h", panel.AverageRate, panel.AverageKnown)
+	}
+	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, "AVG 4⅔H · 15.0%/h") {
+		t.Fatalf("Codex 5h average should be explicit in chart: %s", svg)
+	}
+}
+
+func TestRunwayStatsDoNotHideIdleCurrentRate(t *testing.T) {
+	panel := burnChartPanel{
+		WindowSecs: int64(fiveHourSecs), UsedPct: 20,
+		RecentRate: 0, RateKnown: true,
+		AverageRate: 10.0 / 3600, AverageKnown: true,
+		PeriodLeft: 2 * 3600, PeriodKnown: true,
+	}
+	var b strings.Builder
+	writeRunwayStats(&b, panel, 0, 220, 10)
+	stats := b.String()
+	if !strings.Contains(stats, "CURRENT ∞") || !strings.Contains(stats, "AVG 8H · 10.0%/h") {
+		t.Fatalf("idle current and finite average must remain distinct: %s", stats)
 	}
 }
 
