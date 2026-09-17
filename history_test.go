@@ -382,6 +382,29 @@ func TestRunwayStatsDoNotHideIdleCurrentRate(t *testing.T) {
 	}
 }
 
+func TestCodexMiddleHistoryUsesFiveHoursOfWeeklyOnlyData(t *testing.T) {
+	weekly := historyWindow{
+		samples: []histSample{{T: 100, V: 10}, {T: 200, V: 11}},
+		secs:    int64(weekSecs), present: true, used: 11, resetAt: 300,
+	}
+	got, horizon, label := codexMiddleHistory(historyWindow{}, weekly)
+	if !got.present || len(got.samples) != 2 || got.secs != int64(weekSecs) {
+		t.Fatalf("middle chart should retain the real weekly series: %+v", got)
+	}
+	if horizon != int64(fiveHourSecs) || label != "5h" {
+		t.Fatalf("weekly-only middle chart = %q/%ds, want 5h/%ds", label, horizon, int64(fiveHourSecs))
+	}
+}
+
+func TestCodexMiddleHistoryPrefersRealShortWindow(t *testing.T) {
+	short := historyWindow{secs: 3 * 60 * 60, present: true, used: 20}
+	weekly := historyWindow{secs: int64(weekSecs), present: true, used: 30}
+	got, horizon, label := codexMiddleHistory(short, weekly)
+	if got.used != short.used || horizon != short.secs || label != "3h" {
+		t.Fatalf("real short window should win: got %+v, %ds, %q", got, horizon, label)
+	}
+}
+
 func TestAxisPctTextKeepsSmallScaleReadable(t *testing.T) {
 	for value, want := range map[float64]string{
 		0:   "0.00%",

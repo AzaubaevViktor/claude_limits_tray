@@ -1094,6 +1094,22 @@ func windowChartLabel(window historyWindow, fallback string) string {
 	return fmt.Sprintf("%dh", int(math.Round(float64(window.secs)/(60*60))))
 }
 
+// codexMiddleHistory keeps the middle peer chart useful when Codex exposes
+// only a weekly quota window. In that case it shows a five-hour slice of the
+// real weekly utilisation history rather than inventing a five-hour quota or
+// leaving the card empty. When a genuine short quota window exists, that window
+// and its native horizon still win.
+func codexMiddleHistory(short, long historyWindow) (historyWindow, int64, string) {
+	if short.present {
+		horizon := short.secs
+		if horizon <= 0 {
+			horizon = int64(fiveHourSecs)
+		}
+		return short, horizon, windowChartLabel(short, "5h")
+	}
+	return long, int64(fiveHourSecs), "5h"
+}
+
 func chartGrid(horizon int64, targetLines int) int64 {
 	if horizon <= 0 || targetLines <= 0 {
 		return 1
@@ -1140,14 +1156,11 @@ func (a *App) renderHistory() {
 	a.setPairedHistoryRow(a.histHour,
 		makeBurnPanel("Claude", "1h", claudeShort, 3600, 5*60, now, claudeChartAccent),
 		makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent))
-	shortHorizon := int64(fiveHourSecs)
-	if codexShort.secs > 0 {
-		shortHorizon = codexShort.secs
-	}
+	codexMiddle, codexMiddleHorizon, codexMiddleLabel := codexMiddleHistory(codexShort, codexLong)
 	a.setPairedHistoryRow(a.histSession,
 		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), chartGrid(int64(fiveHourSecs), 20), now, claudeChartAccent),
-		makeBurnPanel("Codex", windowChartLabel(codexShort, "short"), codexShort,
-			shortHorizon, chartGrid(shortHorizon, 20), now, codexChartAccent))
+		makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
+			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent))
 	longHorizon := int64(weekSecs)
 	if codexLong.secs > 0 {
 		longHorizon = codexLong.secs

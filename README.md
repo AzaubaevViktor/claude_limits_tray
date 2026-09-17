@@ -105,7 +105,8 @@ Click it for everything as numbers, plus your account.
   (green → blue → purple). If polling data goes stale, the rate expires and the
   card stops projecting an exhaustion time. A
   weekly-only Codex limit is placed in the long-window row even when the API
-  calls it `primary`.
+  calls it `primary`; its real utilisation history is also shown as a 5-hour
+  slice in the middle row instead of leaving that Codex card empty.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
