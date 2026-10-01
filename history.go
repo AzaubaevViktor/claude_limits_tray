@@ -552,9 +552,28 @@ func chartTimeText(t time.Time, horizonSecs int64) string {
 	return t.Format("15:04")
 }
 
+// panelBurnRatio is the speedometer reading: the last measured rate against the
+// pace that can still be afforded before this window's reset (remaining quota
+// over remaining time). Near a reset with quota to spare the needle relaxes even
+// under heavy use; with little quota and a long wait it climbs on modest use.
+func panelBurnRatio(panel burnChartPanel) float64 {
+	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, panel.PeriodLeft,
+		float64(panel.WindowSecs), panel.PeriodKnown)
+}
+
+// speedTicks are the fixed affordable-pace thresholds notched on the speedometer
+// arc. They coincide with the gradient's colour changes: ½x is where green
+// peaks, 1x (exactly lasting to the reset) is yellow, 1½x is where red begins.
+var speedTicks = []float64{0.5, 1, 1.5}
+
+// speedAngle maps a burn ratio to the semicircle: 0 on the left, 2x+ on the right.
+func speedAngle(ratio float64) float64 {
+	return math.Pi * (1 - clamp(ratio/2, 0, 1))
+}
+
 func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float64) {
 	const r = 15.0
-	ratio := recentBurnRatio(panel.RecentRate, float64(panel.WindowSecs))
+	ratio := panelBurnRatio(panel)
 	needle := dialGray
 	if panel.WindowSecs > 0 && panel.RateKnown {
 		needle = burnColor(ratio)
@@ -562,22 +581,55 @@ func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float
 	chartSpan := float64(panel.Now - panel.Start)
 	b.WriteString(fmt.Sprintf(
 		`<text data-speed-label="true" x="%.2f" y="%.2f" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="700" fill="%s">%s</text>`,
-		cx, cy-r-4, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(recentRateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
+		cx, cy-r-5.5, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(recentRateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
 	b.WriteString(fmt.Sprintf(
 		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="rgb(75,75,80)" stroke-width="4" stroke-linecap="round"/>`,
 		cx-r, cy, r, r, cx+r, cy))
 	b.WriteString(fmt.Sprintf(
 		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-speed)" stroke-width="2.8" stroke-linecap="round" opacity="0.95"/>`,
 		cx-r, cy, r, r, cx+r, cy))
+	writeSpeedTicks(b, cx, cy, r)
+	writeNominalPaceMark(b, panel, cx, cy, r)
 	writeBurnTrendBar(b, panel, cx, cy, r-6)
-	position := clamp(ratio/2, 0, 1)
-	angle := math.Pi * (1 - position)
+	angle := speedAngle(ratio)
 	nx := cx + math.Cos(angle)*(r-3)
 	ny := cy - math.Sin(angle)*(r-3)
 	b.WriteString(fmt.Sprintf(
-		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.5" stroke-linecap="round"/>`,
-		cx, cy, nx, ny, svgRGB(needle)))
+		`<line data-speed-needle="true" data-speed-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.5" stroke-linecap="round"/>`,
+		ratio, cx, cy, nx, ny, svgRGB(needle)))
 	b.WriteString(fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="2.1" fill="%s"/>`, cx, cy, svgRGB(needle)))
+}
+
+// writeSpeedTicks notches the speedometer arc at each speedTicks threshold, so
+// the needle can be read against "half of what I can afford", "exactly lasting
+// to reset" and "burning 1½x too fast" rather than against colour alone.
+func writeSpeedTicks(b *strings.Builder, cx, cy, r float64) {
+	in, out := r-2.6, r+2.6
+	for _, ratio := range speedTicks {
+		angle := speedAngle(ratio)
+		c, s := math.Cos(angle), math.Sin(angle)
+		b.WriteString(fmt.Sprintf(
+			`<line data-speed-tick="%.1f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(20,20,22)" stroke-width="0.7" stroke-opacity="0.9"/>`,
+			ratio, cx+in*c, cy-in*s, cx+out*c, cy-out*s))
+	}
+}
+
+// writeNominalPaceMark draws a small pointer outside the arc where the plain
+// whole-window pace (100% over the window) sits on the affordable scale. Left
+// of the 1x tick means the remaining budget allows faster-than-normal use;
+// right of it means even the normal pace is now too fast. It moves as quota and
+// time drain, while the ticks stay put.
+func writeNominalPaceMark(b *strings.Builder, panel burnChartPanel, cx, cy, r float64) {
+	ratio, ok := nominalPaceRatio(panel.UsedPct, panel.PeriodLeft, float64(panel.WindowSecs), panel.PeriodKnown)
+	if !ok {
+		return
+	}
+	angle := speedAngle(ratio)
+	c, s := math.Cos(angle), math.Sin(angle)
+	in, out := r+2.3, r+4.2
+	b.WriteString(fmt.Sprintf(
+		`<line data-pace-mark="true" data-pace-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.3" stroke-linecap="round" stroke-opacity="0.95"/>`,
+		ratio, cx+in*c, cy-in*s, cx+out*c, cy-out*s, svgRGB(panel.Accent)))
 }
 
 // writeBurnTrendBar draws a smaller concentric semicircular bar beneath the

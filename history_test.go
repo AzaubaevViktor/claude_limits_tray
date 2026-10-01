@@ -320,6 +320,21 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
+	// Claude: 60% left over 7h affords 8.57%/h; the 10%/h reading is 1.167x that.
+	// Codex: 80% left over 7d affords 11.4%/d; 80%/d is 7x — pegged past the dial.
+	if !strings.Contains(svg, `data-speed-ratio="1.167"`) || !strings.Contains(svg, `data-speed-ratio="7.000"`) {
+		t.Fatalf("needles should measure against the affordable pace to reset: %s", svg)
+	}
+	for _, tick := range []string{"0.5", "1.0", "1.5"} {
+		if got := countSubstr(svg, `data-speed-tick="`+tick+`"`); got != 2 {
+			t.Fatalf("want a %sx threshold tick per provider, got %d", tick, got)
+		}
+	}
+	// Nominal pace (100%/window) on the affordable scale: Claude 20%/h vs 8.57%/h
+	// affordable = 2.333x; Codex 14.3%/d vs 11.4%/d = 1.25x.
+	if !strings.Contains(svg, `data-pace-ratio="2.333"`) || !strings.Contains(svg, `data-pace-ratio="1.250"`) {
+		t.Fatalf("nominal pace marks should sit on the affordable scale: %s", svg)
+	}
 	if got := countSubstr(svg, `data-trend-bar="true"`); got != 2 {
 		t.Fatalf("want one semicircular trend bar per provider, got %d", got)
 	}

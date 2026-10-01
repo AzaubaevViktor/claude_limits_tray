@@ -74,14 +74,62 @@ func worstQuotaPace(paces ...quotaPace) quotaPace {
 }
 
 // recentBurnRatio compares the latest measured rate with the rate that would
-// consume exactly one quota over the whole window. It intentionally accepts no
-// elapsed-window input: the chart speedometer must describe the last measured
-// use, never the average since reset.
+// consume exactly one quota over the whole window (the nominal pace). It is the
+// fallback reference when the reset time is unknown; see affordableBurnRatio.
 func recentBurnRatio(ratePerSec, windowSecs float64) float64 {
 	if ratePerSec <= 0 || windowSecs <= 0 {
 		return 0
 	}
 	return ratePerSec * windowSecs / 100
+}
+
+// burnRatioCap bounds the ratio once the affordable pace is zero (quota already
+// empty) so callers can format it; anything past 2x is pegged on the dial anyway.
+const burnRatioCap = 99.0
+
+// affordableRate is the fastest steady consumption (quota %/s) that still
+// lasts until the reset: the quota left divided by the time left. With plenty
+// of quota and little time it is huge (burn freely); with little quota and a
+// long wait it is tiny (save hard). ok is false when there is no time left to
+// divide by.
+func affordableRate(usedPct, remainingSecs float64) (float64, bool) {
+	if remainingSecs <= 0 {
+		return 0, false
+	}
+	return math.Max(0, 100-usedPct) / remainingSecs, true
+}
+
+// affordableBurnRatio compares the latest measured rate with the pace that can
+// still be afforded until the reset: 1 means the remaining quota runs out
+// exactly at the reset, below 1 leaves spare, above 1 runs dry early. It still
+// describes only the last measured use, never the average since reset. When
+// the reset time is unknown it falls back to the whole-window nominal pace.
+func affordableBurnRatio(ratePerSec, usedPct, remainingSecs, windowSecs float64, resetKnown bool) float64 {
+	if ratePerSec <= 0 {
+		return 0
+	}
+	if !resetKnown {
+		return recentBurnRatio(ratePerSec, windowSecs)
+	}
+	afford, ok := affordableRate(usedPct, remainingSecs)
+	if !ok {
+		return recentBurnRatio(ratePerSec, windowSecs)
+	}
+	if afford <= 1e-12 {
+		return burnRatioCap
+	}
+	return math.Min(ratePerSec/afford, burnRatioCap)
+}
+
+// nominalPaceRatio places the whole-window nominal pace (100% over the window)
+// on the affordable scale: below 1 you can afford faster than normal, above 1
+// even the normal pace is too fast for what is left. ok is false when there is
+// nothing to compare against.
+func nominalPaceRatio(usedPct, remainingSecs, windowSecs float64, resetKnown bool) (float64, bool) {
+	if !resetKnown || windowSecs <= 0 {
+		return 0, false
+	}
+	return affordableBurnRatio(100/windowSecs, usedPct, remainingSecs, windowSecs, true), true
 }
 
 // projectedQuotaEnd returns when the remaining quota reaches zero if the most

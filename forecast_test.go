@@ -429,3 +429,48 @@ func countSubstr(s, sub string) int {
 	}
 	return n
 }
+
+func TestAffordableBurnRatioUsesQuotaLeftOverTimeLeft(t *testing.T) {
+	const window = 5 * 60 * 60.0
+	// 50% left with 2.5h to go: 20%/h is exactly what can be afforded.
+	if got := affordableBurnRatio(20.0/3600, 50, 2.5*3600, window, true); !near(got, 1, 1e-9) {
+		t.Fatalf("on-pace ratio = %v, want 1", got)
+	}
+	// Little quota, long wait: a modest 10%/h is twice what 20% over 4h allows.
+	if got := affordableBurnRatio(10.0/3600, 80, 4*3600, window, true); !near(got, 2, 1e-9) {
+		t.Fatalf("scarce-quota ratio = %v, want 2", got)
+	}
+	// Plenty of quota, reset in 30 minutes: 20%/h barely registers.
+	if got := affordableBurnRatio(20.0/3600, 20, 1800, window, true); !near(got, 0.125, 1e-9) {
+		t.Fatalf("near-reset ratio = %v, want 0.125", got)
+	}
+	// Unknown reset falls back to the whole-window nominal pace.
+	if got := affordableBurnRatio(20.0/3600, 50, 0, window, false); !near(got, 1, 1e-9) {
+		t.Fatalf("fallback ratio = %v, want nominal 1", got)
+	}
+	if got := affordableBurnRatio(0, 50, 3600, window, true); got != 0 {
+		t.Fatalf("idle ratio = %v, want 0", got)
+	}
+	if got := affordableBurnRatio(1.0/3600, 100, 3600, window, true); got != burnRatioCap {
+		t.Fatalf("empty-quota ratio = %v, want capped %v", got, burnRatioCap)
+	}
+}
+
+func TestNominalPaceRatioMovesWithBudget(t *testing.T) {
+	const window = 5 * 60 * 60.0
+	// Halfway through time and quota: normal pace is exactly affordable.
+	if got, ok := nominalPaceRatio(50, window/2, window, true); !ok || !near(got, 1, 1e-9) {
+		t.Fatalf("balanced nominal = %v ok=%v, want 1", got, ok)
+	}
+	// 80% left with 20% of the time left: can afford 4x the normal pace.
+	if got, ok := nominalPaceRatio(20, window/5, window, true); !ok || !near(got, 0.25, 1e-9) {
+		t.Fatalf("rich nominal = %v ok=%v, want 0.25", got, ok)
+	}
+	// 20% left with 80% of the time left: normal pace is 4x too fast.
+	if got, ok := nominalPaceRatio(80, 0.8*window, window, true); !ok || !near(got, 4, 1e-9) {
+		t.Fatalf("poor nominal = %v ok=%v, want 4", got, ok)
+	}
+	if _, ok := nominalPaceRatio(50, window/2, window, false); ok {
+		t.Fatal("unknown reset should hide the nominal mark")
+	}
+}

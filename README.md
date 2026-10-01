@@ -93,9 +93,18 @@ Click it for everything as numbers, plus your account.
   top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
-  charts. The main needle and quota-end ETA use the rolling **last 15 minutes**
-  (including how long ago the last increase was), not the average since the
-  window opened. Each card separately labels, in fixed distinct colours, the
+  charts. The needle reads the rolling **last 15 minutes** against the pace you
+  can still **afford before the reset** (quota left ÷ time left), not against a
+  flat whole-window pace: with lots of quota and a reset minutes away the
+  needle relaxes even under heavy use, while a thin remainder with a long wait
+  pushes it into red at a modest rate. Three fixed notches mark **½×**, **1×**
+  (runs out exactly at reset) and **1½×** of that affordable pace, and a small
+  accent-coloured pointer outside the arc shows where the plain whole-window
+  pace currently sits on that scale — left of 1× you can go faster than
+  normal, right of it even normal is too fast. If the reset time is unknown the
+  needle falls back to the whole-window pace. The quota-end ETA also uses the
+  15-minute rate (including how long ago the last increase was), not the
+  average since the window opened. Each card separately labels, in fixed distinct colours, the
   **time to reset**, the quota runway at the **current 15-minute rate**, and the
   runway at the **average rate since reset**; the average label also includes
   that rate (`%/h` for 5-hour windows, `%/d` for weekly windows), including on
