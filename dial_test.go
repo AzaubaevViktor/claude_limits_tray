@@ -82,8 +82,8 @@ func TestHealthColorEndpoints(t *testing.T) {
 }
 
 func TestLegendMatchesSegments(t *testing.T) {
-	if len(legendRows()) != len(segments)+3 {
-		t.Error("legend should be one row per segment + three colour rows")
+	if len(legendRows()) != len(segments)+4 {
+		t.Error("legend should be one row per segment + four colour rows")
 	}
 }
 

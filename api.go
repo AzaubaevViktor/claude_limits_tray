@@ -350,6 +350,10 @@ type Usage struct {
 	FiveHour Window        `json:"five_hour"`
 	SevenDay Window        `json:"seven_day"`
 	Limits   []ScopedLimit `json:"limits"`
+	// Credit budgets, kept raw and parsed leniently (see claudeCredits) so an
+	// unexpected shape can never fail the whole usage response.
+	ExtraUsage json.RawMessage `json:"extra_usage,omitempty"`
+	Spend      json.RawMessage `json:"spend,omitempty"`
 }
 
 type Profile struct {

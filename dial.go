@@ -27,15 +27,19 @@ type segment struct {
 }
 
 // Dial geometry (in an 18x18 coordinate space; rendered scaled up for retina).
+// The two quota/time rings sit inside a thin credits ring at the very edge
+// (creditR), which is only drawn when the provider has a credit budget.
 const (
 	dialCX, dialCY = 9.0, 9.0
 	dialSW         = 1.7
-	halfShift      = 0.9
+	halfShift      = 0.8
 	endGap         = 5.0
-	pxSize         = 44 // rendered pixel size; scaled to the menu bar by systray
+	pxSize         = 44   // rendered pixel size; scaled to the menu bar by systray
+	creditR        = 8.45 // thin outer credits ring radius
+	creditSW       = 0.6  // ... and stroke width
 )
 
-var rings = map[string]float64{"outer": 7.1, "inner": 4.3}
+var rings = map[string]float64{"outer": 6.3, "inner": 3.8}
 var sideSign = map[string]float64{"left": -1, "right": +1}
 var ringLabel = map[string]string{"outer": "Outer ring", "inner": "Inner ring"}
 var sideLabel = map[string]string{"left": "left", "right": "right"}
@@ -46,6 +50,23 @@ var dialRed = [3]int{255, 69, 58}
 var dialPurple = [3]int{191, 64, 255} // vivid headroom colour; stays distinct at menu-bar size
 var dialTrack = [3]int{150, 150, 150}
 var dialUnavail = [3]int{200, 200, 200} // session budget unreachable because the weekly cap runs out first
+var dialWhite = [3]int{255, 255, 255}
+
+// creditRing is the thin outermost ring: the credit balance projected against
+// the time to the next reset. The whole circle is the time to reset; the lit
+// arc (from the top, clockwise) is how much of it the balance covers at the
+// recent burn rate, coloured red → yellow → green as the cover grows; the
+// lighter head of that arc is the next 24 hours' spend. No ring is drawn when
+// the provider has no credit budget; a plain grey track means the budget exists
+// but cannot be projected yet (no reset time or balance); a red track means the
+// balance is exhausted.
+type creditRing struct {
+	Show      bool
+	Projected bool
+	Empty     bool
+	Cover     float64 // 0..1 share of the time to reset the balance covers
+	DaySlice  float64 // 0..1 share of the ring one day occupies (<= Cover)
+}
 
 // lerpColor blends a->b as t runs 0..1.
 func lerpColor(a, b [3]int, t float64) [3]int {
@@ -154,10 +175,10 @@ var segments = []segment{
 	{"inner", "right", "weekly", "time", false, "Weekly time"},
 }
 
-// legendRows: one row per dial segment, then three rows explaining the three
-// colour systems (outer pace, inner time, centre aggregate).
+// legendRows: one row per dial segment, then four rows explaining the colour
+// systems (outer pace, inner time, centre aggregate, credits edge ring).
 func legendRows() [][2]string {
-	rows := make([][2]string, 0, len(segments)+3)
+	rows := make([][2]string, 0, len(segments)+4)
 	for _, s := range segments {
 		label := s.label
 		if s.metric == "time" {
@@ -169,6 +190,7 @@ func legendRows() [][2]string {
 		[2]string{"Outer colour", "purple: under pace · green: on pace · yellow: short gap · red: long gap · grey: learning/capped"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "worst outer pace — grey while both windows are still learning"},
+		[2]string{"Thin edge ring", "credits: share of the time to reset the balance covers at the recent rate · lighter head = next day's spend · grey: not projectable · red: exhausted"},
 	)
 	return rows
 }
@@ -263,6 +285,8 @@ type dialRenderInput struct {
 	// source names which limits key that circle shows ("session"/"weekly").
 	full   bool
 	source string
+	// credits is the thin edge ring; zero value (Show false) draws nothing.
+	credits creditRing
 }
 
 func renderDialSVG(inputs []dialRenderInput) []byte {
@@ -353,6 +377,8 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		writeRingTicks(b, xoff, sideSign["right"], rings["inner"], wl.TimeTicks)
 	}
 
+	writeCreditRing(b, xoff+dialCX, input.credits)
+
 	if input.hasMark {
 		writeMark(b, xoff, input.markColor)
 	}
@@ -378,6 +404,7 @@ func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 
 	writeFullBlockTicks(b, ox, l.BlockPct)
 	writeFullRingTicks(b, ox, rings["inner"], l.TimeTicks)
+	writeCreditRing(b, ox, input.credits)
 
 	if input.hasMark {
 		writeMark(b, xoff, input.markColor)
@@ -386,24 +413,63 @@ func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 
 // writeCircle strokes a full ring (no fill) at radius r.
 func writeCircle(b *strings.Builder, ox, r float64, c [3]int, alpha float64) {
+	writeCircleTagged(b, "", ox, r, c, alpha, dialSW)
+}
+
+func writeCircleTagged(b *strings.Builder, tag string, ox, r float64, c [3]int, alpha, width float64) {
 	b.WriteString(fmt.Sprintf(
-		`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f"/>`,
-		ox, dialCY, r, svgRGB(c), dialSW, alpha))
+		`<circle%s cx="%.2f" cy="%.2f" r="%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f"/>`,
+		tagAttr(tag), ox, dialCY, r, svgRGB(c), width, alpha))
 }
 
 // writeSweep draws frac (0..1) of a full circle, starting at the top and going
 // clockwise. A full fraction closes into a circle, since a 360° arc collapses
 // to a point.
 func writeSweep(b *strings.Builder, ox, r, frac float64, c [3]int, alpha float64) {
+	writeSweepTagged(b, "", ox, r, frac, c, alpha, dialSW)
+}
+
+func writeSweepTagged(b *strings.Builder, tag string, ox, r, frac float64, c [3]int, alpha, width float64) {
 	frac = clamp(frac, 0, 1)
 	if frac <= 0.004 {
 		return
 	}
 	if frac >= 0.999 {
-		writeCircle(b, ox, r, c, alpha)
+		writeCircleTagged(b, tag, ox, r, c, alpha, width)
 		return
 	}
-	writeArc(b, ox, r, 0, frac*360, c, alpha, dialSW)
+	writeArcTagged(b, tag, ox, r, 0, frac*360, c, alpha, width)
+}
+
+// tagAttr renders an optional data-* marker so tests (and curious readers of
+// the SVG) can tell the credits ring parts apart.
+func tagAttr(tag string) string {
+	if tag == "" {
+		return ""
+	}
+	return ` data-credit="` + tag + `"`
+}
+
+// writeCreditRing draws the thin credits ring (see creditRing). The ring is
+// drawn butt-capped so the day slice sits flush on the cover arc.
+func writeCreditRing(b *strings.Builder, ox float64, r creditRing) {
+	if !r.Show {
+		return
+	}
+	track, alpha := dialTrack, 0.45
+	if r.Empty {
+		track, alpha = dialRed, 0.85
+	}
+	writeCircleTagged(b, "track", ox, creditR, track, alpha, creditSW)
+	if !r.Projected || r.Empty {
+		return
+	}
+	cover := healthColor(r.Cover)
+	writeSweepTagged(b, "cover", ox, creditR, r.Cover, cover, 1.0, creditSW)
+	if r.DaySlice > 0.004 {
+		writeSweepTagged(b, "day", ox, creditR, math.Min(r.DaySlice, r.Cover),
+			lerpColor(cover, dialWhite, 0.55), 1.0, creditSW)
+	}
 }
 
 // writeFullRingTicks notches a full-circle ring into n equal segments (n ticks)
@@ -494,6 +560,10 @@ func writeRingTicks(b *strings.Builder, xoff, sign, r float64, n int) {
 }
 
 func writeArc(b *strings.Builder, ox, r, startDeg, endDeg float64, c [3]int, alpha, width float64) {
+	writeArcTagged(b, "", ox, r, startDeg, endDeg, c, alpha, width)
+}
+
+func writeArcTagged(b *strings.Builder, tag string, ox, r, startDeg, endDeg float64, c [3]int, alpha, width float64) {
 	sx, sy := arcPoint(ox, r, startDeg)
 	ex, ey := arcPoint(ox, r, endDeg)
 	large := 0
@@ -504,9 +574,13 @@ func writeArc(b *strings.Builder, ox, r, startDeg, endDeg float64, c [3]int, alp
 	if endDeg > startDeg {
 		sweep = 1
 	}
+	cap := "round"
+	if tag != "" {
+		cap = "butt"
+	}
 	b.WriteString(fmt.Sprintf(
-		`<path d="M%.2f,%.2f A%.2f,%.2f 0 %d %d %.2f,%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f" stroke-linecap="round"/>`,
-		sx, sy, r, r, large, sweep, ex, ey, svgRGB(c), width, alpha))
+		`<path%s d="M%.2f,%.2f A%.2f,%.2f 0 %d %d %.2f,%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f" stroke-linecap="%s"/>`,
+		tagAttr(tag), sx, sy, r, r, large, sweep, ex, ey, svgRGB(c), width, alpha, cap))
 }
 
 func arcPoint(ox, r, deg float64) (float64, float64) {
