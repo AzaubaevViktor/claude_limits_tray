@@ -18,6 +18,7 @@ func (a *App) buildMenu() {
 	a.histHour = systray.AddMenuItem("", "")
 	a.histSession = systray.AddMenuItem("", "")
 	a.histWeek = systray.AddMenuItem("", "")
+	a.histCredits = systray.AddMenuItem("", "")
 	systray.AddSeparator()
 
 	a.claudeParent = systray.AddMenuItem("Claude · —", "")
@@ -31,6 +32,9 @@ func (a *App) buildMenu() {
 	a.weeklyReset = a.claudeParent.AddSubMenuItem("Weekly resets", "")
 	a.weeklyBlocks = a.claudeParent.AddSubMenuItem("5h blocks", "")
 	a.weeklyBlocksBasis = a.claudeParent.AddSubMenuItem("basis", "")
+	a.claudeCredits = a.claudeParent.AddSubMenuItem("💳 Credits: —", "")
+	a.claudeCreditsRunway = a.claudeParent.AddSubMenuItem("", "")
+	a.claudeCreditsRunway.Hide()
 	a.burn = a.claudeParent.AddSubMenuItem("Forecast @ current rate", "")
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
@@ -63,6 +67,8 @@ func (a *App) buildMenu() {
 	a.codexSpeedAvg = a.codexBurn.AddSubMenuItem("Speed (since reset)", "")
 	a.codexSpeedAvgLeft = a.codexBurn.AddSubMenuItem("Spare at reset (since reset)", "")
 	a.codexCredits = a.codexParent.AddSubMenuItem("Credits: —", "")
+	a.codexCreditsRunway = a.codexParent.AddSubMenuItem("", "")
+	a.codexCreditsRunway.Hide()
 	a.codexResets = a.codexParent.AddSubMenuItem("Resets available: —", "")
 	a.codexScopedParent = a.codexParent.AddSubMenuItem("Additional limits: —", "")
 	for i := 0; i < scopedPoolSize; i++ {
@@ -71,7 +77,6 @@ func (a *App) buildMenu() {
 		it.Hide()
 		a.codexScoped = append(a.codexScoped, it)
 	}
-	a.codexStatus = a.codexParent.AddSubMenuItem("Last success: —", "")
 
 	a.legendParent = systray.AddMenuItem("Legend (the dial)", "")
 	for _, row := range legendRows() {
@@ -95,8 +100,10 @@ func (a *App) buildMenu() {
 	systray.AddSeparator()
 
 	a.status = systray.AddMenuItem("Status", "")
-	a.ok = systray.AddMenuItem("Last success: —", "")
-	a.fail = systray.AddMenuItem("Last failure: —", "")
+	a.claudeOk = systray.AddMenuItem("Claude ✓ last success: —", "")
+	a.claudeFail = systray.AddMenuItem("Claude ✗ last failure: —", "")
+	a.codexOk = systray.AddMenuItem("Codex ✓ last success: —", "")
+	a.codexFail = systray.AddMenuItem("Codex ✗ last failure: —", "")
 	refresh := systray.AddMenuItem("Refresh now", "")
 	quit := systray.AddMenuItem("Quit", "")
 
@@ -104,14 +111,14 @@ func (a *App) buildMenu() {
 	// don't highlight on hover (submenu parents stay active so they open)
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
-		a.weeklyBlocks, a.weeklyBlocksBasis,
+		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
-		a.histHour, a.histSession, a.histWeek,
-		a.status, a.ok, a.fail,
+		a.histHour, a.histSession, a.histWeek, a.histCredits,
+		a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
-		a.codexCredits, a.codexResets, a.codexStatus,
+		a.codexCredits, a.codexCreditsRunway, a.codexResets,
 	} {
 		it.Disable()
 	}

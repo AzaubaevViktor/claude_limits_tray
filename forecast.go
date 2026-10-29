@@ -135,13 +135,19 @@ func nominalPaceRatio(usedPct, remainingSecs, windowSecs float64, resetKnown boo
 // projectedQuotaEnd returns when the remaining quota reaches zero if the most
 // recently measured rate holds. A zero/unknown rate has no finite projection.
 func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, bool) {
-	if usedPct >= 100 {
+	return projectedBudgetEnd(math.Max(0, 100-usedPct), ratePerSec, now)
+}
+
+// projectedBudgetEnd is projectedQuotaEnd for an explicit remaining budget in
+// any unit (quota % or credits).
+func projectedBudgetEnd(remaining, ratePerSec float64, now time.Time) (time.Time, bool) {
+	if remaining <= 0 {
 		return now, true
 	}
 	if ratePerSec <= 1e-9 {
 		return time.Time{}, false
 	}
-	secs := math.Max(0, 100-usedPct) / ratePerSec
+	secs := remaining / ratePerSec
 	return now.Add(time.Duration(secs * float64(time.Second))), true
 }
 
@@ -182,10 +188,14 @@ func quotaDurationText(seconds float64, known bool) string {
 // consumption rate. Hours and days are rounded to thirds to keep chart labels
 // compact while still making e.g. 3h20m visible as 3⅓H.
 func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
+	return budgetRunwayText(math.Max(0, 100-usedPct), ratePerSec, known)
+}
+
+// budgetRunwayText is quotaRunwayText for an explicit remaining budget.
+func budgetRunwayText(remaining, ratePerSec float64, known bool) string {
 	if !known {
 		return "— left"
 	}
-	remaining := math.Max(0, 100-usedPct)
 	if remaining <= 0 {
 		return "0H left"
 	}
@@ -226,7 +236,12 @@ func recentMeasurementText(ratePerSec, measuredSpan float64, usedAt, now time.Ti
 // lands after a known reset, the useful answer is that the current quota lasts
 // to reset rather than a misleading time in the next window.
 func quotaEndText(usedPct, ratePerSec float64, resetAt, now time.Time) string {
-	end, ok := projectedQuotaEnd(usedPct, ratePerSec, now)
+	return budgetEndText(math.Max(0, 100-usedPct), ratePerSec, resetAt, now)
+}
+
+// budgetEndText is quotaEndText for an explicit remaining budget.
+func budgetEndText(remaining, ratePerSec float64, resetAt, now time.Time) string {
+	end, ok := projectedBudgetEnd(remaining, ratePerSec, now)
 	if !ok {
 		return "empty —"
 	}

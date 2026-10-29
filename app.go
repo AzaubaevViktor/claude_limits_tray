@@ -148,10 +148,12 @@ type App struct {
 	account, claudeSwitchAuth, plan            *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	weeklyBlocks, weeklyBlocksBasis            *systray.MenuItem
+	claudeCredits, claudeCreditsRunway         *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
 	histHeader                                 *systray.MenuItem
 	histHour, histSession, histWeek            *systray.MenuItem
+	histCredits                                *systray.MenuItem
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
 	codexParent                                *systray.MenuItem
@@ -162,7 +164,8 @@ type App struct {
 	codexBurnSecondary                         *systray.MenuItem
 	codexSpeed, codexSpeedLeft                 *systray.MenuItem
 	codexSpeedAvg, codexSpeedAvgLeft           *systray.MenuItem
-	codexCredits, codexResets, codexStatus     *systray.MenuItem
+	codexCredits, codexCreditsRunway           *systray.MenuItem
+	codexResets                                *systray.MenuItem
 	codexScopedParent                          *systray.MenuItem
 	codexScoped                                []*systray.MenuItem
 	legendParent                               *systray.MenuItem
@@ -174,7 +177,8 @@ type App struct {
 	dynIconItem                                *systray.MenuItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
-	status, ok, fail                           *systray.MenuItem
+	status                                     *systray.MenuItem
+	claudeOk, claudeFail, codexOk, codexFail   *systray.MenuItem
 }
 
 func newApp() *App {
@@ -387,6 +391,7 @@ func (a *App) useCurrentClaudeLogin() {
 	a.calibByModel = map[string]*WeeklyCalibrator{}
 	delete(a.history, seriesClaudeSession)
 	delete(a.history, seriesClaudeWeekly)
+	delete(a.history, seriesClaudeCredits)
 	a.errorOn = false
 	a.cached = false
 	a.failCount = 0
@@ -423,7 +428,6 @@ func (a *App) noteCodex(r pollResult) {
 		return
 	}
 	a.lastCodexOk = time.Now()
-	a.lastCodexFailMsg = ""
 	a.codexFailCount = 0
 	a.scheduleCodexNext(basePollSecs)
 	a.codexErrorOn = false
@@ -435,6 +439,7 @@ func (a *App) noteCodex(r pollResult) {
 		a.recordHistory(seriesCodexPrimary, primary)
 		a.recordHistory(seriesCodexSecondary, secondary)
 	}
+	a.recordCodexCreditSpend(codexCredits(a.lastCodex), codexCredits(r.codexUsage))
 	a.lastCodexRaw = r.codexRaw
 	a.lastCodex = r.codexUsage
 	a.renderCodex()
@@ -458,6 +463,7 @@ func (a *App) useCurrentCodexLogin() {
 	a.cRates = &RateTracker{}
 	delete(a.history, seriesCodexPrimary)
 	delete(a.history, seriesCodexSecondary)
+	delete(a.history, seriesCodexCredits)
 	a.codexErrorOn = false
 	a.renderCodex()
 	a.renderIcon()
@@ -489,6 +495,9 @@ func (a *App) onSuccess(r pollResult) {
 	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
 	a.recordHistory(seriesClaudeSession, r.usage.FiveHour.Utilization)
 	a.recordHistory(seriesClaudeWeekly, r.usage.SevenDay.Utilization)
+	if b := claudeCredits(r.usage); b.Known && b.UsedKnown {
+		a.recordHistory(seriesClaudeCredits, b.Used)
+	}
 	for _, l := range r.usage.Limits {
 		if l.Kind != "weekly_scoped" || l.Scope == nil {
 			continue
@@ -613,6 +622,7 @@ func (a *App) apply() {
 	a.burnSession.SetTitle("Session (5h):  " + sessFc.Text())
 	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())
 
+	a.renderClaudeCredits()
 	a.renderScoped(u.Limits)
 	a.renderHistory()
 	a.status.SetTitle(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
@@ -659,13 +669,8 @@ func (a *App) renderCodex() {
 		a.codexAvgRate(primary), a.codexAvgRate(secondary)))
 	a.codexSpeedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
 		a.codexSpare(primary, codexSinceRate(primary)), a.codexSpare(secondary, codexSinceRate(secondary))))
-	a.codexCredits.SetTitle(codexCreditsText(u))
+	a.renderCodexCredits()
 	a.codexResets.SetTitle(codexResetsText(u))
-	status := "Last success: " + agoOf(a.lastCodexOk)
-	if a.lastCodexFailMsg != "" {
-		status += " · last failure: " + a.lastCodexFailMsg
-	}
-	a.codexStatus.SetTitle(status)
 	a.renderCodexScoped(u.Limits)
 	a.renderHistory()
 }
@@ -689,13 +694,8 @@ func (a *App) renderCodexEmpty() {
 	a.codexSpeedLeft.SetTitle("      ↳ spare at reset:  —")
 	a.codexSpeedAvg.SetTitle("Since reset:  —")
 	a.codexSpeedAvgLeft.SetTitle("      ↳ spare at reset:  —")
-	a.codexCredits.SetTitle("Credits: —")
+	a.renderCodexCredits()
 	a.codexResets.SetTitle("Resets available: —")
-	msg := "Last success: " + agoOf(a.lastCodexOk)
-	if a.lastCodexFailMsg != "" {
-		msg += " · last failure: " + a.lastCodexFailMsg
-	}
-	a.codexStatus.SetTitle(msg)
 	a.renderCodexScoped(nil)
 }
 
@@ -725,12 +725,13 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	if primary == nil {
 		source = "weekly"
 	}
-	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%s-%s",
+	ring := a.codexCreditRing()
+	key := fmt.Sprintf("codex-%d-%d-%d-%d-%d-%d-%d-%d-%v-%s-%s-%s",
 		iround(limitPct(limits["session"])), iround(limitPct(limits["weekly"])),
 		iround(limits["session"].TimeLeft*48), iround(limits["weekly"].TimeLeft*48),
 		limits["session"].TimeTicks, limits["weekly"].TimeTicks,
-		int(pace), int(timeFill), full, source, dialPaceKey(limits))
-	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source}, key
+		int(pace), int(timeFill), full, source, dialPaceKey(limits), ring.key())
+	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source, credits: ring}, key
 }
 
 func codexLimitForDial(w *CodexWindow) Limit {
@@ -925,6 +926,7 @@ func (a *App) renderClaudeEmpty(account string) {
 	a.speedLeft.SetTitle("      ↳ spare at reset: —")
 	a.speedAvg.SetTitle("Since reset: —")
 	a.speedAvgLeft.SetTitle("      ↳ spare at reset: —")
+	a.renderClaudeCredits()
 	a.renderScoped(nil)
 }
 
@@ -1169,6 +1171,180 @@ func (a *App) renderHistory() {
 		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent),
 		makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
 			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent))
+	claudeCreditReset, codexCreditReset := int64(0), int64(0)
+	if secs, ok := a.claudeCreditHorizon(); ok {
+		claudeCreditReset = now + int64(secs)
+	}
+	if secs, ok := a.codexCreditHorizon(); ok {
+		codexCreditReset = now + int64(secs)
+	}
+	a.setPairedHistoryRow(a.histCredits,
+		makeCreditPanel("Claude", a.history[seriesClaudeCredits], claudeCredits(a.lastUsage), claudeCreditReset, now, claudeChartAccent),
+		makeCreditPanel("Codex", a.history[seriesCodexCredits], codexCredits(a.lastCodex), codexCreditReset, now, codexChartAccent))
+}
+
+// --- credits ----------------------------------------------------------------
+
+// The credits horizon is the provider's longest quota window reset: credits
+// are only burned while a plan window is exhausted, and that reset is the
+// moment plan quota returns.
+func (a *App) claudeCreditHorizon() (float64, bool) {
+	if a.lastUsage == nil {
+		return 0, false
+	}
+	return secondsUntil(a.lastUsage.SevenDay.ResetsAt)
+}
+
+func (a *App) codexCreditHorizon() (float64, bool) {
+	return codexSecondsUntil(codexLongestWindow(a.lastCodex))
+}
+
+// codexLongestWindow is the window with the longest span (normally weekly).
+func codexLongestWindow(u *CodexUsage) *CodexWindow {
+	p, s := u.primary(), u.secondary()
+	switch {
+	case p == nil:
+		return s
+	case s == nil:
+		return p
+	case s.WindowSeconds > p.WindowSeconds:
+		return s
+	default:
+		return p
+	}
+}
+
+// creditRate is the rolling recent credit burn (display units per second) for
+// a credit series — the same 15-minute window the quota "Last 15m" uses.
+func (a *App) creditRate(series string) useRate {
+	return windowUseRate(a.history[series], time.Now().Unix(), int64(rateWindow))
+}
+
+func (a *App) claudeCreditState() (creditBudget, creditProjection, useRate) {
+	b := claudeCredits(a.lastUsage)
+	rate := a.creditRate(seriesClaudeCredits)
+	resetSecs, known := a.claudeCreditHorizon()
+	return b, projectCredits(b, rate.Rate, rate.OK, resetSecs, known), rate
+}
+
+func (a *App) codexCreditState() (creditBudget, creditProjection, useRate) {
+	b := codexCredits(a.lastCodex)
+	rate := a.creditRate(seriesCodexCredits)
+	resetSecs, known := a.codexCreditHorizon()
+	return b, projectCredits(b, rate.Rate, rate.OK, resetSecs, known), rate
+}
+
+func (a *App) claudeCreditRing() creditRing {
+	b, p, _ := a.claudeCreditState()
+	return p.ring(b.Known)
+}
+
+func (a *App) codexCreditRing() creditRing {
+	b, p, _ := a.codexCreditState()
+	return p.ring(b.Known)
+}
+
+// recordCodexCreditSpend logs Codex credit spend as a running counter of
+// balance drops, since the API reports only the balance. A top-up (balance
+// rising) adds nothing, so the series stays monotone like the quota series.
+func (a *App) recordCodexCreditSpend(prev, next creditBudget) {
+	if !next.Known || !next.LeftKnown {
+		return
+	}
+	counter := 0.0
+	if h := a.history[seriesCodexCredits]; len(h) > 0 {
+		counter = h[len(h)-1].V
+	}
+	if prev.LeftKnown {
+		counter += math.Max(0, prev.Left-next.Left)
+	}
+	a.recordHistory(seriesCodexCredits, counter)
+}
+
+func (a *App) renderClaudeCredits() {
+	if a.claudeCredits == nil {
+		return
+	}
+	b, p, rate := a.claudeCreditState()
+	line := "💳 " + creditsLine(b)
+	if !b.Known {
+		line = "💳 Credits: off (extra usage disabled)"
+	}
+	a.claudeCredits.SetTitle(line)
+	setDetailRow(a.claudeCreditsRunway, creditsRunwayLine(b, p, rate.OK, rate.Span))
+}
+
+func (a *App) renderCodexCredits() {
+	if a.codexCredits == nil {
+		return
+	}
+	b, p, rate := a.codexCreditState()
+	line := creditsLine(b)
+	if !b.Known {
+		line = "Credits: none"
+	}
+	a.codexCredits.SetTitle(line)
+	setDetailRow(a.codexCreditsRunway, creditsRunwayLine(b, p, rate.OK, rate.Span))
+}
+
+// setDetailRow shows an indented detail row with text, or hides it when there
+// is nothing to say.
+func setDetailRow(it *systray.MenuItem, text string) {
+	if it == nil {
+		return
+	}
+	if text == "" {
+		it.Hide()
+		return
+	}
+	it.SetTitle(text)
+	it.Show()
+}
+
+// makeCreditPanel builds the 5-hour credits burn card. Bars are credit spend
+// per real poll interval; the dashed line is the pace that spends the whole
+// balance exactly by the horizon reset; AVG is the rate over the last 24h.
+func makeCreditPanel(provider string, samples []histSample, b creditBudget, resetAt, now int64, accent [3]int) burnChartPanel {
+	horizon := int64(fiveHourSecs)
+	fifteen := windowUseRate(samples, now, int64(rateWindow))
+	five := windowUseRate(samples, now, 5*60)
+	day := windowUseRate(samples, now, 24*60*60)
+	trend, trendKnown := rateTrend(five, fifteen)
+	periodLeft := float64(resetAt - now)
+	periodKnown := resetAt > now
+	remaining := 0.0
+	if b.LeftKnown && !b.Unlimited {
+		remaining = b.Left
+	} else {
+		periodKnown = false // nothing finite to pace against
+	}
+	unit := b.Unit
+	if unit == "" {
+		unit = "cr"
+	}
+	return burnChartPanel{
+		Provider: provider, Label: "credits 5h",
+		Intervals:  burnIntervals(samples, now, horizon),
+		WindowSecs: 24 * 60 * 60, GridSecs: chartGrid(horizon, 20),
+		Start: now - horizon, Now: now,
+		Known:  b.Known && len(samples) >= 2,
+		Accent: accent, Unit: unit, Remaining: remaining,
+		RecentRate: fifteen.Rate, RateKnown: fifteen.OK,
+		AverageRate: day.Rate, AverageKnown: day.OK,
+		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: fifteen.Span,
+		LastUseAt: fifteen.At, Trend: trend, TrendKnown: trendKnown, ResetAt: resetAt,
+	}
+}
+
+// failText is the "last failure" status: when it happened and what it was.
+func failText(at time.Time, msg string) string {
+	if at.IsZero() {
+		return "—"
+	}
+	if msg == "" {
+		return ago(at)
+	}
+	return ago(at) + " · " + msg
 }
 
 // codexWindowSecs is w's window length in seconds, or def when unknown.
@@ -1223,10 +1399,11 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 	}
 	pace := aggregateDialPace(limits)
 	mark := quotaPaceColor(pace)
-	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d-%s", iround(sessPct), iround(weekPct),
+	ring := a.claudeCreditRing()
+	key := fmt.Sprintf("claude-%d-%d-%d-%d-%d-%d-%d-%s-%s", iround(sessPct), iround(weekPct),
 		iround(sessTf*48), iround(weekTf*48), int(pace), int(timeFill),
-		iround(weekBlock*10), dialPaceKey(limits))
-	return dialRenderInput{limits: limits, markColor: mark, hasMark: true}, key
+		iround(weekBlock*10), dialPaceKey(limits), ring.key())
+	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, credits: ring}, key
 }
 
 // sessionLeftText renders the session's "% left", noting when the weekly ("main")
@@ -1301,8 +1478,10 @@ func (a *App) showError(msg string) {
 
 func (a *App) updateStatus() {
 	a.applyIconHeight() // track the burn-driven size; shrinks back when idle
-	a.ok.SetTitle("✓ Last success: " + agoOf(a.lastOk))
-	a.fail.SetTitle("✗ Last failure: " + agoOf(a.lastFail))
+	a.claudeOk.SetTitle("Claude ✓ last success: " + agoOf(a.lastOk))
+	a.claudeFail.SetTitle("Claude ✗ last failure: " + failText(a.lastFail, a.lastFailMsg))
+	a.codexOk.SetTitle("Codex ✓ last success: " + agoOf(a.lastCodexOk))
+	a.codexFail.SetTitle("Codex ✗ last failure: " + failText(a.lastCodexFail, a.lastCodexFailMsg))
 	if a.inflight {
 		a.status.SetTitle(fmt.Sprintf("⟳ requesting %s… %.0fs", a.reqSource,
 			time.Since(a.reqStart).Seconds()))
@@ -1617,23 +1796,6 @@ func codexPlanLabel(plan string) string {
 		return "—"
 	default:
 		return plan
-	}
-}
-
-func codexCreditsText(u *CodexUsage) string {
-	if u == nil || len(u.Limits) == 0 || u.Limits[0].Credits == nil {
-		return "Credits: —"
-	}
-	c := u.Limits[0].Credits
-	switch {
-	case c.Unlimited:
-		return "Credits: unlimited"
-	case c.Balance != nil && *c.Balance != "":
-		return "Credits: " + *c.Balance
-	case c.HasCredits:
-		return "Credits: available"
-	default:
-		return "Credits: none"
 	}
 }
 

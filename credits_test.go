@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The user's example: at the current rate the credits last two days, the
@@ -13,7 +14,7 @@ import (
 func TestProjectCreditsHalfCoverQuarterDay(t *testing.T) {
 	b := creditBudget{Known: true, Left: 200, LeftKnown: true, Unit: "cr"}
 	rate := 100.0 / 86400 // 100 cr/day -> 200 cr last two days
-	p := projectCredits(b, rate, 4*86400, true)
+	p := projectCredits(b, rate, true, 4*86400, true)
 	if !p.Projected || p.Empty {
 		t.Fatalf("should be projectable: %+v", p)
 	}
@@ -28,12 +29,12 @@ func TestProjectCreditsHalfCoverQuarterDay(t *testing.T) {
 func TestProjectCreditsCoverCapsAtFullAndDaySliceWithinCover(t *testing.T) {
 	b := creditBudget{Known: true, Left: 1000, LeftKnown: true}
 	// 10 cr/day over 4 days needs 40 of 1000 -> lasts; day slice = 1/4.
-	p := projectCredits(b, 10.0/86400, 4*86400, true)
+	p := projectCredits(b, 10.0/86400, true, 4*86400, true)
 	if p.Cover != 1 || !near(p.DaySlice, 0.25, 1e-9) {
 		t.Fatalf("lasting budget: cover %v day %v", p.Cover, p.DaySlice)
 	}
 	// Runway shorter than a day: the day slice is clipped to the cover.
-	p = projectCredits(creditBudget{Known: true, Left: 10, LeftKnown: true}, 100.0/86400, 4*86400, true)
+	p = projectCredits(creditBudget{Known: true, Left: 10, LeftKnown: true}, 100.0/86400, true, 4*86400, true)
 	if !near(p.Cover, 0.1/4, 1e-9) || !near(p.DaySlice, p.Cover, 1e-12) {
 		t.Fatalf("short runway: cover %v day %v", p.Cover, p.DaySlice)
 	}
@@ -41,22 +42,25 @@ func TestProjectCreditsCoverCapsAtFullAndDaySliceWithinCover(t *testing.T) {
 
 func TestProjectCreditsIdleEmptyAndUnknownReset(t *testing.T) {
 	b := creditBudget{Known: true, Left: 50, LeftKnown: true}
-	idle := projectCredits(b, 0, 3*86400, true)
+	idle := projectCredits(b, 0, true, 3*86400, true)
 	if !idle.Projected || idle.Cover != 1 || idle.DaySlice != 0 || !math.IsInf(idle.Runway, 1) {
 		t.Fatalf("idle budget should cover everything with no day slice: %+v", idle)
 	}
-	empty := projectCredits(creditBudget{Known: true, Left: 0, LeftKnown: true}, 1, 3*86400, true)
+	empty := projectCredits(creditBudget{Known: true, Left: 0, LeftKnown: true}, 1, true, 3*86400, true)
 	if !empty.Projected || !empty.Empty || empty.Cover != 0 {
 		t.Fatalf("exhausted budget: %+v", empty)
 	}
-	noReset := projectCredits(b, 1, 0, false)
+	noReset := projectCredits(b, 1, true, 0, false)
 	if noReset.Projected || !near(noReset.Runway, 50, 1e-9) {
 		t.Fatalf("unknown reset must not project a cover but keeps the runway: %+v", noReset)
 	}
-	if p := projectCredits(creditBudget{}, 1, 3*86400, true); p.Projected {
+	if p := projectCredits(creditBudget{}, 1, true, 3*86400, true); p.Projected {
 		t.Fatalf("no budget -> nothing to project: %+v", p)
 	}
-	unlimited := projectCredits(creditBudget{Known: true, Unlimited: true}, 1, 0, false)
+	if p := projectCredits(b, 0, false, 3*86400, true); p.Projected {
+		t.Fatalf("unmeasured rate must not read as idle: %+v", p)
+	}
+	unlimited := projectCredits(creditBudget{Known: true, Unlimited: true}, 1, true, 0, false)
 	if !unlimited.Projected || unlimited.Cover != 1 {
 		t.Fatalf("unlimited always covers: %+v", unlimited)
 	}
@@ -177,16 +181,16 @@ func TestFmtAmount(t *testing.T) {
 
 func TestCreditsRunwayLine(t *testing.T) {
 	b := creditBudget{Known: true, Left: 200, LeftKnown: true, Unit: "cr"}
-	p := projectCredits(b, 100.0/86400, 4*86400, true)
+	p := projectCredits(b, 100.0/86400, true, 4*86400, true)
 	got := creditsRunwayLine(b, p, true, 900)
 	if !strings.Contains(got, "lasts 2d 0h of 4d 0h to reset (50%)") || !strings.Contains(got, "≈ 100.0 cr/day (last 15m)") {
 		t.Fatalf("runway line = %q", got)
 	}
-	idle := creditsRunwayLine(b, projectCredits(b, 0, 4*86400, true), true, 900)
+	idle := creditsRunwayLine(b, projectCredits(b, 0, true, 4*86400, true), true, 900)
 	if !strings.Contains(idle, "idle · lasts to reset (4d 0h)") {
 		t.Fatalf("idle line = %q", idle)
 	}
-	empty := creditsRunwayLine(creditBudget{Known: true, LeftKnown: true}, projectCredits(creditBudget{Known: true, LeftKnown: true}, 1, 3600, true), true, 900)
+	empty := creditsRunwayLine(creditBudget{Known: true, LeftKnown: true}, projectCredits(creditBudget{Known: true, LeftKnown: true}, 1, true, 3600, true), true, 900)
 	if !strings.Contains(empty, "exhausted") {
 		t.Fatalf("empty line = %q", empty)
 	}
@@ -227,5 +231,127 @@ func TestCreditRingRendering(t *testing.T) {
 		source: "weekly", full: true, credits: creditRing{Show: true, Projected: true, Cover: 1}}}))
 	if !strings.Contains(full, `data-credit="cover"`) {
 		t.Fatal("full-circle mode should draw the credit ring")
+	}
+}
+
+func TestRecordCodexCreditSpendCountsBalanceDrops(t *testing.T) {
+	a := &App{history: map[string][]histSample{}}
+	bal := func(v float64) creditBudget { return creditBudget{Known: true, Left: v, LeftKnown: true, Unit: "cr"} }
+	a.recordCodexCreditSpend(creditBudget{}, bal(1000)) // first sighting: counter starts at 0
+	time.Sleep(1100 * time.Millisecond)                 // samples need distinct unix seconds
+	a.recordCodexCreditSpend(bal(1000), bal(940))       // spent 60
+	time.Sleep(1100 * time.Millisecond)
+	a.recordCodexCreditSpend(bal(940), bal(1940)) // top-up: nothing spent
+	h := a.history[seriesCodexCredits]
+	if len(h) != 3 || h[0].V != 0 || !near(h[1].V, 60, 1e-9) || !near(h[2].V, 60, 1e-9) {
+		t.Fatalf("spend counter = %+v", h)
+	}
+	a.recordCodexCreditSpend(bal(1940), creditBudget{}) // no budget -> nothing logged
+	if len(a.history[seriesCodexCredits]) != 3 {
+		t.Fatal("a missing budget must not add samples")
+	}
+}
+
+func TestCodexLongestWindow(t *testing.T) {
+	short := &CodexWindow{WindowSeconds: int64(fiveHourSecs), ResetsAt: 10}
+	long := &CodexWindow{WindowSeconds: int64(weekSecs), ResetsAt: 20}
+	u := &CodexUsage{Limits: []CodexLimit{{Primary: short, Secondary: long}}}
+	if got := codexLongestWindow(u); got != long {
+		t.Fatalf("longest = %+v, want weekly", got)
+	}
+	u.Limits[0].Primary, u.Limits[0].Secondary = long, nil
+	if got := codexLongestWindow(u); got != long {
+		t.Fatalf("sole window = %+v", got)
+	}
+	if codexLongestWindow(nil) != nil {
+		t.Fatal("nil usage -> nil window")
+	}
+}
+
+func TestCodexDialCarriesCreditRing(t *testing.T) {
+	now := time.Now().Unix()
+	a := &App{
+		history: map[string][]histSample{seriesCodexCredits: {{T: now - 600, V: 0}, {T: now, V: 100}}},
+		lastCodex: &CodexUsage{Limits: []CodexLimit{{
+			Primary: &CodexWindow{UsedPercent: 100, WindowSeconds: int64(weekSecs), ResetsAt: now + 4*86400},
+			Credits: &CodexCredits{HasCredits: true, Balance: strPtr("28800")}, // 100 cr/10 min -> 14400/day -> 2 days
+		}}},
+	}
+	in, key := a.codexDial()
+	if !in.credits.Show || !in.credits.Projected || !near(in.credits.Cover, 0.5, 0.01) || !near(in.credits.DaySlice, 0.25, 0.01) {
+		t.Fatalf("codex ring = %+v", in.credits)
+	}
+	if !strings.Contains(key, in.credits.key()) {
+		t.Fatalf("icon key should include the ring: %s", key)
+	}
+	// No credits bought: no ring, icon unchanged.
+	a.lastCodex.Limits[0].Credits = &CodexCredits{}
+	if in, _ := a.codexDial(); in.credits.Show {
+		t.Fatal("no budget -> no ring")
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+func TestClaudeDialRingFollowsExtraUsage(t *testing.T) {
+	now := time.Now()
+	u := parseUsage([]byte(`{"five_hour":{"utilization":10},"seven_day":{"utilization":20,"resets_at":"` +
+		now.Add(2*24*time.Hour).Format(time.RFC3339) + `"},
+		"extra_usage":{"is_enabled":true,"monthly_limit":10000,"used_credits":2000,"decimal_places":2}}`))
+	a := &App{calib: &WeeklyCalibrator{}, lastUsage: u,
+		history: map[string][]histSample{seriesClaudeCredits: {{T: now.Unix() - 900, V: 19}, {T: now.Unix(), V: 20}}}}
+	in, _ := a.claudeDial()
+	// $80 left at $1/15min = $96/day -> 20h runway of 48h -> cover 0.417, day 0.417 (clipped).
+	if !in.credits.Show || !in.credits.Projected || !near(in.credits.Cover, 20.0/48, 0.01) {
+		t.Fatalf("claude ring = %+v", in.credits)
+	}
+	if !near(in.credits.DaySlice, in.credits.Cover, 1e-9) {
+		t.Fatalf("day slice should clip to the cover: %+v", in.credits)
+	}
+	a.lastUsage = parseUsage([]byte(`{"five_hour":{},"seven_day":{},"extra_usage":{"is_enabled":false}}`))
+	if in, _ := a.claudeDial(); in.credits.Show {
+		t.Fatal("disabled extra usage -> no ring")
+	}
+}
+
+func TestMakeCreditPanelUsesCreditUnits(t *testing.T) {
+	now := int64(1_000_000)
+	samples := []histSample{{T: now - 1800, V: 0}, {T: now - 900, V: 50}, {T: now, V: 100}}
+	b := creditBudget{Known: true, Left: 4800, LeftKnown: true, Unit: "cr"}
+	panel := makeCreditPanel("Codex", samples, b, now+86400, now, codexChartAccent)
+	if panel.Unit != "cr" || panel.Remaining != 4800 || !panel.Known || !panel.RateKnown {
+		t.Fatalf("panel = %+v", panel)
+	}
+	// Affordable pace: 4800 cr over a day = 200 cr/h; the 200 cr/h reading is exactly 1x.
+	if !near(panel.sustainableRate(), 4800.0/86400, 1e-12) || !near(panelBurnRatio(panel), 1, 1e-9) {
+		t.Fatalf("sustainable %v ratio %v", panel.sustainableRate(), panelBurnRatio(panel))
+	}
+	svg := string(renderPairedBurnChart(panel, makeCreditPanel("Claude", nil, creditBudget{}, 0, now, claudeChartAccent), 9*60, 18*60))
+	for _, want := range []string{"CODEX CREDITS 5H", "SPENT 100.0 cr", "200.0 CR/H", "CURRENT 1D", "RESET 1D", "CLAUDE CREDITS 5H", "SPENT —"} {
+		if !strings.Contains(svg, want) {
+			t.Fatalf("credits chart should contain %q:\n%s", want, svg)
+		}
+	}
+	if strings.Contains(svg, `data-pace-mark="true"`) {
+		t.Fatal("credit cards have no nominal whole-window pace mark")
+	}
+	if got := countSubstr(svg, `data-burn-bar="true"`); got != 2 {
+		t.Fatalf("want one bar per interval, got %d", got)
+	}
+	if !strings.Contains(svg, "/h</text>") || strings.Contains(svg, "%/h") {
+		t.Fatal("axis labels should be in credits per hour, not percent")
+	}
+}
+
+func TestFailText(t *testing.T) {
+	if got := failText(time.Time{}, "boom"); got != "—" {
+		t.Fatalf("never failed = %q", got)
+	}
+	got := failText(time.Now().Add(-90*time.Second), "Rate-limited (429)")
+	if !strings.HasPrefix(got, "1m 30s ago · Rate-limited (429)") {
+		t.Fatalf("failure text = %q", got)
+	}
+	if got := failText(time.Now(), ""); !strings.HasSuffix(got, "ago") {
+		t.Fatalf("message-less failure = %q", got)
 	}
 }

@@ -22,11 +22,16 @@ type histSample struct {
 
 // Series names for the persisted history map. Claude tracks its 5-hour session
 // and 7-day weekly counters; Codex its primary and secondary windows.
+// The credit series hold cumulative spend in display units: Claude's monthly
+// used-credits figure as reported, and for Codex a running counter of balance
+// drops (the API only reports the balance, see recordCodexCreditSpend).
 const (
 	seriesClaudeSession  = "claude_session"
 	seriesClaudeWeekly   = "claude_weekly"
 	seriesCodexPrimary   = "codex_primary"
 	seriesCodexSecondary = "codex_secondary"
+	seriesClaudeCredits  = "claude_credits"
+	seriesCodexCredits   = "codex_credits"
 )
 
 const (
@@ -339,6 +344,60 @@ type burnChartPanel struct {
 	Trend        float64
 	TrendKnown   bool
 	ResetAt      int64
+	// Unit switches the card from quota percent ("" — the default, where 100 is
+	// the whole window) to credits in that unit (see fmtAmount); Remaining is
+	// then the balance left, and the dashed sustainable pace becomes the pace
+	// that spends exactly that balance by the reset.
+	Unit      string
+	Remaining float64
+}
+
+// remaining is the budget left in the panel's own units.
+func (p burnChartPanel) remaining() float64 {
+	if p.Unit == "" {
+		return math.Max(0, 100-p.UsedPct)
+	}
+	return math.Max(0, p.Remaining)
+}
+
+// amount formats a value (a rate numerator or a total) in the panel's units.
+func (p burnChartPanel) amount(v float64) string {
+	if p.Unit == "" {
+		return axisPctText(v)
+	}
+	return fmtAmount(v, p.Unit)
+}
+
+// rateText renders a per-second rate per hour or per day following the chart's
+// time scale, in the panel's units.
+func (p burnChartPanel) rateText(ratePerSec, chartSpanSecs float64, known bool) string {
+	if p.Unit == "" {
+		return recentRateText(ratePerSec, chartSpanSecs, known)
+	}
+	if !known {
+		return "—"
+	}
+	unitSecs, unit := 3600.0, "h"
+	if chartSpanSecs >= 24*60*60 {
+		unitSecs, unit = 24*60*60, "d"
+	}
+	return fmtAmount(ratePerSec*unitSecs, p.Unit) + "/" + unit
+}
+
+// sustainableRate is the dashed reference pace: for quota cards the nominal
+// whole-window pace; for credit cards the pace that spends the remaining
+// balance exactly by the reset (0 when the reset is unknown).
+func (p burnChartPanel) sustainableRate() float64 {
+	if p.Unit == "" {
+		if p.WindowSecs > 0 {
+			return 100 / float64(p.WindowSecs)
+		}
+		return 0
+	}
+	if p.PeriodKnown && p.PeriodLeft > 0 {
+		return p.remaining() / p.PeriodLeft
+	}
+	return 0
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
@@ -370,10 +429,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	plotX, plotW := x+pad, width-2*pad-axisGutter
 	axisX := plotX + plotW + 4
 	accent := svgRGB(panel.Accent)
-	sustainableRate := 0.0
-	if panel.WindowSecs > 0 {
-		sustainableRate = 100 / float64(panel.WindowSecs)
-	}
+	sustainableRate := panel.sustainableRate()
 	horizon := panel.Now - panel.Start
 	if horizon <= 0 {
 		horizon = 1
@@ -383,12 +439,19 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		unitSecs = 24 * 60 * 60
 	}
 	maxRatio := 1.35
+	axisMax := 0.0
 	if sustainableRate > 0 {
 		for _, interval := range panel.Intervals {
 			maxRatio = math.Max(maxRatio, interval.Rate/sustainableRate*1.08)
 		}
+		axisMax = sustainableRate * unitSecs * maxRatio
+	} else if panel.Unit != "" {
+		// A credit card without a reset has no reference pace: scale the axis to
+		// the bars themselves so the spend is still visible.
+		for _, interval := range panel.Intervals {
+			axisMax = math.Max(axisMax, interval.Rate*unitSecs*1.08)
+		}
 	}
-	axisMax := sustainableRate * unitSecs * maxRatio
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="102.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
 		x+0.35, panelTop, width-0.7, accent))
@@ -397,8 +460,10 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		plotX, accent, svgTextEscape.Replace(title)))
 	total := "SPENT —"
-	if panel.Known {
+	if panel.Known && panel.Unit == "" {
 		total = fmt.Sprintf("SPENT %.1f%%", totalSpent(panel.Intervals))
+	} else if panel.Known {
+		total = "SPENT " + fmtAmount(totalSpent(panel.Intervals), panel.Unit)
 	}
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
@@ -441,7 +506,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			plotX, y, plotX+plotW, y))
 		b.WriteString(fmt.Sprintf(
 			`<text data-axis-label="true" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
-			axisX, y+2, axisRateText(axisMax*fraction, horizon)))
+			axisX, y+2, panel.amount(axisMax*fraction)+"/"+axisUnit(horizon)))
 	}
 	usableH := plotBase - plotTop - 2
 	if sustainableRate > 0 {
@@ -450,10 +515,13 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.55" stroke-opacity="0.72" stroke-dasharray="2 1.5"/>`,
 			plotX, y, plotX+plotW, y, accent))
 	}
-	if panel.Known && sustainableRate > 0 {
+	if panel.Known && axisMax > 0 {
 		for _, interval := range panel.Intervals {
-			ratio := math.Max(0, interval.Rate/sustainableRate)
-			h := math.Max(1, usableH*ratio/maxRatio)
+			ratio := 0.0
+			if sustainableRate > 0 {
+				ratio = math.Max(0, interval.Rate/sustainableRate)
+			}
+			h := math.Max(1, usableH*interval.Rate*unitSecs/axisMax)
 			x0, x1 := xOf(interval.Start), xOf(interval.End)
 			barW := math.Max(0.55, x1-x0-0.35)
 			barX := clamp((x0+x1-barW)/2, plotX, plotX+plotW-barW)
@@ -494,7 +562,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		if panel.RateKnown && panel.RecentRate <= 1e-9 {
 			endText = "current lasts to reset"
 		} else if panel.RateKnown {
-			endText = "current " + quotaEndText(panel.UsedPct, panel.RecentRate, resetAt, time.Unix(panel.Now, 0))
+			endText = "current " + budgetEndText(panel.remaining(), panel.RecentRate, resetAt, time.Unix(panel.Now, 0))
 		}
 	}
 	b.WriteString(fmt.Sprintf(
@@ -507,9 +575,9 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 }
 
 func writeRunwayStats(b *strings.Builder, panel burnChartPanel, left, right, y float64) {
-	current := quotaRunwayText(panel.UsedPct, panel.RecentRate, panel.RateKnown)
-	average := quotaRunwayText(panel.UsedPct, panel.AverageRate, panel.AverageKnown)
-	averageRate := recentRateText(panel.AverageRate, float64(panel.WindowSecs), panel.AverageKnown)
+	current := budgetRunwayText(panel.remaining(), panel.RecentRate, panel.RateKnown)
+	average := budgetRunwayText(panel.remaining(), panel.AverageRate, panel.AverageKnown)
+	averageRate := panel.rateText(panel.AverageRate, float64(panel.WindowSecs), panel.AverageKnown)
 	stats := []struct {
 		kind, anchor, text string
 		x                  float64
@@ -537,12 +605,15 @@ func axisPctText(v float64) string {
 	}
 }
 
-func axisRateText(v float64, horizonSecs int64) string {
-	unit := "h"
+func axisUnit(horizonSecs int64) string {
 	if horizonSecs >= 24*60*60 {
-		unit = "d"
+		return "d"
 	}
-	return axisPctText(v) + "/" + unit
+	return "h"
+}
+
+func axisRateText(v float64, horizonSecs int64) string {
+	return axisPctText(v) + "/" + axisUnit(horizonSecs)
 }
 
 func chartTimeText(t time.Time, horizonSecs int64) string {
@@ -557,6 +628,16 @@ func chartTimeText(t time.Time, horizonSecs int64) string {
 // over remaining time). Near a reset with quota to spare the needle relaxes even
 // under heavy use; with little quota and a long wait it climbs on modest use.
 func panelBurnRatio(panel burnChartPanel) float64 {
+	if panel.Unit != "" {
+		afford := panel.sustainableRate()
+		switch {
+		case panel.RecentRate <= 0:
+			return 0
+		case afford <= 1e-12:
+			return burnRatioCap
+		}
+		return math.Min(panel.RecentRate/afford, burnRatioCap)
+	}
 	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, panel.PeriodLeft,
 		float64(panel.WindowSecs), panel.PeriodKnown)
 }
@@ -581,7 +662,7 @@ func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float
 	chartSpan := float64(panel.Now - panel.Start)
 	b.WriteString(fmt.Sprintf(
 		`<text data-speed-label="true" x="%.2f" y="%.2f" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="700" fill="%s">%s</text>`,
-		cx, cy-r-5.5, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(recentRateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
+		cx, cy-r-5.5, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(panel.rateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
 	b.WriteString(fmt.Sprintf(
 		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="rgb(75,75,80)" stroke-width="4" stroke-linecap="round"/>`,
 		cx-r, cy, r, r, cx+r, cy))
@@ -620,6 +701,9 @@ func writeSpeedTicks(b *strings.Builder, cx, cy, r float64) {
 // right of it means even the normal pace is now too fast. It moves as quota and
 // time drain, while the ticks stay put.
 func writeNominalPaceMark(b *strings.Builder, panel burnChartPanel, cx, cy, r float64) {
+	if panel.Unit != "" {
+		return // credits have no nominal whole-window pace
+	}
 	ratio, ok := nominalPaceRatio(panel.UsedPct, panel.PeriodLeft, float64(panel.WindowSecs), panel.PeriodKnown)
 	if !ok {
 		return

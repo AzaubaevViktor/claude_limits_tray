@@ -56,8 +56,9 @@ type creditProjection struct {
 }
 
 // projectCredits projects a credit budget against the time to the horizon reset
-// at ratePerSec (display units per second).
-func projectCredits(b creditBudget, ratePerSec, resetSecs float64, resetKnown bool) creditProjection {
+// at ratePerSec (display units per second); rateKnown is false while no rate
+// has been measured yet.
+func projectCredits(b creditBudget, ratePerSec float64, rateKnown bool, resetSecs float64, resetKnown bool) creditProjection {
 	p := creditProjection{
 		Runway:     math.Inf(1),
 		ResetSecs:  resetSecs,
@@ -81,7 +82,9 @@ func projectCredits(b creditBudget, ratePerSec, resetSecs float64, resetKnown bo
 	if ratePerSec > 1e-12 {
 		p.Runway = b.Left / ratePerSec
 	}
-	if !p.ResetKnown {
+	// An unmeasured rate (one sample, or stale polls) is not "idle": leave the
+	// ring as a plain track rather than claiming the balance lasts.
+	if !p.ResetKnown || !rateKnown {
 		return p
 	}
 	p.Projected = true
@@ -92,6 +95,12 @@ func projectCredits(b creditBudget, ratePerSec, resetSecs float64, resetKnown bo
 	p.Cover = clamp(p.Runway/resetSecs, 0, 1)
 	p.DaySlice = math.Min(86400/resetSecs, p.Cover)
 	return p
+}
+
+// key folds the ring into an icon cache key at the drawn resolution.
+func (r creditRing) key() string {
+	return fmt.Sprintf("c%t%t%t-%d-%d", r.Show, r.Projected, r.Empty,
+		iround(r.Cover*48), iround(r.DaySlice*48))
 }
 
 // ring converts a projection into the dial's thin outer ring. show is whether
