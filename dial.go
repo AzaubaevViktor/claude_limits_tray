@@ -468,7 +468,7 @@ func writeCreditRing(b *strings.Builder, ox float64, r creditRing) {
 	writeSweepTagged(b, "cover", ox, creditR, r.Cover, cover, 1.0, creditSW)
 	if r.DaySlice > 0.004 {
 		writeSweepTagged(b, "day", ox, creditR, math.Min(r.DaySlice, r.Cover),
-			lerpColor(cover, dialWhite, 0.55), 1.0, creditSW)
+			lerpColor(cover, dialWhite, 0.45), 1.0, creditSW)
 	}
 }
 

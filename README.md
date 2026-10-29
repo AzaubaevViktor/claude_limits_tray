@@ -55,6 +55,16 @@ dial has two concentric rings, split left/right:
 - **Single-limit mode** — when only **one** window is in play (e.g. Codex now
   hands out only a weekly limit) the dial auto-collapses to **one big full
   circle** for that window instead of a half-empty pair of semicircles.
+- **Thin edge ring (credits)** — drawn only when the provider has a credit
+  budget (Claude *extra usage* / usage credits, Codex purchased credits). The
+  whole circle is the **time until the longest window resets**; the lit arc,
+  from the top clockwise, is **how much of that time the balance covers at the
+  recent (15‑minute) burn rate** — e.g. credits that last two days with four
+  days to the reset light half the ring. It reddens as the cover shrinks
+  (green = lasts to reset). The **lighter head** of the arc is **the next 24
+  hours' spend** at that rate. A plain grey ring means the budget exists but
+  can't be projected yet (no rate measured or no reset time); a red ring means
+  the balance is exhausted. No budget → no ring, the icon is as before.
 - On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.
 
@@ -116,6 +126,17 @@ Click it for everything as numbers, plus your account.
   weekly-only Codex limit is placed in the long-window row even when the API
   calls it `primary`; its real utilisation history is also shown as a 5-hour
   slice in the middle row instead of leaving that Codex card empty.
+- **Credits runway** for both providers — a `Credits:` row with the balance
+  (and the monthly cap / % used where Claude reports one) plus an indented
+  detail row: how long the balance lasts at the recent rate **against the time
+  to reset** and what one more day costs (`lasts 2d 3h of 4d 2h to reset (52%)
+  · ≈ $6.10/day`). Claude's figure comes from `spend` (usage credits) when
+  enabled, otherwise from `extra_usage`; extra-usage amounts are read as minor
+  units scaled by `decimal_places`. Codex credits are tracked as a running
+  counter of balance drops, since its API only reports the balance.
+- A fourth **Credits 5h** chart row (Claude left, Codex right) in credit units:
+  bars are credits spent per poll interval, the dashed line is the pace that
+  spends the whole balance exactly by the reset, `AVG` is the last 24 h.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, and per-model/additional limits (Codex
@@ -124,6 +145,8 @@ Click it for everything as numbers, plus your account.
   reload `Claude Code-credentials` immediately after switching accounts.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
+  The bottom of the menu lists **separate last success / last failure** rows
+  for Claude and for Codex, the failure row carrying the error it hit.
 - **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
   each `429` grows the interval (×1.5, up to 10 min) and a run of clean polls
   shrinks it back — so it converges on a rate the usage endpoint accepts instead
@@ -201,6 +224,9 @@ A single Go program (SVG icon rendering, menu bar via a repo-local patched
 - `helpers.go` — pure time/format/backoff functions (no GUI deps).
 - `api.go` — `Client` (keychain token + curl) and `APIError`.
 - `forecast.go` — `Forecast` (burn projection + gradient) and `RateTracker`.
+- `credits.go` — credit budgets (Claude extra usage / spend, Codex balance),
+  their runway projection, and the credits menu text.
+- `history.go` — per-series utilisation log and the burn-history charts.
 - `dial.go` — `renderDial`, the SVG icon drawn from the `SEGMENTS` table.
 - `app.go` — `App`: polling loop, state, and rendering.
 - `menu.go` — menu-bar layout and the working-hours pickers.
