@@ -529,7 +529,7 @@ func (a *App) noteFail(err error) {
 	}
 	// A 429 means we're polling too fast — grow the steady-state interval so we
 	// keep the slower pace after recovery instead of snapping back to the floor.
-	if status == 429 {
+	if status == 429 && !isRefreshError(err) {
 		a.pollInterval = math.Min(maxPollSecs, a.pollInterval*pollGrowth)
 	}
 	backoff := backoffSeconds(a.failCount, status, retryAfter, resetAt, rand.Float64()*0.25)
@@ -546,12 +546,21 @@ func (a *App) noteFail(err error) {
 	a.saveState(false)
 }
 
+// isRefreshError reports a failure of the token-refresh endpoint rather than
+// the usage API, so its 429 doesn't slow down usage polling.
+func isRefreshError(err error) bool {
+	ae, ok := err.(*APIError)
+	return ok && ae.Refresh
+}
+
 func describe(err error) string {
 	ae, ok := err.(*APIError)
 	if !ok {
 		return err.Error()
 	}
 	switch {
+	case ae.Refresh:
+		return ae.Msg
 	case ae.Status == 429:
 		return "Rate-limited (429)"
 	case ae.Status == 401 || ae.Status == 403:

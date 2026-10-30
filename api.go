@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,6 +25,7 @@ type APIError struct {
 	Status     int    // 0 for transport/credential errors
 	RetryAfter int    // seconds, from the retry-after header
 	ResetAt    string // ISO/epoch, from a ratelimit-reset header
+	Refresh    bool   // came from the token-refresh endpoint, not the usage API
 }
 
 func (e *APIError) Error() string { return e.Msg }
@@ -29,10 +33,10 @@ func (e *APIError) Error() string { return e.Msg }
 const (
 	apiBase           = "https://api.anthropic.com"
 	keychain          = "Claude Code-credentials"
-	userAgent         = "claude-cli/2.1.187 (external, cli)"
+	userAgent         = "claude-cli/2.1.263 (external, cli)"
 	oauthBeta         = "oauth-2025-04-20"
 	claudeOAuthClient = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeTokenURL    = "https://console.anthropic.com/v1/oauth/token"
+	claudeTokenURL    = "https://platform.claude.com/v1/oauth/token"
 	codexBase         = "https://chatgpt.com/backend-api"
 	codexAuthService  = "Codex Auth"
 	codexUserAgent    = "codex-cli"
@@ -50,13 +54,43 @@ type Client struct {
 	refreshToken string
 	refreshDirty bool
 	kc           keychainGate // stops a refused keychain read from re-prompting
+	// A failed self-refresh is not retried within claudeRefreshMinGap, so a
+	// rate-limited token endpoint is never hit twice in one poll.
+	lastRefreshTry time.Time
+	lastRefreshErr error
+	// test hooks: post overrides the token-endpoint call, write the keychain
+	// update (nil = real curl / security).
+	post  func(url string, body []byte) (int, []byte, error)
+	write func(stdin string) error
+}
+
+const claudeRefreshMinGap = 2 * time.Minute
+
+// claudeDefaultScopes mirrors Claude Code's refresh request when the keychain
+// item carries no scope list.
+var claudeDefaultScopes = []string{"user:profile", "user:inference",
+	"user:sessions:claude_code", "user:mcp_servers", "user:file_upload"}
+
+// claudeKeychainCreds is the parsed `Claude Code-credentials` item. The raw
+// objects are kept so a refreshed token pair can be written back with every
+// other field (scopes, subscriptionType, rateLimitTier, …) untouched.
+type claudeKeychainCreds struct {
+	top     map[string]json.RawMessage
+	oauth   map[string]json.RawMessage
+	nested  bool // tokens live under "claudeAiOauth"
+	access  string
+	refresh string
+	exp     time.Time
+	scopes  []string
 }
 
 // token returns a usable access token. The keychain is the source of truth —
 // Claude Code keeps it fresh while you work, so when its token is still valid we
 // use it directly and never interfere. Only when the keychain token is also
 // expired (Claude Code idle, e.g. overnight) do we mint a fresh one ourselves
-// from the refresh token, the same way Claude Code would.
+// from the refresh token, the same way Claude Code would, and write the new
+// pair back into the keychain so Claude Code picks it up too (refresh tokens
+// rotate — leaving the old one in the keychain would strand Claude Code).
 func (c *Client) token() (string, error) {
 	c.mu.Lock()
 	if c.cachedToken != "" && (c.tokenExp.IsZero() || time.Now().Before(c.tokenExp)) {
@@ -66,37 +100,23 @@ func (c *Client) token() (string, error) {
 	}
 	c.mu.Unlock()
 
-	if access, refresh, exp, ok := c.readKeychain(false); ok {
-		if exp.IsZero() || time.Now().Before(exp) {
-			c.storeTokens(access, refresh, exp) // adopt Claude Code's fresh token
-			return access, nil
+	if creds, ok := c.readKeychain(false); ok {
+		if creds.exp.IsZero() || time.Now().Before(creds.exp) {
+			c.storeTokens(creds.access, creds.refresh, creds.exp) // adopt Claude Code's fresh token
+			return creds.access, nil
 		}
-		// Keychain token is expired too. Keep a refresh token we already hold —
-		// it may be a fresher rotation than the keychain's.
-		c.mu.Lock()
-		if c.refreshToken == "" {
-			c.refreshToken = refresh
+		// Keychain token is expired too. Claude Code may have rotated the refresh
+		// token since we last saw it, so its copy goes first; ours is the fallback
+		// (fresher only if our own last refresh never made it back to the keychain).
+		candidates := []string{creds.refresh}
+		if mine := c.RefreshToken(); mine != "" && mine != creds.refresh {
+			candidates = append(candidates, mine)
 		}
-		rt := c.refreshToken
-		c.mu.Unlock()
-		if rt != "" {
-			if tok, err := c.refresh(rt); err == nil {
-				return tok, nil
-			} else {
-				log.Printf("claude token refresh failed: %v", err)
-			}
-		}
-		// Refresh failed too — hand back the expired token so the 401 surfaces the
-		// "reopen Claude Code" message.
-		c.storeTokens(access, refresh, exp)
-		return access, nil
+		return c.refreshWith(candidates, creds.scopes, creds)
 	}
 	// No keychain creds — last resort, a refresh token from persisted state.
-	c.mu.Lock()
-	rt := c.refreshToken
-	c.mu.Unlock()
-	if rt != "" {
-		if tok, err := c.refresh(rt); err == nil {
+	if rt := c.RefreshToken(); rt != "" {
+		if tok, err := c.refreshWith([]string{rt}, nil, nil); err == nil {
 			return tok, nil
 		}
 	}
@@ -109,81 +129,291 @@ func (c *Client) token() (string, error) {
 // readKeychain reads Claude Code's stored credentials. manual marks a read the
 // user asked for from the menu — those may prompt even after an earlier refusal,
 // which background reads may not.
-func (c *Client) readKeychain(manual bool) (access, refresh string, exp time.Time, ok bool) {
+func (c *Client) readKeychain(manual bool) (*claudeKeychainCreds, bool) {
 	out, err := c.kc.find("Claude", manual, "-s", keychain, "-w")
 	if err != nil {
-		return "", "", time.Time{}, false
+		return nil, false
 	}
-	a, r, ms := claudeCredsFromJSON(out)
-	if a == "" {
-		return "", "", time.Time{}, false
-	}
-	if ms > 0 {
-		exp = time.UnixMilli(ms).Add(-time.Minute) // a minute of slack
-	}
-	return a, r, exp, true
+	return parseClaudeKeychain(out)
 }
 
-func claudeCredsFromJSON(raw []byte) (access, refresh string, expiresMs int64) {
-	var d map[string]json.RawMessage
-	if json.Unmarshal(raw, &d) != nil {
-		return "", "", 0
+func parseClaudeKeychain(raw []byte) (*claudeKeychainCreds, bool) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil, false
 	}
-	obj := d
-	if inner, ok := d["claudeAiOauth"]; ok {
+	k := &claudeKeychainCreds{top: top, oauth: top}
+	if inner, ok := top["claudeAiOauth"]; ok {
 		var m map[string]json.RawMessage
 		if json.Unmarshal(inner, &m) == nil {
-			obj = m
+			k.oauth, k.nested = m, true
 		}
 	}
-	_ = json.Unmarshal(obj["accessToken"], &access)
-	_ = json.Unmarshal(obj["refreshToken"], &refresh)
-	_ = json.Unmarshal(obj["expiresAt"], &expiresMs)
-	return access, refresh, expiresMs
+	var ms int64
+	_ = json.Unmarshal(k.oauth["accessToken"], &k.access)
+	_ = json.Unmarshal(k.oauth["refreshToken"], &k.refresh)
+	_ = json.Unmarshal(k.oauth["expiresAt"], &ms)
+	_ = json.Unmarshal(k.oauth["scopes"], &k.scopes)
+	if k.access == "" {
+		return nil, false
+	}
+	if ms > 0 {
+		k.exp = time.UnixMilli(ms).Add(-time.Minute) // a minute of slack
+	}
+	return k, true
+}
+
+// claudeCredsFromJSON is the flat view of parseClaudeKeychain.
+func claudeCredsFromJSON(raw []byte) (access, refresh string, expiresMs int64) {
+	k, ok := parseClaudeKeychain(raw)
+	if !ok {
+		return "", "", 0
+	}
+	if !k.exp.IsZero() {
+		expiresMs = k.exp.Add(time.Minute).UnixMilli()
+	}
+	return k.access, k.refresh, expiresMs
+}
+
+// withTokens returns the keychain JSON with the token pair replaced, every
+// other field preserved, in the same nesting Claude Code wrote it.
+func (k *claudeKeychainCreds) withTokens(res claudeTokenResponse, now time.Time) ([]byte, error) {
+	oauth := make(map[string]json.RawMessage, len(k.oauth)+5)
+	for key, v := range k.oauth {
+		oauth[key] = v
+	}
+	set := func(key string, v any) {
+		b, _ := json.Marshal(v)
+		oauth[key] = b
+	}
+	set("accessToken", res.AccessToken)
+	set("refreshToken", res.RefreshToken)
+	set("expiresAt", now.Add(time.Duration(res.ExpiresIn)*time.Second).UnixMilli())
+	if res.RefreshTokenExpiresIn > 0 {
+		set("refreshTokenExpiresAt", now.Add(time.Duration(res.RefreshTokenExpiresIn)*time.Second).UnixMilli())
+	}
+	if scopes := strings.Fields(res.Scope); len(scopes) > 0 {
+		set("scopes", scopes)
+	}
+	if !k.nested {
+		return json.Marshal(oauth)
+	}
+	top := make(map[string]json.RawMessage, len(k.top))
+	for key, v := range k.top {
+		top[key] = v
+	}
+	inner, err := json.Marshal(oauth)
+	if err != nil {
+		return nil, err
+	}
+	top["claudeAiOauth"] = inner
+	return json.Marshal(top)
+}
+
+type claudeTokenResponse struct {
+	AccessToken           string `json:"access_token"`
+	RefreshToken          string `json:"refresh_token"`
+	ExpiresIn             int    `json:"expires_in"`
+	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
+	Scope                 string `json:"scope"`
+}
+
+// refreshWith tries each candidate refresh token in turn until one mints a
+// token. A rejected token (4xx other than 429) moves on to the next candidate;
+// a rate limit or transport failure stops immediately — the other candidate
+// would only burn more quota. The result is written back to the keychain when
+// the item was read from there.
+func (c *Client) refreshWith(candidates []string, scopes []string, creds *claudeKeychainCreds) (string, error) {
+	c.mu.Lock()
+	if c.lastRefreshErr != nil && time.Since(c.lastRefreshTry) < claudeRefreshMinGap {
+		err := c.lastRefreshErr
+		c.mu.Unlock()
+		return "", err
+	}
+	c.mu.Unlock()
+
+	var lastErr error
+	for _, rt := range candidates {
+		if rt == "" {
+			continue
+		}
+		res, err := c.refresh(rt, scopes)
+		if err == nil {
+			c.noteRefresh(nil)
+			if creds != nil {
+				c.writeKeychain(creds, res)
+			}
+			return res.AccessToken, nil
+		}
+		lastErr = err
+		log.Printf("claude token refresh failed: %v", err)
+		if ae, ok := err.(*APIError); ok && (ae.Status == 0 || ae.Status == 429 || ae.Status >= 500) {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = &APIError{Msg: "No Claude refresh token", Refresh: true}
+	}
+	c.noteRefresh(lastErr)
+	return "", lastErr
+}
+
+func (c *Client) noteRefresh(err error) {
+	c.mu.Lock()
+	c.lastRefreshTry, c.lastRefreshErr = time.Now(), err
+	c.mu.Unlock()
 }
 
 // refresh exchanges the refresh token for a new access token via Anthropic's
-// OAuth endpoint — the same flow Claude Code uses. The refresh token goes on
-// stdin, never argv, so it can't leak into the process list.
-func (c *Client) refresh(rt string) (string, error) {
+// OAuth endpoint — the same request Claude Code sends (endpoint, client id and
+// scope list included). The refresh token goes on stdin, never argv, so it
+// can't leak into the process list.
+func (c *Client) refresh(rt string, scopes []string) (claudeTokenResponse, error) {
+	if len(scopes) == 0 {
+		scopes = claudeDefaultScopes
+	}
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "refresh_token",
 		"refresh_token": rt,
 		"client_id":     claudeOAuthClient,
+		"scope":         strings.Join(scopes, " "),
 	})
 	log.Printf("claude token refresh")
-	cmd := exec.Command("curl", "-sS", "--max-time", "15", "-X", "POST",
-		"-H", "Content-Type: application/json",
-		"-w", metaMark+"%{http_code}",
-		"--data-binary", "@-", claudeTokenURL)
-	cmd.Stdin = bytes.NewReader(body)
-	out, err := cmd.Output()
+	status, resp, err := c.postToken(claudeTokenURL, body)
 	if err != nil {
-		return "", &APIError{Msg: "Offline — can't refresh Claude token"}
+		return claudeTokenResponse{}, &APIError{Msg: "Offline — can't refresh Claude token", Refresh: true}
 	}
-	s := string(out)
-	idx := strings.LastIndex(s, metaMark)
-	if idx < 0 {
-		return "", &APIError{Msg: "Malformed Claude refresh response"}
-	}
-	status, _ := strconv.Atoi(strings.TrimSpace(s[idx+len(metaMark):]))
 	if status >= 400 {
-		return "", &APIError{Msg: fmt.Sprintf("Claude refresh HTTP %d", status), Status: status}
+		e := &APIError{Status: status, Refresh: true}
+		switch {
+		case status == 429:
+			e.Msg = "Claude token refresh rate-limited (429)"
+		case status == 400 || status == 401 || status == 403:
+			e.Msg = fmt.Sprintf("Claude refresh token rejected (HTTP %d) — open Claude Code to sign in again", status)
+		default:
+			e.Msg = fmt.Sprintf("Claude token refresh failed (HTTP %d)", status)
+		}
+		log.Printf("claude token refresh -> %d: %s", status, truncate(resp, 300))
+		return claudeTokenResponse{}, e
 	}
-	var d struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
+	var d claudeTokenResponse
+	if json.Unmarshal(resp, &d) != nil || d.AccessToken == "" {
+		return claudeTokenResponse{}, &APIError{Msg: "Malformed Claude refresh JSON", Refresh: true}
 	}
-	if json.Unmarshal([]byte(s[:idx]), &d) != nil || d.AccessToken == "" {
-		return "", &APIError{Msg: "Malformed Claude refresh JSON"}
+	if d.RefreshToken == "" {
+		d.RefreshToken = rt // not rotated
 	}
 	var exp time.Time
 	if d.ExpiresIn > 0 {
 		exp = time.Now().Add(time.Duration(d.ExpiresIn)*time.Second - time.Minute)
 	}
 	c.storeTokens(d.AccessToken, d.RefreshToken, exp)
-	return d.AccessToken, nil
+	log.Printf("claude token refreshed (expires in %ds, refresh token %s)", d.ExpiresIn,
+		map[bool]string{true: "rotated", false: "unchanged"}[d.RefreshToken != rt])
+	return d, nil
+}
+
+func (c *Client) postToken(url string, body []byte) (int, []byte, error) {
+	if c.post != nil {
+		return c.post(url, body)
+	}
+	cmd := exec.Command("curl", "-sS", "--max-time", "15", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"-H", "User-Agent: "+userAgent,
+		"-w", metaMark+"%{http_code}",
+		"--data-binary", "@-", url)
+	cmd.Stdin = bytes.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, nil, err
+	}
+	s := string(out)
+	idx := strings.LastIndex(s, metaMark)
+	if idx < 0 {
+		return 0, nil, fmt.Errorf("malformed curl response")
+	}
+	status, _ := strconv.Atoi(strings.TrimSpace(s[idx+len(metaMark):]))
+	return status, []byte(s[:idx]), nil
+}
+
+// truncate shortens a server error body for the log (never a token: error
+// bodies carry reasons, not credentials).
+func truncate(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "…"
+}
+
+// writeKeychain stores a refreshed token pair back into Claude Code's
+// keychain item, exactly as Claude Code does: the update command goes to
+// `security -i` on stdin (so the token is not in argv) with the payload hex
+// encoded. Failure is logged only — the in-memory token still works, and the
+// persisted refresh token is retried from state next time.
+func (c *Client) writeKeychain(creds *claudeKeychainCreds, res claudeTokenResponse) {
+	payload, err := creds.withTokens(res, time.Now())
+	if err != nil {
+		log.Printf("claude keychain write skipped: %v", err)
+		return
+	}
+	acct := c.keychainAccount()
+	if acct == "" {
+		log.Printf("claude keychain write skipped: no account name")
+		return
+	}
+	stdin := fmt.Sprintf("add-generic-password -U -a %q -s %q -X %q\n", acct, keychain, hex.EncodeToString(payload))
+	if err := c.runKeychainWrite(stdin); err != nil {
+		log.Printf("claude keychain write failed: %v", err)
+		return
+	}
+	log.Printf("claude credentials written back to keychain")
+}
+
+func (c *Client) runKeychainWrite(stdin string) error {
+	if c.write != nil {
+		return c.write(stdin)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "security", "-i")
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, truncate(out, 200))
+	}
+	return nil
+}
+
+// keychainAccount is the account attribute of the credentials item (Claude
+// Code uses the login user name), read without touching the secret so no
+// password prompt can appear; falls back to the current user.
+func (c *Client) keychainAccount() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if out, err := c.kc.exec(ctx, []string{"find-generic-password", "-s", keychain}); err == nil {
+		if acct := keychainAcctAttr(string(out)); acct != "" {
+			return acct
+		}
+	}
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
+}
+
+// keychainAcctAttr pulls the account out of `security find-generic-password`
+// attribute output: a line like `    "acct"<blob>="jdoe"`.
+func keychainAcctAttr(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"acct"`) {
+			continue
+		}
+		if i := strings.Index(line, `="`); i >= 0 && strings.HasSuffix(line, `"`) {
+			return line[i+2 : len(line)-1]
+		}
+	}
+	return ""
 }
 
 func (c *Client) storeTokens(access, refresh string, exp time.Time) {
@@ -213,11 +443,12 @@ func (c *Client) invalidateAccess(rejected string) {
 // Code. Unlike token(), this intentionally bypasses a still-valid cached token:
 // it is the explicit account-switch path used by the menu action.
 func (c *Client) UseCurrentAuth() error {
-	access, refresh, exp, ok := c.readKeychain(true)
+	creds, ok := c.readKeychain(true)
 	if !ok {
 		return &APIError{Msg: "No credentials — sign in to Claude Code"}
 	}
-	c.adoptKeychainTokens(access, refresh, exp)
+	c.adoptKeychainTokens(creds.access, creds.refresh, creds.exp)
+	c.noteRefresh(nil) // a fresh login may refresh at once
 	log.Printf("claude credentials reloaded from keychain")
 	return nil
 }

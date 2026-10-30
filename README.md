@@ -196,9 +196,19 @@ It reads the same OAuth endpoint Claude Code's `/usage` screen uses
 `Claude Code-credentials` keychain item, which Claude Code keeps fresh while you
 work. When that token is still valid the app just uses it (never interfering);
 when it's expired and Claude Code is idle (e.g. overnight) the app mints a fresh
-one itself from the refresh token, the same way Claude Code would — so
-monitoring keeps working. If even that fails the token is dead until you reopen
-Claude Code, and the status says so. After changing accounts in Claude Code,
+one itself — the same request Claude Code 2.1.263 sends
+(`platform.claude.com/v1/oauth/token`, its client id and scope list) — and
+**writes the new token pair back into the keychain item** exactly as Claude
+Code does (`security -i`, payload hex-encoded on stdin, every other field of
+the item preserved). Refresh tokens rotate, so without the write-back a
+self-refresh would strand Claude Code's own copy. The keychain's refresh token
+is always tried first (Claude Code may have rotated it since the app last
+looked); the app's persisted copy is only a fallback. A failed refresh is
+reported as such in the status (`Claude token refresh rate-limited (429)`,
+`Claude refresh token rejected …`), never retried more than once per two
+minutes, and never followed by a request with the expired token. If the
+refresh token itself is rejected it is dead until you reopen Claude Code, and
+the status says so. After changing accounts in Claude Code,
 click **Use current Claude login** in the Claude menu to discard the old cached
 token and immediately reload the current keychain credentials, profile, and
 limits.
