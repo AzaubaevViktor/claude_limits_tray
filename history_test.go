@@ -402,7 +402,7 @@ func TestCodexMiddleHistoryUsesFiveHoursOfWeeklyOnlyData(t *testing.T) {
 		samples: []histSample{{T: 100, V: 10}, {T: 200, V: 11}},
 		secs:    int64(weekSecs), present: true, used: 11, resetAt: 300,
 	}
-	got, horizon, label := codexMiddleHistory(historyWindow{}, weekly)
+	got, horizon, label := middleHistory(historyWindow{}, weekly)
 	if !got.present || len(got.samples) != 2 || got.secs != int64(weekSecs) {
 		t.Fatalf("middle chart should retain the real weekly series: %+v", got)
 	}
@@ -414,7 +414,7 @@ func TestCodexMiddleHistoryUsesFiveHoursOfWeeklyOnlyData(t *testing.T) {
 func TestCodexMiddleHistoryPrefersRealShortWindow(t *testing.T) {
 	short := historyWindow{secs: 3 * 60 * 60, present: true, used: 20}
 	weekly := historyWindow{secs: int64(weekSecs), present: true, used: 30}
-	got, horizon, label := codexMiddleHistory(short, weekly)
+	got, horizon, label := middleHistory(short, weekly)
 	if got.used != short.used || horizon != short.secs || label != "3h" {
 		t.Fatalf("real short window should win: got %+v, %ds, %q", got, horizon, label)
 	}

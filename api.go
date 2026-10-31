@@ -453,6 +453,23 @@ func (c *Client) UseCurrentAuth() error {
 	return nil
 }
 
+// ForceRefresh mints a new token pair right now from the keychain's refresh
+// token (ours as fallback) and writes it back, regardless of whether the
+// current access token is still valid. Used by the menu action.
+func (c *Client) ForceRefresh() error {
+	creds, ok := c.readKeychain(true)
+	if !ok {
+		return &APIError{Msg: "No credentials — sign in to Claude Code"}
+	}
+	candidates := []string{creds.refresh}
+	if mine := c.RefreshToken(); mine != "" && mine != creds.refresh {
+		candidates = append(candidates, mine)
+	}
+	c.noteRefresh(nil) // a manual request bypasses the retry gap
+	_, err := c.refreshWith(candidates, creds.scopes, creds)
+	return err
+}
+
 // adoptKeychainTokens replaces the complete token pair. In particular, an
 // absent refresh token clears a stale persisted token from another account.
 func (c *Client) adoptKeychainTokens(access, refresh string, exp time.Time) {
@@ -581,6 +598,10 @@ type Usage struct {
 	FiveHour Window        `json:"five_hour"`
 	SevenDay Window        `json:"seven_day"`
 	Limits   []ScopedLimit `json:"limits"`
+	// NoSession is set when the response carries no 5-hour window at all
+	// (five_hour null and no "session" limit): the account is weekly-only, so
+	// the session half of the UI is hidden rather than drawn as an empty 100%.
+	NoSession bool `json:"-"`
 	// Credit budgets, kept raw and parsed leniently (see claudeCredits) so an
 	// unexpected shape can never fail the whole usage response.
 	ExtraUsage json.RawMessage `json:"extra_usage,omitempty"`
@@ -605,12 +626,37 @@ func (c *Client) Usage() ([]byte, *Usage, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var u Usage
-	if err := json.Unmarshal(raw, &u); err != nil {
+	u, err := decodeUsage(raw)
+	if err != nil {
 		return nil, nil, &APIError{Msg: "Malformed usage JSON"}
 	}
-	return raw, &u, nil
+	return raw, u, nil
 }
+
+// decodeUsage parses a usage response and notes whether a 5-hour window came
+// with it. The window counts as present when five_hour is a non-null object
+// or a "session"-kind limit is listed.
+func decodeUsage(raw []byte) (*Usage, error) {
+	var u Usage
+	if err := json.Unmarshal(raw, &u); err != nil {
+		return nil, err
+	}
+	var probe struct {
+		FiveHour json.RawMessage `json:"five_hour"`
+	}
+	_ = json.Unmarshal(raw, &probe)
+	fiveHour := strings.TrimSpace(string(probe.FiveHour))
+	u.NoSession = fiveHour == "" || fiveHour == "null"
+	for _, l := range u.Limits {
+		if l.Kind == "session" {
+			u.NoSession = false
+		}
+	}
+	return &u, nil
+}
+
+// HasSession reports whether the account has a 5-hour window to show.
+func (u *Usage) HasSession() bool { return u != nil && !u.NoSession }
 
 func (c *Client) Profile() (*Profile, error) {
 	raw, err := c.get("/api/oauth/profile")
@@ -628,11 +674,11 @@ func parseUsage(raw []byte) *Usage {
 	if len(raw) == 0 {
 		return nil
 	}
-	var u Usage
-	if json.Unmarshal(raw, &u) != nil {
+	u, err := decodeUsage(raw)
+	if err != nil {
 		return nil
 	}
-	return &u
+	return u
 }
 
 // --- Codex usage API --------------------------------------------------------

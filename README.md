@@ -52,9 +52,15 @@ dial has two concentric rings, split left/right:
 - **Centre dot** — the worst known outer-ring pace category. An unknown/learning
   window does not mask a known warning from the other window; the dot is grey
   only while both windows are still unknown.
-- **Single-limit mode** — when only **one** window is in play (e.g. Codex now
-  hands out only a weekly limit) the dial auto-collapses to **one big full
-  circle** for that window instead of a half-empty pair of semicircles.
+- **Single-limit mode** — when only **one** window is in play (Codex handing
+  out only a weekly limit, or a Claude account whose usage response carries
+  `five_hour: null` and no session limit) the dial auto-collapses to **one big
+  full circle** for that window instead of a half-empty pair of semicircles.
+  On such a Claude account the session rows (session %, its reset, the 5h-block
+  calibration, the session forecast) are hidden from the menu, the speed and
+  spare lines speak only about the weekly limit, and the Claude 1h/5h chart
+  cards show slices of the weekly history. They all come back as soon as a
+  5-hour window reappears in the response.
 - **Thin edge ring (credits)** — drawn only when the provider has a credit
   budget (Claude *extra usage* / usage credits, Codex purchased credits). The
   whole circle is the **time until the longest window resets**; the lit arc,

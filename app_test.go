@@ -332,3 +332,76 @@ func TestSessionLeftTextWeeklyCap(t *testing.T) {
 		t.Fatalf("uncalibrated session text = %q", got)
 	}
 }
+
+// A weekly-only account (five_hour null, no "session" limit) must be
+// recognised so the session half of the UI can be hidden.
+func TestDecodeUsageDetectsMissingSessionWindow(t *testing.T) {
+	weeklyOnly := parseUsage([]byte(`{"five_hour":null,"seven_day":{"utilization":10,"resets_at":"2026-11-06T09:00:00Z"},
+		"limits":[{"kind":"weekly_all","group":"weekly","percent":10,"is_active":true}]}`))
+	if weeklyOnly == nil || weeklyOnly.HasSession() {
+		t.Fatalf("five_hour null should mean no session window: %+v", weeklyOnly)
+	}
+	absent := parseUsage([]byte(`{"seven_day":{"utilization":10}}`))
+	if absent == nil || absent.HasSession() {
+		t.Fatal("a missing five_hour key should mean no session window")
+	}
+	present := parseUsage([]byte(`{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":10}}`))
+	if present == nil || !present.HasSession() {
+		t.Fatal("a five_hour object (even idle) is a session window")
+	}
+	byLimit := parseUsage([]byte(`{"five_hour":null,"seven_day":{},"limits":[{"kind":"session","group":"session","percent":0}]}`))
+	if byLimit == nil || !byLimit.HasSession() {
+		t.Fatal("a session-kind limit counts as a session window")
+	}
+	var nilUsage *Usage
+	if nilUsage.HasSession() {
+		t.Fatal("nil usage has no session")
+	}
+}
+
+func TestClaudeWeeklyOnlyDialIsOneFullCircle(t *testing.T) {
+	now := time.Now()
+	u := parseUsage([]byte(`{"five_hour":null,"seven_day":{"utilization":40,"resets_at":"` +
+		now.Add(3*24*time.Hour).Format(time.RFC3339) + `"}}`))
+	a := &App{calib: &WeeklyCalibrator{}, lastUsage: u, history: map[string][]histSample{}}
+	in, key := a.claudeDial()
+	if !in.full || in.source != "weekly" {
+		t.Fatalf("weekly-only Claude should collapse to a full weekly circle: %+v", in)
+	}
+	if in.limits["weekly"].Pct != 40 || in.limits["weekly"].BlockPct != 0 {
+		t.Fatalf("weekly limit should carry the usage and no 5h-block notches: %+v", in.limits["weekly"])
+	}
+	if !strings.HasPrefix(key, "claude-weekly-") {
+		t.Fatalf("icon key should mark the mode: %s", key)
+	}
+	// With a session window the paired semicircles are back.
+	a.lastUsage = parseUsage([]byte(`{"five_hour":{"utilization":5},"seven_day":{"utilization":40}}`))
+	if in, _ := a.claudeDial(); in.full {
+		t.Fatal("a session window should restore the two-semicircle dial")
+	}
+}
+
+func TestClaudeHistoryWindowsFallBackToWeeklyWithoutSession(t *testing.T) {
+	a := &App{
+		history: map[string][]histSample{
+			seriesClaudeSession: {{T: 1, V: 3}},
+			seriesClaudeWeekly:  {{T: 1, V: 7}, {T: 2, V: 8}},
+		},
+		lastUsage: parseUsage([]byte(`{"five_hour":null,"seven_day":{"utilization":8,"resets_at":"2026-11-06T09:00:00Z"}}`)),
+	}
+	short, long := a.claudeHistoryWindows()
+	if short.present {
+		t.Fatal("no session window -> the short card must not claim one")
+	}
+	if !long.present || long.used != 8 || long.resetAt == 0 || len(long.samples) != 2 {
+		t.Fatalf("weekly window mapped incorrectly: %+v", long)
+	}
+	middle, horizon, label := middleHistory(short, long)
+	if !middle.present || middle.secs != int64(weekSecs) || horizon != int64(fiveHourSecs) || label != "5h" {
+		t.Fatalf("middle card should be a 5h slice of the weekly history: %+v %d %s", middle, horizon, label)
+	}
+	a.lastUsage = parseUsage([]byte(`{"five_hour":{"utilization":3,"resets_at":"2026-11-06T09:00:00Z"},"seven_day":{"utilization":8}}`))
+	if short, _ := a.claudeHistoryWindows(); !short.present || short.used != 3 {
+		t.Fatalf("session window should be present again: %+v", short)
+	}
+}

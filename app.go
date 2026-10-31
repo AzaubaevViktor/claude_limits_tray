@@ -146,6 +146,7 @@ type App struct {
 	// menu items
 	claudeParent                               *systray.MenuItem
 	account, claudeSwitchAuth, plan            *systray.MenuItem
+	claudeRefreshNow                           *systray.MenuItem
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	weeklyBlocks, weeklyBlocksBasis            *systray.MenuItem
 	claudeCredits, claudeCreditsRunway         *systray.MenuItem
@@ -370,6 +371,34 @@ func (a *App) drain() {
 	}
 }
 
+// refreshClaudeTokenNow forces a self-refresh of the Claude token (and the
+// keychain write-back) without waiting for the current token to expire — a
+// way to exercise the refresh path on demand. The network call runs off the
+// lock so the tick loop keeps going; the outcome lands in the status row and
+// triggers an immediate poll.
+func (a *App) refreshClaudeTokenNow() {
+	a.status.SetTitle("⟳ refreshing Claude token…")
+	client := a.client
+	go func() {
+		err := client.ForceRefresh()
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if err != nil {
+			a.lastFail = time.Now()
+			a.lastFailMsg = describe(err)
+			a.status.SetTitle("⚠ " + a.lastFailMsg)
+			return
+		}
+		a.status.SetTitle("✓ Claude token refreshed")
+		a.saveState(true) // persist the rotated refresh token promptly
+		a.nextPoll = time.Time{}
+		a.nextAllowedEpoch = 0
+		if !a.inflight {
+			a.startRequest(pollClaude)
+		}
+	}()
+}
+
 func (a *App) useCurrentClaudeLogin() {
 	if err := a.client.UseCurrentAuth(); err != nil {
 		a.lastFail = time.Now()
@@ -492,8 +521,11 @@ func (a *App) onSuccess(r pollResult) {
 		a.sessRate, a.weekRate = s, w
 		a.rateSpan = a.rates.Span()
 	}
-	a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
-	a.recordHistory(seriesClaudeSession, r.usage.FiveHour.Utilization)
+	if r.usage.HasSession() {
+		// Session-based bookkeeping is meaningless on a weekly-only account.
+		a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
+		a.recordHistory(seriesClaudeSession, r.usage.FiveHour.Utilization)
+	}
 	a.recordHistory(seriesClaudeWeekly, r.usage.SevenDay.Utilization)
 	if b := claudeCredits(r.usage); b.Known && b.UsedKnown {
 		a.recordHistory(seriesClaudeCredits, b.Used)
@@ -503,7 +535,7 @@ func (a *App) onSuccess(r pollResult) {
 			continue
 		}
 		name := scopedModelName(l)
-		if skipCalibModel(name) {
+		if skipCalibModel(name) || !r.usage.HasSession() {
 			continue
 		}
 		a.modelCalib(name).Observe(r.usage.FiveHour.Utilization, l.Percent)
@@ -590,15 +622,28 @@ func (a *App) apply() {
 	sessFc := projectForecast(sessPct, sessFcRate, sessWork, sw)
 	weekFc := projectForecast(weekPct, weekFcRate, weekWork, ww)
 	worst := sessFc
-	if weekFc.Pos() > worst.Pos() {
+	if weekFc.Pos() > worst.Pos() || !u.HasSession() {
 		worst = weekFc
 	}
 
 	a.renderIcon()
 	systray.SetTitle("")
 
-	sessReset, sessResetOk := parseISO(u.FiveHour.ResetsAt)
 	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
+	if !u.HasSession() {
+		a.renderClaudeWeeklyOnly(weekPct, weekLeft, weekKnown, weekWork, ww, weekFc, sinceWeekRate(weekPct, weekLeft, weekKnown))
+		a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
+		a.weekly.SetIcon(renderPctBar(weekPct, fmt.Sprintf("Weekly %.0f%%", weekPct)))
+		a.weeklyReset.SetTitle("      resets in " +
+			withClock(fmtRemaining(weekLeft, weekKnown), weekReset, weekResetOk))
+		a.renderClaudeCredits()
+		a.renderScoped(u.Limits)
+		a.renderHistory()
+		a.status.SetTitle(fmt.Sprintf("✓ week %.0f%% left · no 5h limit", 100-weekPct))
+		return
+	}
+	a.setClaudeSessionRows(true)
+	sessReset, sessResetOk := parseISO(u.FiveHour.ResetsAt)
 	a.session.SetTitle("🕐 Session (5h):  " + a.sessionLeftText(sessPct, weekPct))
 	a.session.SetIcon(renderPctBar(sessPct, fmt.Sprintf("Session %.0f%%", sessPct)))
 	a.sessionReset.SetTitle("      resets in " +
@@ -636,6 +681,45 @@ func (a *App) apply() {
 	a.renderHistory()
 	a.status.SetTitle(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
 		100-sessPct, 100-weekPct))
+}
+
+// sinceWeekRate is the average weekly consumption since the window opened,
+// in %/s (0 when not measurable).
+func sinceWeekRate(weekPct, weekLeft float64, known bool) float64 {
+	r, _ := avgRate(weekPct, weekLeft, weekSecs, 1, known)
+	return r
+}
+
+// setClaudeSessionRows shows or hides every menu row that only makes sense
+// with a 5-hour window: the session line and its reset, the 5h-block
+// calibration lines, and the session forecast.
+func (a *App) setClaudeSessionRows(show bool) {
+	for _, it := range []*systray.MenuItem{a.session, a.sessionReset,
+		a.weeklyBlocks, a.weeklyBlocksBasis, a.burnSession} {
+		if it == nil {
+			continue
+		}
+		if show {
+			it.Show()
+		} else {
+			it.Hide()
+		}
+	}
+}
+
+// renderClaudeWeeklyOnly fills the Claude block for an account whose usage
+// response carries no 5-hour window: session rows are hidden and the speed,
+// spare and forecast lines speak only about the weekly limit.
+func (a *App) renderClaudeWeeklyOnly(weekPct, weekLeft float64, weekKnown bool,
+	weekWork float64, ww bool, weekFc Forecast, sinceWeek float64) {
+	a.setClaudeSessionRows(false)
+	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
+	a.speed.SetTitle(fmt.Sprintf("⚡ Last %s:  week %.1f%%/d", spanLabel(a.rateSpan), a.weekRate*86400))
+	a.speedLeft.SetTitle("      ↳ spare at reset:  week " + spareText(weekPct, a.weekRate, weekWork, ww))
+	a.speedAvg.SetTitle("⚡ Since reset:  week " + fmtRate(avgWeekD, awOk) + "%/d")
+	a.speedAvgLeft.SetTitle("      ↳ spare at reset:  week " + spareText(weekPct, sinceWeek, weekWork, ww))
+	a.burn.SetTitle("Forecast @ rate · " + weekFc.Category)
+	a.burnWeekly.SetTitle("Weekly:  " + weekFc.Text())
 }
 
 func (a *App) renderCodex() {
@@ -919,6 +1003,7 @@ func (a *App) renderProfile() {
 }
 
 func (a *App) renderClaudeEmpty(account string) {
+	a.setClaudeSessionRows(true)
 	a.claudeParent.SetTitle("Claude · —")
 	a.account.SetTitle("Account: " + account)
 	a.plan.SetTitle("Plan: —")
@@ -1105,12 +1190,37 @@ func windowChartLabel(window historyWindow, fallback string) string {
 	return fmt.Sprintf("%dh", int(math.Round(float64(window.secs)/(60*60))))
 }
 
-// codexMiddleHistory keeps the middle peer chart useful when Codex exposes
+// claudeHistoryWindows is the Claude counterpart of codexHistoryWindows: the
+// short (5h) window is absent on a weekly-only account, so its card falls back
+// to a slice of the weekly history like the Codex one does.
+func (a *App) claudeHistoryWindows() (short, long historyWindow) {
+	short = historyWindow{samples: a.history[seriesClaudeSession], secs: int64(fiveHourSecs)}
+	long = historyWindow{samples: a.history[seriesClaudeWeekly], secs: int64(weekSecs)}
+	u := a.lastUsage
+	if u == nil {
+		return short, long
+	}
+	if u.HasSession() {
+		short.present = true
+		short.used = u.FiveHour.Utilization
+		if reset, ok := parseISO(u.FiveHour.ResetsAt); ok {
+			short.resetAt = reset.Unix()
+		}
+	}
+	long.present = true
+	long.used = u.SevenDay.Utilization
+	if reset, ok := parseISO(u.SevenDay.ResetsAt); ok {
+		long.resetAt = reset.Unix()
+	}
+	return short, long
+}
+
+// middleHistory keeps the middle peer chart useful when a provider exposes
 // only a weekly quota window. In that case it shows a five-hour slice of the
 // real weekly utilisation history rather than inventing a five-hour quota or
 // leaving the card empty. When a genuine short quota window exists, that window
 // and its native horizon still win.
-func codexMiddleHistory(short, long historyWindow) (historyWindow, int64, string) {
+func middleHistory(short, long historyWindow) (historyWindow, int64, string) {
 	if short.present {
 		horizon := short.secs
 		if horizon <= 0 {
@@ -1144,19 +1254,10 @@ func (a *App) renderHistory() {
 		return
 	}
 	now := time.Now().Unix()
-	claudeShort := historyWindow{samples: a.history[seriesClaudeSession], secs: int64(fiveHourSecs)}
-	claudeLong := historyWindow{samples: a.history[seriesClaudeWeekly], secs: int64(weekSecs)}
-	if a.lastUsage != nil {
-		claudeShort.present = true
-		claudeShort.used = a.lastUsage.FiveHour.Utilization
-		if reset, ok := parseISO(a.lastUsage.FiveHour.ResetsAt); ok {
-			claudeShort.resetAt = reset.Unix()
-		}
-		claudeLong.present = true
-		claudeLong.used = a.lastUsage.SevenDay.Utilization
-		if reset, ok := parseISO(a.lastUsage.SevenDay.ResetsAt); ok {
-			claudeLong.resetAt = reset.Unix()
-		}
+	claudeShort, claudeLong := a.claudeHistoryWindows()
+	claudeFocus := claudeShort
+	if !claudeFocus.present {
+		claudeFocus = claudeLong
 	}
 	codexShort, codexLong := a.codexHistoryWindows()
 	codexFocus := codexShort
@@ -1165,11 +1266,13 @@ func (a *App) renderHistory() {
 	}
 
 	a.setPairedHistoryRow(a.histHour,
-		makeBurnPanel("Claude", "1h", claudeShort, 3600, 5*60, now, claudeChartAccent),
+		makeBurnPanel("Claude", "1h", claudeFocus, 3600, 5*60, now, claudeChartAccent),
 		makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent))
-	codexMiddle, codexMiddleHorizon, codexMiddleLabel := codexMiddleHistory(codexShort, codexLong)
+	claudeMiddle, claudeMiddleHorizon, claudeMiddleLabel := middleHistory(claudeShort, claudeLong)
+	codexMiddle, codexMiddleHorizon, codexMiddleLabel := middleHistory(codexShort, codexLong)
 	a.setPairedHistoryRow(a.histSession,
-		makeBurnPanel("Claude", "5h", claudeShort, int64(fiveHourSecs), chartGrid(int64(fiveHourSecs), 20), now, claudeChartAccent),
+		makeBurnPanel("Claude", claudeMiddleLabel, claudeMiddle,
+			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent),
 		makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
 			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent))
 	longHorizon := int64(weekSecs)
@@ -1402,6 +1505,18 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 	sessTf := timeFraction(u.FiveHour.ResetsAt, fiveHourSecs)
 	weekTf := timeFraction(u.SevenDay.ResetsAt, weekSecs)
 	weekBlock := a.weeklyBlockPct()
+	if !u.HasSession() {
+		// Weekly-only account: one big full circle for the weekly window, as
+		// for a weekly-only Codex plan. No 5h blocks to notch.
+		week := Limit{Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, TimeTicks: dayTicks(weekSecs)}
+		limits := map[string]Limit{"session": {Pct: 100, TimeLeft: 1}, "weekly": week}
+		pace := limitPace(week, clamp(1-weekPct/100, 0, 1))
+		ring := a.claudeCreditRing()
+		key := fmt.Sprintf("claude-weekly-%d-%d-%d-%d-%s", iround(weekPct), iround(weekTf*48),
+			int(pace), int(timeFill), ring.key())
+		return dialRenderInput{limits: limits, markColor: quotaPaceColor(pace), hasMark: true,
+			full: true, source: "weekly", credits: ring}, key
+	}
 	limits := map[string]Limit{
 		"session": {Pct: sessPct, TimeLeft: sessTf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60, TimeTicks: hourTicks(fiveHourSecs)},
 		"weekly":  {Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},

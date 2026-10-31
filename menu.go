@@ -25,6 +25,8 @@ func (a *App) buildMenu() {
 	a.account = a.claudeParent.AddSubMenuItem("Account: —", "")
 	a.claudeSwitchAuth = a.claudeParent.AddSubMenuItem("Use current Claude login", "")
 	a.onClick(a.claudeSwitchAuth, func() { a.useCurrentClaudeLogin() })
+	a.claudeRefreshNow = a.claudeParent.AddSubMenuItem("Refresh Claude token now", "")
+	a.onClick(a.claudeRefreshNow, func() { a.refreshClaudeTokenNow() })
 	a.plan = a.claudeParent.AddSubMenuItem("Plan", "")
 	a.session = a.claudeParent.AddSubMenuItem("Session", "")
 	a.sessionReset = a.claudeParent.AddSubMenuItem("Session resets", "")
