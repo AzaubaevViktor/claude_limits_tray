@@ -1,6 +1,6 @@
 # Claude Limits
 
-<p align="center"><img src="dial.svg" width="160" alt="the dial icon"></p>
+<p align="center"><img src="dial.svg" width="320" alt="the paired dial icon: Claude (two semicircles) and Codex (single-limit full circle), each with the thin credits ring"></p>
 
 A tiny macOS menu-bar app that shows — at a glance — how much of your Claude
 and Codex usage is left and whether your current pace will blow through it.
