@@ -145,8 +145,10 @@ Click it for everything as numbers, plus your account.
   spends the whole balance exactly by the reset, `AVG` is the last 24 h.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
-  both usage windows, forecast, speed, and per-model/additional limits (Codex
-  also shows the signed-in account, credits, and available rate-limit resets).
+  both usage windows, forecast, speed, credits, **available rate-limit
+  resets** and per-model/additional limits (Codex also shows the signed-in
+  account). Claude's usage API does not expose reset credits today, so its row
+  reads "—" until a `rate_limit_reset_credits` field appears in the response.
 - Shows the active Claude account and provides **Use current Claude login** to
   reload `Claude Code-credentials` immediately after switching accounts.
 - Polls in the background with a live "requesting…" indicator; on errors it
