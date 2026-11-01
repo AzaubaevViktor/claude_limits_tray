@@ -150,6 +150,7 @@ type App struct {
 	session, sessionReset, weekly, weeklyReset *systray.MenuItem
 	weeklyBlocks, weeklyBlocksBasis            *systray.MenuItem
 	claudeCredits, claudeCreditsRunway         *systray.MenuItem
+	claudeResets                               *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
 	histHeader                                 *systray.MenuItem
@@ -628,6 +629,7 @@ func (a *App) apply() {
 
 	a.renderIcon()
 	systray.SetTitle("")
+	a.claudeResets.SetTitle(claudeResetsText(u))
 
 	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
 	if !u.HasSession() {
@@ -1021,6 +1023,7 @@ func (a *App) renderClaudeEmpty(account string) {
 	a.speedAvg.SetTitle("Since reset: —")
 	a.speedAvgLeft.SetTitle("      ↳ spare at reset: —")
 	a.renderClaudeCredits()
+	a.claudeResets.SetTitle("Resets available: —")
 	a.renderScoped(nil)
 }
 

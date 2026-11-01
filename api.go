@@ -606,6 +606,29 @@ type Usage struct {
 	// unexpected shape can never fail the whole usage response.
 	ExtraUsage json.RawMessage `json:"extra_usage,omitempty"`
 	Spend      json.RawMessage `json:"spend,omitempty"`
+	// Rate-limit reset credits, if Claude ever exposes them the way Codex
+	// does (rate_limit_reset_credits.available_count). Read leniently.
+	ResetCredits json.RawMessage `json:"rate_limit_reset_credits,omitempty"`
+}
+
+// claudeResetsText is the "Resets available" row for Claude: the count when
+// the response carries one (an object with available_count, or a bare
+// number), "—" otherwise.
+func claudeResetsText(u *Usage) string {
+	if u == nil || len(u.ResetCredits) == 0 {
+		return "Resets available: —"
+	}
+	var obj struct {
+		Available json.RawMessage `json:"available_count"`
+	}
+	raw := u.ResetCredits
+	if json.Unmarshal(raw, &obj) == nil && len(obj.Available) > 0 {
+		raw = obj.Available
+	}
+	if n, _, ok := lenientAmount(raw); ok {
+		return fmt.Sprintf("Resets available: %d", int(n))
+	}
+	return "Resets available: —"
 }
 
 type Profile struct {

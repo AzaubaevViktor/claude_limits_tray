@@ -37,6 +37,7 @@ func (a *App) buildMenu() {
 	a.claudeCredits = a.claudeParent.AddSubMenuItem("💳 Credits: —", "")
 	a.claudeCreditsRunway = a.claudeParent.AddSubMenuItem("", "")
 	a.claudeCreditsRunway.Hide()
+	a.claudeResets = a.claudeParent.AddSubMenuItem("Resets available: —", "")
 	a.burn = a.claudeParent.AddSubMenuItem("Forecast @ current rate", "")
 	a.burnSession = a.burn.AddSubMenuItem("Forecast session", "")
 	a.burnWeekly = a.burn.AddSubMenuItem("Forecast weekly", "")
@@ -113,7 +114,7 @@ func (a *App) buildMenu() {
 	// don't highlight on hover (submenu parents stay active so they open)
 	for _, it := range []*systray.MenuItem{
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
-		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway,
+		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway, a.claudeResets,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
 		a.histHour, a.histSession, a.histWeek, a.histCredits,
 		a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,

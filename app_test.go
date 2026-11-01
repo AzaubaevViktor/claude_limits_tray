@@ -405,3 +405,20 @@ func TestClaudeHistoryWindowsFallBackToWeeklyWithoutSession(t *testing.T) {
 		t.Fatalf("session window should be present again: %+v", short)
 	}
 }
+
+func TestClaudeResetsText(t *testing.T) {
+	if got := claudeResetsText(parseUsage([]byte(`{"five_hour":{},"seven_day":{}}`))); got != "Resets available: —" {
+		t.Fatalf("no field = %q", got)
+	}
+	obj := parseUsage([]byte(`{"five_hour":{},"seven_day":{},"rate_limit_reset_credits":{"available_count":2}}`))
+	if got := claudeResetsText(obj); got != "Resets available: 2" {
+		t.Fatalf("object form = %q", got)
+	}
+	bare := parseUsage([]byte(`{"five_hour":{},"seven_day":{},"rate_limit_reset_credits":1}`))
+	if got := claudeResetsText(bare); got != "Resets available: 1" {
+		t.Fatalf("bare number = %q", got)
+	}
+	if got := claudeResetsText(nil); got != "Resets available: —" {
+		t.Fatalf("nil usage = %q", got)
+	}
+}
