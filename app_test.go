@@ -422,3 +422,35 @@ func TestClaudeResetsText(t *testing.T) {
 		t.Fatalf("nil usage = %q", got)
 	}
 }
+
+func TestNearestResetAcrossProviders(t *testing.T) {
+	now := time.Now()
+	a := &App{
+		lastUsage: parseUsage([]byte(`{"five_hour":null,"seven_day":{"utilization":10,"resets_at":"` +
+			now.Add(4*24*time.Hour).Format(time.RFC3339) + `"}}`)),
+		lastCodex: &CodexUsage{Limits: []CodexLimit{{
+			Primary:   &CodexWindow{WindowSeconds: int64(fiveHourSecs), ResetsAt: now.Add(90 * time.Minute).Unix()},
+			Secondary: &CodexWindow{WindowSeconds: int64(weekSecs), ResetsAt: now.Add(2 * 24 * time.Hour).Unix()},
+		}}},
+	}
+	claude := a.claudeResetCandidates()
+	if len(claude) != 1 || claude[0].window != "7d" {
+		t.Fatalf("weekly-only Claude should offer just its weekly reset: %+v", claude)
+	}
+	codex := a.codexResetCandidates()
+	if len(codex) != 2 || codex[0].window != "5h" || codex[1].window != "7d" {
+		t.Fatalf("codex candidates = %+v", codex)
+	}
+	best, ok := nearestReset(append(claude, codex...), now)
+	if !ok || best.provider != "Codex" || best.window != "5h" {
+		t.Fatalf("nearest = %+v ok=%v, want Codex 5h", best, ok)
+	}
+	// A reset already in the past is ignored; nothing known -> ok false.
+	past := []resetCandidate{{"Claude", "7d", now.Add(-time.Hour)}}
+	if _, ok := nearestReset(past, now); ok {
+		t.Fatal("past resets must not count")
+	}
+	if got := resetText(now.Add(26*time.Hour+30*time.Minute), now); !strings.HasPrefix(got, "in 1d 2h · ") {
+		t.Fatalf("resetText = %q", got)
+	}
+}

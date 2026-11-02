@@ -102,6 +102,7 @@ func (a *App) buildMenu() {
 	a.buildWorkMenu()
 	systray.AddSeparator()
 
+	a.nextReset = systray.AddMenuItem("⏱ Next reset: —", "")
 	a.status = systray.AddMenuItem("Status", "")
 	a.claudeOk = systray.AddMenuItem("Claude ✓ last success: —", "")
 	a.claudeFail = systray.AddMenuItem("Claude ✗ last failure: —", "")
@@ -117,7 +118,7 @@ func (a *App) buildMenu() {
 		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway, a.claudeResets,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
 		a.histHour, a.histSession, a.histWeek, a.histCredits,
-		a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
+		a.nextReset, a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,

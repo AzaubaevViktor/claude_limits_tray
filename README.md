@@ -151,6 +151,10 @@ Click it for everything as numbers, plus your account.
   reads "—" until a `rate_limit_reset_credits` field appears in the response.
 - Shows the active Claude account and provides **Use current Claude login** to
   reload `Claude Code-credentials` immediately after switching accounts.
+- **Next reset at a glance** — a `⏱ Next reset: Codex 5h · in 1h 23m · 14:05`
+  row above the status names the soonest upcoming reset across both
+  providers, and each block title carries its own countdown
+  (`Claude · Claude Max 20× · ↻ 3d 4h`). Both tick every second.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
   The bottom of the menu lists **separate last success / last failure** rows

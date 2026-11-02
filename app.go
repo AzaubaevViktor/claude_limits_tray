@@ -179,8 +179,14 @@ type App struct {
 	dynIconItem                                *systray.MenuItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
-	status                                     *systray.MenuItem
+	status, nextReset                          *systray.MenuItem
 	claudeOk, claudeFail, codexOk, codexFail   *systray.MenuItem
+	// base block titles ("Claude · Max 20×"); the nearest-reset suffix is
+	// appended by refreshResetRows, which only touches systray when the
+	// composed text changes.
+	claudeTitle, codexTitle           string
+	claudeTitleShown, codexTitleShown string
+	nextResetShown                    string
 }
 
 func newApp() *App {
@@ -740,7 +746,7 @@ func (a *App) renderCodex() {
 	if account == "" {
 		account = "—"
 	}
-	a.codexParent.SetTitle("Codex · " + plan)
+	a.setCodexTitle("Codex · " + plan)
 	a.codexAccount.SetTitle("Account: " + account)
 	a.codexPlan.SetTitle("Plan: " + plan)
 	a.renderCodexWindow(a.codexPrimary, a.codexPrimaryReset, "Primary", primary)
@@ -771,7 +777,7 @@ func (a *App) renderCodex() {
 }
 
 func (a *App) renderCodexEmpty() {
-	a.codexParent.SetTitle("Codex · —")
+	a.setCodexTitle("Codex · —")
 	account := a.codex.AccountLabel()
 	if account == "" {
 		account = "—"
@@ -1001,12 +1007,12 @@ func (a *App) renderProfile() {
 		plan = "—"
 	}
 	a.plan.SetTitle("🎗 " + plan)
-	a.claudeParent.SetTitle("Claude · " + plan)
+	a.setClaudeTitle("Claude · " + plan)
 }
 
 func (a *App) renderClaudeEmpty(account string) {
 	a.setClaudeSessionRows(true)
-	a.claudeParent.SetTitle("Claude · —")
+	a.setClaudeTitle("Claude · —")
 	a.account.SetTitle("Account: " + account)
 	a.plan.SetTitle("Plan: —")
 	a.session.SetTitle("Session (5h): —")
@@ -1603,8 +1609,121 @@ func (a *App) showError(msg string) {
 	}
 }
 
+// resetCandidate is one quota window's upcoming reset, labelled for display.
+type resetCandidate struct {
+	provider string // "Claude" / "Codex"
+	window   string // "5h" / "7d" / "weekly" …
+	at       time.Time
+}
+
+// nearestReset picks the soonest reset still in the future; ok is false when
+// none is known.
+func nearestReset(cands []resetCandidate, now time.Time) (resetCandidate, bool) {
+	var best resetCandidate
+	found := false
+	for _, c := range cands {
+		if c.at.IsZero() || !c.at.After(now) {
+			continue
+		}
+		if !found || c.at.Before(best.at) {
+			best, found = c, true
+		}
+	}
+	return best, found
+}
+
+// resetText renders "in 2d 3h · Fri 09:00" for a reset moment.
+func resetText(at time.Time, now time.Time) string {
+	return withClock("in "+fmtRemaining(at.Sub(now).Seconds(), true), at, true)
+}
+
+func (a *App) claudeResetCandidates() []resetCandidate {
+	u := a.lastUsage
+	if u == nil {
+		return nil
+	}
+	var out []resetCandidate
+	if u.HasSession() {
+		if t, ok := parseISO(u.FiveHour.ResetsAt); ok {
+			out = append(out, resetCandidate{"Claude", "5h", t})
+		}
+	}
+	if t, ok := parseISO(u.SevenDay.ResetsAt); ok {
+		out = append(out, resetCandidate{"Claude", "7d", t})
+	}
+	return out
+}
+
+func (a *App) codexResetCandidates() []resetCandidate {
+	u := a.lastCodex
+	if u == nil {
+		return nil
+	}
+	var out []resetCandidate
+	for _, w := range []*CodexWindow{u.primary(), u.secondary()} {
+		if t, ok := codexResetAt(w); ok {
+			label := "5h"
+			if w.WindowSeconds >= 24*60*60 {
+				label = fmt.Sprintf("%dd", int(math.Round(float64(w.WindowSeconds)/86400)))
+			} else if w.WindowSeconds > 0 {
+				label = fmt.Sprintf("%dh", int(math.Round(float64(w.WindowSeconds)/3600)))
+			}
+			out = append(out, resetCandidate{"Codex", label, t})
+		}
+	}
+	return out
+}
+
+func (a *App) setClaudeTitle(s string) {
+	a.claudeTitle = s
+	a.refreshResetRows()
+}
+
+func (a *App) setCodexTitle(s string) {
+	a.codexTitle = s
+	a.refreshResetRows()
+}
+
+// refreshResetRows keeps the "next reset" row and the block-title suffixes
+// ("Claude · Max 20× · ↻ 2d 3h") current. Called every tick; it only pushes
+// a title to systray when the text actually changed.
+func (a *App) refreshResetRows() {
+	now := time.Now()
+	claude := a.claudeResetCandidates()
+	codex := a.codexResetCandidates()
+	suffix := func(cands []resetCandidate) string {
+		if c, ok := nearestReset(cands, now); ok {
+			return " · ↻ " + fmtRemaining(c.at.Sub(now).Seconds(), true)
+		}
+		return ""
+	}
+	if a.claudeParent != nil {
+		if t := orElse(a.claudeTitle, "Claude · —") + suffix(claude); t != a.claudeTitleShown {
+			a.claudeTitleShown = t
+			a.claudeParent.SetTitle(t)
+		}
+	}
+	if a.codexParent != nil {
+		if t := orElse(a.codexTitle, "Codex · —") + suffix(codex); t != a.codexTitleShown {
+			a.codexTitleShown = t
+			a.codexParent.SetTitle(t)
+		}
+	}
+	if a.nextReset != nil {
+		text := "⏱ Next reset: —"
+		if c, ok := nearestReset(append(claude, codex...), now); ok {
+			text = fmt.Sprintf("⏱ Next reset: %s %s · %s", c.provider, c.window, resetText(c.at, now))
+		}
+		if text != a.nextResetShown {
+			a.nextResetShown = text
+			a.nextReset.SetTitle(text)
+		}
+	}
+}
+
 func (a *App) updateStatus() {
 	a.applyIconHeight() // track the burn-driven size; shrinks back when idle
+	a.refreshResetRows()
 	a.claudeOk.SetTitle("Claude ✓ last success: " + agoOf(a.lastOk))
 	a.claudeFail.SetTitle("Claude ✗ last failure: " + failText(a.lastFail, a.lastFailMsg))
 	a.codexOk.SetTitle("Codex ✓ last success: " + agoOf(a.lastCodexOk))
