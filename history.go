@@ -360,11 +360,15 @@ type burnChartPanel struct {
 	// that spends exactly that balance by the reset.
 	Unit      string
 	Remaining float64
-	// Smooth draws the burn as a blurred area over faint raw bars instead of
-	// hard-edged bars alone (see smoothRates). Raw bars still define the axis
-	// scale and poke out above the curve, so outliers stay visible.
-	Smooth bool
+	// SmoothSecs > 0 draws the burn as a blurred area (Gaussian sigma in
+	// seconds, see smoothRates) over faint raw bars instead of hard-edged bars
+	// alone. Raw bars still define the axis scale and poke out above the
+	// curve, so outliers stay visible.
+	SmoothSecs float64
 }
+
+// smooth reports whether the panel draws the blurred curve.
+func (p burnChartPanel) smooth() bool { return p.SmoothSecs > 0 }
 
 // remaining is the budget left in the panel's own units.
 func (p burnChartPanel) remaining() float64 {
@@ -418,16 +422,18 @@ func (p burnChartPanel) sustainableRate() float64 {
 // across a panel; one per plot pixel would be ~200, so this stays crisp.
 const smoothColumns = 160
 
-// smoothSigmaDiv sets the Gaussian width relative to the horizon: 1h charts
-// blur over ~90s, 5h over ~7.5min, 7d over ~4h. Short runs keep their level;
-// only the hard edges between runs are softened.
-const smoothSigmaDiv = 40.0
+// smoothSigmaDiv sets the Gaussian width of the short rows relative to their
+// horizon: 1h charts blur over ~60s, 5h over ~5min. Runs keep their level;
+// only the hard edges between runs are softened. The 7d row picks its width
+// from the menu instead (see weekSmoothOptions).
+const smoothSigmaDiv = 60.0
 
 // smoothRates integrates the piecewise-constant burn rate into n equal
 // columns across [start, now] (exactly, so a narrow run is not lost between
 // sample points), then blurs the columns with a Gaussian of sigma seconds.
-// The blur is area-preserving away from the edges, so the curve's integral
-// still matches the spent total; at the edges the kernel is renormalised.
+// Each column's mass is scattered with a kernel normalised over the columns
+// that exist, so nothing leaks past the edges: the curve's integral equals
+// the raw bars' integral — and the SPENT total — exactly.
 func smoothRates(intervals []burnInterval, start, now int64, n int, sigma float64) []float64 {
 	if n <= 0 || now <= start {
 		return nil
@@ -459,15 +465,17 @@ func smoothRates(intervals []burnInterval, start, now int64, n int, sigma float6
 		kernel[k] = math.Exp(-0.5 * float64(k*k) / (sigmaCols * sigmaCols))
 	}
 	out := make([]float64, n)
-	for i := range out {
-		sum, wsum := 0.0, 0.0
-		for j := max(i-radius, 0); j <= min(i+radius, n-1); j++ {
-			w := kernel[abs(i-j)]
-			sum += w * raw[j]
-			wsum += w
+	for j, v := range raw {
+		if v == 0 {
+			continue
 		}
-		if wsum > 0 {
-			out[i] = sum / wsum
+		lo, hi := max(j-radius, 0), min(j+radius, n-1)
+		wsum := 0.0
+		for i := lo; i <= hi; i++ {
+			wsum += kernel[abs(i-j)]
+		}
+		for i := lo; i <= hi; i++ {
+			out[i] += v * kernel[abs(i-j)] / wsum
 		}
 	}
 	return out
@@ -597,7 +605,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	}
 	if panel.Known && axisMax > 0 {
 		barOpacity := 0.96
-		if panel.Smooth {
+		if panel.smooth() {
 			barOpacity = 0.3 // outliers above the curve stay visible as faint stubs
 		}
 		for _, interval := range panel.Intervals {
@@ -613,7 +621,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 				`<rect data-burn-bar="true" data-burn-ratio="%.3f" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.55" fill="%s" fill-opacity="%.2f"/>`,
 				ratio, barX, plotBase-h, barW, h, svgRGB(burnColor(ratio)), barOpacity))
 		}
-		if panel.Smooth {
+		if panel.smooth() {
 			writeSmoothArea(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate)
 		}
 	}
@@ -835,8 +843,7 @@ func trendPoint(cx, cy, r, position float64) (float64, float64) {
 // follows the same speed scale as the bars, via a horizontal gradient with
 // one stop per column.
 func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate float64) {
-	horizon := panel.Now - panel.Start
-	curve := smoothRates(panel.Intervals, panel.Start, panel.Now, smoothColumns, float64(horizon)/smoothSigmaDiv)
+	curve := smoothRates(panel.Intervals, panel.Start, panel.Now, smoothColumns, panel.SmoothSecs)
 	if len(curve) == 0 {
 		return
 	}

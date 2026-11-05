@@ -109,12 +109,12 @@ Click it for everything as numbers, plus your account.
   reveal it. The run still waiting for its next step is drawn at zero. Bar
   height and colour show consumption speed relative to the dashed sustainable
   pace. The 1h and 5h rows blur those runs into a smooth area (a Gaussian
-  of 1/40 of the horizon, so ~90s and ~7.5min) drawn over the raw bars at low
-  opacity: the curve's integral still equals the spent total, and any run
+  of 1/60 of the horizon, so ~60s and ~5min) drawn over the raw bars at low
+  opacity. The blur never leaks past the window edges, so the curve's
+  integral equals the bars' integral and the SPENT total exactly, and any run
   faster than the curve pokes out above it as a faint stub, so outliers stay
-  visible. The 7d row is smoothed the same way (~4h) by default; the
-  **Smooth 7d history** menu checkbox switches it back to plain bars when you
-  want every spike at full height. The
+  visible. The 7d row's width is a menu choice, **7d smoothing**: plain bars,
+  30 min, 1 hour (default), 2 hours or 4 hours. The
   top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily

@@ -120,9 +120,10 @@ type App struct {
 	// appliedIconHeight is the height currently pushed to systray.
 	iconHeight float64
 	dynIconOff bool
-	// weekRaw turns off the blurred curve on the 7d history row (the 1h and
-	// 5h rows are always smoothed); persisted, off by default.
-	weekRaw           bool
+	// weekSmooth is the 7d history row's blur width key (see
+	// weekSmoothOptions; "off" = plain bars). The 1h and 5h rows are always
+	// smoothed relative to their horizon. Persisted.
+	weekSmooth        string
 	appliedIconHeight float64
 
 	// working hours (local minutes from midnight) and last data
@@ -176,7 +177,8 @@ type App struct {
 	legendParent                               *systray.MenuItem
 	legendItems                                []*systray.MenuItem
 	timeFillParent                             *systray.MenuItem
-	weekSmoothItem                             *systray.MenuItem
+	weekSmoothParent                           *systray.MenuItem
+	weekSmoothItems                            []*systray.MenuItem
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
@@ -205,6 +207,7 @@ func newApp() *App {
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
+		weekSmooth:   weekSmoothDefault,
 		iconHeight:   defaultIconHeight,
 		pollInterval: basePollSecs,
 		lastSave:     time.Time{},
@@ -1157,10 +1160,55 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 	}
 }
 
-// smoothed sets the panel's blurred-curve rendering.
-func smoothed(p burnChartPanel, on bool) burnChartPanel {
-	p.Smooth = on
+// smoothed sets the panel's blurred-curve width (0 = plain bars).
+func smoothed(p burnChartPanel, sigmaSecs float64) burnChartPanel {
+	p.SmoothSecs = sigmaSecs
 	return p
+}
+
+// weekSmoothOptions are the 7d history row's selectable blur widths, in
+// menu order. The key is what gets persisted.
+var weekSmoothOptions = []struct {
+	key   string
+	label string
+	secs  float64
+}{
+	{"off", "Off (plain bars)", 0},
+	{"30m", "30 min", 30 * 60},
+	{"1h", "1 hour", 3600},
+	{"2h", "2 hours", 2 * 3600},
+	{"4h", "4 hours", 4 * 3600},
+}
+
+const weekSmoothDefault = "1h"
+
+// normWeekSmooth maps a persisted key onto a known option, falling back to
+// the default for an absent or unknown value.
+func normWeekSmooth(key string) string {
+	for _, o := range weekSmoothOptions {
+		if o.key == key {
+			return key
+		}
+	}
+	return weekSmoothDefault
+}
+
+func weekSmoothSecs(key string) float64 {
+	for _, o := range weekSmoothOptions {
+		if o.key == key {
+			return o.secs
+		}
+	}
+	return weekSmoothSecs(weekSmoothDefault)
+}
+
+func weekSmoothLabel(key string) string {
+	for _, o := range weekSmoothOptions {
+		if o.key == key {
+			return o.label
+		}
+	}
+	return weekSmoothLabel(weekSmoothDefault)
 }
 
 // codexHistoryWindows maps the API's primary/secondary names onto visual
@@ -1285,23 +1333,24 @@ func (a *App) renderHistory() {
 	}
 
 	a.setPairedHistoryRow(a.histHour,
-		smoothed(makeBurnPanel("Claude", "1h", claudeFocus, 3600, 5*60, now, claudeChartAccent), true),
-		smoothed(makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent), true))
+		smoothed(makeBurnPanel("Claude", "1h", claudeFocus, 3600, 5*60, now, claudeChartAccent), 3600/smoothSigmaDiv),
+		smoothed(makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent), 3600/smoothSigmaDiv))
 	claudeMiddle, claudeMiddleHorizon, claudeMiddleLabel := middleHistory(claudeShort, claudeLong)
 	codexMiddle, codexMiddleHorizon, codexMiddleLabel := middleHistory(codexShort, codexLong)
 	a.setPairedHistoryRow(a.histSession,
 		smoothed(makeBurnPanel("Claude", claudeMiddleLabel, claudeMiddle,
-			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent), true),
+			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent), float64(claudeMiddleHorizon)/smoothSigmaDiv),
 		smoothed(makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
-			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent), true))
+			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent), float64(codexMiddleHorizon)/smoothSigmaDiv))
 	longHorizon := int64(weekSecs)
 	if codexLong.secs > 0 {
 		longHorizon = codexLong.secs
 	}
+	weekSigma := weekSmoothSecs(a.weekSmooth)
 	a.setPairedHistoryRow(a.histWeek,
-		smoothed(makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent), !a.weekRaw),
+		smoothed(makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent), weekSigma),
 		smoothed(makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
-			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent), !a.weekRaw))
+			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent), weekSigma))
 	claudeCreditReset, codexCreditReset := int64(0), int64(0)
 	if secs, ok := a.claudeCreditHorizon(); ok {
 		claudeCreditReset = now + int64(secs)
@@ -1774,7 +1823,7 @@ type persistState struct {
 	TimeFill     string   `json:"time_fill"`
 	IconHeight   float64  `json:"icon_height"`
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
-	WeekRaw      bool     `json:"week_raw"`     // absent => false => 7d row smoothed
+	WeekSmooth   string   `json:"week_smooth"`  // weekSmoothOptions key; absent/unknown => default
 	SessRate     float64  `json:"sess_rate"`
 	WeekRate     float64  `json:"week_rate"`
 	CalibDs      float64  `json:"calib_ds"` // retained session-spend sample (%)
@@ -1831,7 +1880,7 @@ func (a *App) loadState() {
 		a.iconHeight = s.IconHeight
 	}
 	a.dynIconOff = s.DynIconOff
-	a.weekRaw = s.WeekRaw
+	a.weekSmooth = normWeekSmooth(s.WeekSmooth)
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
@@ -1928,7 +1977,7 @@ func (a *App) saveState(force bool) {
 		TimeFill:         timeFillString(),
 		IconHeight:       a.iconHeight,
 		DynIconOff:       a.dynIconOff,
-		WeekRaw:          a.weekRaw,
+		WeekSmooth:       a.weekSmooth,
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
 		CalibDs:          calibDs,

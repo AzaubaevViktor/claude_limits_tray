@@ -543,9 +543,9 @@ func TestSmoothPanelDrawsAreaOverFaintBars(t *testing.T) {
 		Provider: "Codex", Label: "1h",
 		Intervals:  []burnInterval{{Start: now - 1800, End: now - 600, Spent: 1, Rate: 1.0 / 1200}},
 		WindowSecs: 604800, GridSecs: 300, Start: now - 3600, Now: now, Known: true,
-		Accent: codexChartAccent, Smooth: true,
+		Accent: codexChartAccent, SmoothSecs: 60,
 	}
-	svg := string(renderPairedBurnChart(panel, smoothed(panel, false), 9*60, 18*60))
+	svg := string(renderPairedBurnChart(panel, smoothed(panel, 0), 9*60, 18*60))
 	if got := countSubstr(svg, `data-burn-area="true"`); got != 1 {
 		t.Fatalf("want one smoothed area, got %d", got)
 	}
@@ -554,5 +554,25 @@ func TestSmoothPanelDrawsAreaOverFaintBars(t *testing.T) {
 	}
 	if got := countSubstr(svg, `fill-opacity="0.96"`); got != 1 {
 		t.Fatalf("raw panel should keep its solid bar, got %d", got)
+	}
+}
+
+func TestSmoothRatesKeepsMassAtTheEdges(t *testing.T) {
+	now := int64(1_000_000)
+	start := now - 3600
+	// Runs touching both edges: a wide blur would spill past the window, but
+	// the curve must still integrate to exactly what the bars do.
+	intervals := []burnInterval{
+		{Start: start, End: start + 300, Spent: 3, Rate: 3.0 / 300},
+		{Start: now - 120, End: now, Spent: 1, Rate: 1.0 / 120},
+	}
+	n := 120
+	curve := smoothRates(intervals, start, now, n, 600)
+	area := 0.0
+	for _, r := range curve {
+		area += r * 3600 / float64(n)
+	}
+	if !near(area, totalSpent(intervals), 1e-9) {
+		t.Fatalf("edge mass leaked: curve %v vs bars %v", area, totalSpent(intervals))
 	}
 }

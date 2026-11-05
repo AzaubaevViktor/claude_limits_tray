@@ -96,8 +96,13 @@ func (a *App) buildMenu() {
 	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
 	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
 
-	a.weekSmoothItem = systray.AddMenuItemCheckbox("Smooth 7d history", "", !a.weekRaw)
-	a.onClick(a.weekSmoothItem, func() { a.setWeekSmooth(a.weekRaw) })
+	a.weekSmoothParent = systray.AddMenuItem("7d smoothing: "+weekSmoothLabel(a.weekSmooth), "")
+	for _, o := range weekSmoothOptions {
+		key := o.key
+		it := a.weekSmoothParent.AddSubMenuItemCheckbox(o.label, "", key == a.weekSmooth)
+		a.weekSmoothItems = append(a.weekSmoothItems, it)
+		a.onClick(it, func() { a.setWeekSmooth(key) })
+	}
 
 	a.buildIconSizeMenu()
 	systray.AddSeparator()
@@ -266,12 +271,15 @@ func (a *App) renderLegend() {
 	}
 }
 
-// setWeekSmooth toggles the blurred curve on the 7d history row. The 1h and
-// 5h rows are always smoothed; the weekly row is where outliers matter most,
-// so it can fall back to plain bars.
-func (a *App) setWeekSmooth(on bool) {
-	a.weekRaw = !on
-	setCheck(a.weekSmoothItem, on)
+// setWeekSmooth picks the 7d history row's blur width. The 1h and 5h rows
+// are always smoothed relative to their horizon; the weekly row is where
+// outliers matter most, so its width is a menu choice down to plain bars.
+func (a *App) setWeekSmooth(key string) {
+	a.weekSmooth = normWeekSmooth(key)
+	a.weekSmoothParent.SetTitle("7d smoothing: " + weekSmoothLabel(a.weekSmooth))
+	for i, o := range weekSmoothOptions {
+		setCheck(a.weekSmoothItems[i], o.key == a.weekSmooth)
+	}
 	a.renderHistory()
 	a.saveState(true)
 }
