@@ -96,6 +96,9 @@ func (a *App) buildMenu() {
 	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
 	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
 
+	a.weekSmoothItem = systray.AddMenuItemCheckbox("Smooth 7d history", "", !a.weekRaw)
+	a.onClick(a.weekSmoothItem, func() { a.setWeekSmooth(a.weekRaw) })
+
 	a.buildIconSizeMenu()
 	systray.AddSeparator()
 
@@ -261,6 +264,16 @@ func (a *App) renderLegend() {
 			it.SetTitle(rows[i][0] + ":  " + rows[i][1])
 		}
 	}
+}
+
+// setWeekSmooth toggles the blurred curve on the 7d history row. The 1h and
+// 5h rows are always smoothed; the weekly row is where outliers matter most,
+// so it can fall back to plain bars.
+func (a *App) setWeekSmooth(on bool) {
+	a.weekRaw = !on
+	setCheck(a.weekSmoothItem, on)
+	a.renderHistory()
+	a.saveState(true)
 }
 
 func setCheck(it *systray.MenuItem, on bool) {

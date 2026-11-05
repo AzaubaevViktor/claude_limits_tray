@@ -108,7 +108,13 @@ Click it for everything as numbers, plus your account.
   average speed of that run instead of a spike at the poll that happened to
   reveal it. The run still waiting for its next step is drawn at zero. Bar
   height and colour show consumption speed relative to the dashed sustainable
-  pace. The
+  pace. The 1h and 5h rows blur those runs into a smooth area (a Gaussian
+  of 1/40 of the horizon, so ~90s and ~7.5min) drawn over the raw bars at low
+  opacity: the curve's integral still equals the spent total, and any run
+  faster than the curve pokes out above it as a faint stub, so outliers stay
+  visible. The 7d row is smoothed the same way (~4h) by default; the
+  **Smooth 7d history** menu checkbox switches it back to plain bars when you
+  want every spike at full height. The
   top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily

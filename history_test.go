@@ -487,3 +487,72 @@ func TestBurnIntervalsResetEndsRun(t *testing.T) {
 		t.Fatalf("post-reset run = %+v", intervals[1])
 	}
 }
+
+func TestSmoothRatesPreservesAreaAndSoftensEdges(t *testing.T) {
+	now := int64(1_000_000)
+	start := now - 3600
+	// One run burning for the middle third of the horizon.
+	intervals := []burnInterval{{Start: start + 1200, End: start + 2400, Spent: 2, Rate: 2.0 / 1200}}
+	n := 120
+	curve := smoothRates(intervals, start, now, n, 90)
+	if len(curve) != n {
+		t.Fatalf("len = %d", len(curve))
+	}
+	colSecs := 3600.0 / float64(n)
+	area := 0.0
+	for _, r := range curve {
+		area += r * colSecs
+	}
+	if !near(area, 2, 1e-6) {
+		t.Fatalf("blur should preserve spend: want 2, got %v", area)
+	}
+	peak := 2.0 / 1200
+	if !near(curve[n/2], peak, 1e-9) {
+		t.Fatalf("plateau should keep its level: want %v, got %v", peak, curve[n/2])
+	}
+	// At the edge of the run the curve is in transition: strictly between 0
+	// and the plateau on both sides.
+	edge := n / 3
+	if !(curve[edge-1] > 0 && curve[edge-1] < peak && curve[edge] > 0 && curve[edge] < peak) {
+		t.Fatalf("edge should be softened: %v / %v", curve[edge-1], curve[edge])
+	}
+	if curve[0] != 0 || curve[n-1] != 0 {
+		t.Fatalf("far columns should stay zero: %v / %v", curve[0], curve[n-1])
+	}
+}
+
+func TestSmoothRatesKeepsNarrowRun(t *testing.T) {
+	now := int64(1_000_000)
+	start := now - 7*24*3600
+	// A 2-minute run in a 7-day horizon is far narrower than a column; its
+	// spend must still land in the curve rather than fall between samples.
+	intervals := []burnInterval{{Start: now - 3600, End: now - 3480, Spent: 1, Rate: 1.0 / 120}}
+	curve := smoothRates(intervals, start, now, 160, 0)
+	area := 0.0
+	for _, r := range curve {
+		area += r * float64(now-start) / 160
+	}
+	if !near(area, 1, 1e-9) {
+		t.Fatalf("narrow run lost: area %v", area)
+	}
+}
+
+func TestSmoothPanelDrawsAreaOverFaintBars(t *testing.T) {
+	now := int64(1_000_000)
+	panel := burnChartPanel{
+		Provider: "Codex", Label: "1h",
+		Intervals:  []burnInterval{{Start: now - 1800, End: now - 600, Spent: 1, Rate: 1.0 / 1200}},
+		WindowSecs: 604800, GridSecs: 300, Start: now - 3600, Now: now, Known: true,
+		Accent: codexChartAccent, Smooth: true,
+	}
+	svg := string(renderPairedBurnChart(panel, smoothed(panel, false), 9*60, 18*60))
+	if got := countSubstr(svg, `data-burn-area="true"`); got != 1 {
+		t.Fatalf("want one smoothed area, got %d", got)
+	}
+	if got := countSubstr(svg, `fill-opacity="0.30"`); got != 1 {
+		t.Fatalf("smoothed panel should fade its raw bar, got %d faint bars", got)
+	}
+	if got := countSubstr(svg, `fill-opacity="0.96"`); got != 1 {
+		t.Fatalf("raw panel should keep its solid bar, got %d", got)
+	}
+}

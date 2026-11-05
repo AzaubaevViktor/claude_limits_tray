@@ -360,6 +360,10 @@ type burnChartPanel struct {
 	// that spends exactly that balance by the reset.
 	Unit      string
 	Remaining float64
+	// Smooth draws the burn as a blurred area over faint raw bars instead of
+	// hard-edged bars alone (see smoothRates). Raw bars still define the axis
+	// scale and poke out above the curve, so outliers stay visible.
+	Smooth bool
 }
 
 // remaining is the budget left in the panel's own units.
@@ -408,6 +412,72 @@ func (p burnChartPanel) sustainableRate() float64 {
 		return p.remaining() / p.PeriodLeft
 	}
 	return 0
+}
+
+// smoothColumns is how many columns the blurred burn curve is sampled at
+// across a panel; one per plot pixel would be ~200, so this stays crisp.
+const smoothColumns = 160
+
+// smoothSigmaDiv sets the Gaussian width relative to the horizon: 1h charts
+// blur over ~90s, 5h over ~7.5min, 7d over ~4h. Short runs keep their level;
+// only the hard edges between runs are softened.
+const smoothSigmaDiv = 40.0
+
+// smoothRates integrates the piecewise-constant burn rate into n equal
+// columns across [start, now] (exactly, so a narrow run is not lost between
+// sample points), then blurs the columns with a Gaussian of sigma seconds.
+// The blur is area-preserving away from the edges, so the curve's integral
+// still matches the spent total; at the edges the kernel is renormalised.
+func smoothRates(intervals []burnInterval, start, now int64, n int, sigma float64) []float64 {
+	if n <= 0 || now <= start {
+		return nil
+	}
+	colW := float64(now-start) / float64(n)
+	raw := make([]float64, n)
+	for _, iv := range intervals {
+		if iv.End <= iv.Start || iv.Rate <= 0 {
+			continue
+		}
+		first := int(math.Floor(float64(iv.Start-start) / colW))
+		last := int(math.Ceil(float64(iv.End-start)/colW)) - 1
+		for c := max(first, 0); c <= min(last, n-1); c++ {
+			c0 := float64(start) + float64(c)*colW
+			c1 := c0 + colW
+			overlap := math.Min(c1, float64(iv.End)) - math.Max(c0, float64(iv.Start))
+			if overlap > 0 {
+				raw[c] += iv.Rate * overlap / colW
+			}
+		}
+	}
+	sigmaCols := sigma / colW
+	if sigmaCols < 0.5 {
+		return raw
+	}
+	radius := int(math.Ceil(3 * sigmaCols))
+	kernel := make([]float64, radius+1)
+	for k := range kernel {
+		kernel[k] = math.Exp(-0.5 * float64(k*k) / (sigmaCols * sigmaCols))
+	}
+	out := make([]float64, n)
+	for i := range out {
+		sum, wsum := 0.0, 0.0
+		for j := max(i-radius, 0); j <= min(i+radius, n-1); j++ {
+			w := kernel[abs(i-j)]
+			sum += w * raw[j]
+			wsum += w
+		}
+		if wsum > 0 {
+			out[i] = sum / wsum
+		}
+	}
+	return out
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
@@ -526,6 +596,10 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			plotX, y, plotX+plotW, y, accent))
 	}
 	if panel.Known && axisMax > 0 {
+		barOpacity := 0.96
+		if panel.Smooth {
+			barOpacity = 0.3 // outliers above the curve stay visible as faint stubs
+		}
 		for _, interval := range panel.Intervals {
 			ratio := 0.0
 			if sustainableRate > 0 {
@@ -536,8 +610,11 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			barW := math.Max(0.55, x1-x0-0.35)
 			barX := clamp((x0+x1-barW)/2, plotX, plotX+plotW-barW)
 			b.WriteString(fmt.Sprintf(
-				`<rect data-burn-bar="true" data-burn-ratio="%.3f" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.55" fill="%s" fill-opacity="0.96"/>`,
-				ratio, barX, plotBase-h, barW, h, svgRGB(burnColor(ratio))))
+				`<rect data-burn-bar="true" data-burn-ratio="%.3f" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="0.55" fill="%s" fill-opacity="%.2f"/>`,
+				ratio, barX, plotBase-h, barW, h, svgRGB(burnColor(ratio)), barOpacity))
+		}
+		if panel.Smooth {
+			writeSmoothArea(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate)
 		}
 	}
 	b.WriteString(fmt.Sprintf(
@@ -752,4 +829,53 @@ func writeBurnTrendBar(b *strings.Builder, panel burnChartPanel, cx, cy, r float
 func trendPoint(cx, cy, r, position float64) (float64, float64) {
 	angle := math.Pi * (1 - clamp((position+1)/2, 0, 1))
 	return cx + math.Cos(angle)*r, cy - math.Sin(angle)*r
+}
+
+// writeSmoothArea draws the blurred burn curve as a filled area whose colour
+// follows the same speed scale as the bars, via a horizontal gradient with
+// one stop per column.
+func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate float64) {
+	horizon := panel.Now - panel.Start
+	curve := smoothRates(panel.Intervals, panel.Start, panel.Now, smoothColumns, float64(horizon)/smoothSigmaDiv)
+	if len(curve) == 0 {
+		return
+	}
+	id := fmt.Sprintf("burn-area-%d", int(plotX))
+	colW := plotW / float64(len(curve))
+	// The filled area closes along the baseline; the stroke is a separate open
+	// line over the top edge, lifted only where the curve is above zero so the
+	// idle stretches don't get a coloured line along the axis.
+	var stops, top, edge strings.Builder
+	penDown := false
+	for i, rate := range curve {
+		ratio := 0.0
+		if sustainableRate > 0 {
+			ratio = math.Max(0, rate/sustainableRate)
+		}
+		stops.WriteString(fmt.Sprintf(`<stop offset="%.4f" stop-color="%s"/>`,
+			(float64(i)+0.5)/float64(len(curve)), svgRGB(burnColor(ratio))))
+		h := clamp(usableH*rate*unitSecs/axisMax, 0, plotBase-plotTop-1)
+		x, y := plotX+(float64(i)+0.5)*colW, plotBase-h
+		top.WriteString(fmt.Sprintf("L%.2f,%.2f", x, y))
+		switch {
+		case h < 0.25:
+			penDown = false
+		case penDown:
+			edge.WriteString(fmt.Sprintf("L%.2f,%.2f", x, y))
+		default:
+			edge.WriteString(fmt.Sprintf("M%.2f,%.2f", x, y))
+			penDown = true
+		}
+	}
+	b.WriteString(fmt.Sprintf(
+		`<defs><linearGradient id="%s" gradientUnits="userSpaceOnUse" x1="%.2f" y1="0" x2="%.2f" y2="0">%s</linearGradient></defs>`,
+		id, plotX, plotX+plotW, stops.String()))
+	b.WriteString(fmt.Sprintf(
+		`<path data-burn-area="true" d="M%.2f,%.2f%sL%.2f,%.2fZ" fill="url(#%s)" fill-opacity="0.88"/>`,
+		plotX, plotBase, top.String(), plotX+plotW, plotBase, id))
+	if edge.Len() > 0 {
+		b.WriteString(fmt.Sprintf(
+			`<path d="%s" fill="none" stroke="url(#%s)" stroke-width="0.7" stroke-linejoin="round" stroke-linecap="round"/>`,
+			edge.String(), id))
+	}
 }

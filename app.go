@@ -118,8 +118,11 @@ type App struct {
 	// menu-bar icon height in points (manual setting, persisted). dynIconOff
 	// disables the burn-driven auto-size (which is on by default — opt-out);
 	// appliedIconHeight is the height currently pushed to systray.
-	iconHeight        float64
-	dynIconOff        bool
+	iconHeight float64
+	dynIconOff bool
+	// weekRaw turns off the blurred curve on the 7d history row (the 1h and
+	// 5h rows are always smoothed); persisted, off by default.
+	weekRaw           bool
 	appliedIconHeight float64
 
 	// working hours (local minutes from midnight) and last data
@@ -173,6 +176,7 @@ type App struct {
 	legendParent                               *systray.MenuItem
 	legendItems                                []*systray.MenuItem
 	timeFillParent                             *systray.MenuItem
+	weekSmoothItem                             *systray.MenuItem
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
@@ -1153,6 +1157,12 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 	}
 }
 
+// smoothed sets the panel's blurred-curve rendering.
+func smoothed(p burnChartPanel, on bool) burnChartPanel {
+	p.Smooth = on
+	return p
+}
+
 // codexHistoryWindows maps the API's primary/secondary names onto visual
 // short/long columns. A sole weekly primary belongs next to Claude's weekly
 // chart, not in the short-window row just because the API called it primary.
@@ -1275,23 +1285,23 @@ func (a *App) renderHistory() {
 	}
 
 	a.setPairedHistoryRow(a.histHour,
-		makeBurnPanel("Claude", "1h", claudeFocus, 3600, 5*60, now, claudeChartAccent),
-		makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent))
+		smoothed(makeBurnPanel("Claude", "1h", claudeFocus, 3600, 5*60, now, claudeChartAccent), true),
+		smoothed(makeBurnPanel("Codex", "1h", codexFocus, 3600, 5*60, now, codexChartAccent), true))
 	claudeMiddle, claudeMiddleHorizon, claudeMiddleLabel := middleHistory(claudeShort, claudeLong)
 	codexMiddle, codexMiddleHorizon, codexMiddleLabel := middleHistory(codexShort, codexLong)
 	a.setPairedHistoryRow(a.histSession,
-		makeBurnPanel("Claude", claudeMiddleLabel, claudeMiddle,
-			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent),
-		makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
-			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent))
+		smoothed(makeBurnPanel("Claude", claudeMiddleLabel, claudeMiddle,
+			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent), true),
+		smoothed(makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
+			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent), true))
 	longHorizon := int64(weekSecs)
 	if codexLong.secs > 0 {
 		longHorizon = codexLong.secs
 	}
 	a.setPairedHistoryRow(a.histWeek,
-		makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent),
-		makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
-			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent))
+		smoothed(makeBurnPanel("Claude", "7d", claudeLong, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent), !a.weekRaw),
+		smoothed(makeBurnPanel("Codex", windowChartLabel(codexLong, "long"), codexLong,
+			longHorizon, chartGrid(longHorizon, 28), now, codexChartAccent), !a.weekRaw))
 	claudeCreditReset, codexCreditReset := int64(0), int64(0)
 	if secs, ok := a.claudeCreditHorizon(); ok {
 		claudeCreditReset = now + int64(secs)
@@ -1764,6 +1774,7 @@ type persistState struct {
 	TimeFill     string   `json:"time_fill"`
 	IconHeight   float64  `json:"icon_height"`
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
+	WeekRaw      bool     `json:"week_raw"`     // absent => false => 7d row smoothed
 	SessRate     float64  `json:"sess_rate"`
 	WeekRate     float64  `json:"week_rate"`
 	CalibDs      float64  `json:"calib_ds"` // retained session-spend sample (%)
@@ -1820,6 +1831,7 @@ func (a *App) loadState() {
 		a.iconHeight = s.IconHeight
 	}
 	a.dynIconOff = s.DynIconOff
+	a.weekRaw = s.WeekRaw
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
@@ -1916,6 +1928,7 @@ func (a *App) saveState(force bool) {
 		TimeFill:         timeFillString(),
 		IconHeight:       a.iconHeight,
 		DynIconOff:       a.dynIconOff,
+		WeekRaw:          a.weekRaw,
 		SessRate:         a.sessRate,
 		WeekRate:         a.weekRate,
 		CalibDs:          calibDs,
