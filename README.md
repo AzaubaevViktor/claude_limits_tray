@@ -102,8 +102,11 @@ Click it for everything as numbers, plus your account.
   card and Codex the right card, with large high-resolution timelines and
   separate totals/scales for the last hour, short window, and long window. Each
   independent scale has three speed labels on the right in `%/h` or `%/d`, plus
-  start/midpoint/end time labels along the bottom. Every bar is one real interval
-  between successful API updates, with its width matching the polling gap; its
+  start/midpoint/end time labels along the bottom. Both APIs report quota in
+  whole percent, so every bar is one run between counter changes: a 1% step is
+  spread evenly over the flat polls since the previous step, giving the exact
+  average speed of that run instead of a spike at the poll that happened to
+  reveal it. The run still waiting for its next step is drawn at zero. Bar
   height and colour show consumption speed relative to the dashed sustainable
   pace. The
   top-right total is explicitly labelled **SPENT**. Each card also has

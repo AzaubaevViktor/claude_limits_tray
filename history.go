@@ -83,14 +83,26 @@ type burnInterval struct {
 	Rate  float64
 }
 
-// burnIntervals turns every pair of readings inside the horizon into its own
-// bar. A boundary-crossing interval is clipped and its spend prorated; a reset
-// contributes a zero-rate interval rather than a false negative burn.
+// burnIntervals turns the history into bars at the resolution the APIs really
+// offer. Both providers report quota in whole percent, so a step seen between
+// two polls says nothing about which of the preceding flat polls did the
+// spending — a per-poll derivative would show a towering spike followed by
+// nothing. Each step is therefore spread evenly from the previous counter
+// change (or the first sample) up to the poll that revealed it, which is the
+// exact average speed over that run. The trailing run still waiting for its
+// next step draws as zero rather than being guessed, and a reset ends its run
+// with zero spend. A run crossing the horizon boundary is clipped and prorated.
 func burnIntervals(s []histSample, now, horizon int64) []burnInterval {
 	start := now - horizon
 	intervals := make([]burnInterval, 0, len(s))
+	runStart := 0
 	for i := 1; i < len(s); i++ {
-		from, to := s[i-1].T, s[i].T
+		if s[i].V == s[runStart].V && i < len(s)-1 {
+			continue // flat poll inside a run: wait for the step that closes it
+		}
+		from, to := s[runStart].T, s[i].T
+		delta := math.Max(0, s[i].V-s[runStart].V)
+		runStart = i
 		if to <= start || from >= now || to <= from {
 			continue
 		}
@@ -105,13 +117,11 @@ func burnIntervals(s []histSample, now, horizon int64) []burnInterval {
 		if drawEnd <= drawStart {
 			continue
 		}
-		delta := math.Max(0, s[i].V-s[i-1].V)
 		rate := delta / float64(to-from)
-		spent := rate * float64(drawEnd-drawStart)
 		intervals = append(intervals, burnInterval{
 			Start: drawStart,
 			End:   drawEnd,
-			Spent: spent,
+			Spent: rate * float64(drawEnd-drawStart),
 			Rate:  rate,
 		})
 	}
@@ -401,7 +411,7 @@ func (p burnChartPanel) sustainableRate() float64 {
 }
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
-// image. Every bar is one real interval between API updates, normalised to a
+// image. Every bar is one run between quota counter changes, normalised to a
 // speed; the dashed line is exactly sustainable pace, and the y scale always
 // leaves room above it so "healthy" does not look pegged to the ceiling.
 func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {

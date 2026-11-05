@@ -442,3 +442,48 @@ func TestChartTimeTextMatchesChartScale(t *testing.T) {
 		t.Fatalf("daily axis label = %q", got)
 	}
 }
+
+func TestBurnIntervalsSpreadStepOverFlatRun(t *testing.T) {
+	now := int64(1_000_000)
+	s := []histSample{
+		{now - 1200, 10},
+		{now - 1080, 10}, // flat polls at 1% resolution
+		{now - 960, 10},
+		{now - 840, 11}, // the step is revealed here, spent over the whole run
+		{now - 720, 11},
+		{now - 600, 11}, // trailing run with no step yet
+	}
+	intervals := burnIntervals(s, now, 3600)
+	if len(intervals) != 2 {
+		t.Fatalf("want one bar per run, got %+v", intervals)
+	}
+	if intervals[0].Start != now-1200 || intervals[0].End != now-840 || !near(intervals[0].Rate, 1.0/360, 1e-12) {
+		t.Fatalf("step run = %+v", intervals[0])
+	}
+	if intervals[1].Start != now-840 || intervals[1].End != now-600 || intervals[1].Rate != 0 {
+		t.Fatalf("trailing run = %+v", intervals[1])
+	}
+	if got := totalSpent(intervals); !near(got, 1, 1e-12) {
+		t.Fatalf("total: want 1, got %v", got)
+	}
+}
+
+func TestBurnIntervalsResetEndsRun(t *testing.T) {
+	now := int64(1_000_000)
+	s := []histSample{
+		{now - 900, 98},
+		{now - 600, 98},
+		{now - 300, 0}, // reset after a flat run
+		{now - 100, 1}, // first step of the new window counts from the reset
+	}
+	intervals := burnIntervals(s, now, 3600)
+	if len(intervals) != 2 {
+		t.Fatalf("intervals = %+v", intervals)
+	}
+	if intervals[0].Spent != 0 || intervals[0].End != now-300 {
+		t.Fatalf("reset run = %+v", intervals[0])
+	}
+	if intervals[1].Start != now-300 || !near(intervals[1].Rate, 1.0/200, 1e-12) {
+		t.Fatalf("post-reset run = %+v", intervals[1])
+	}
+}
