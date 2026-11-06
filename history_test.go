@@ -139,11 +139,14 @@ func TestBurnColorThresholds(t *testing.T) {
 	if burnColor(0) != dialPurple {
 		t.Errorf("ratio 0 should be purple, got %v", burnColor(0))
 	}
-	if burnColor(0.5) != dialGreen {
-		t.Errorf("ratio 0.5 should be green, got %v", burnColor(0.5))
+	if c := burnColor(0.5); c == dialGreen || c == dialPurple {
+		t.Errorf("ratio 0.5 should sit between purple and green, got %v", c)
 	}
-	if burnColor(1) != dialYellow {
-		t.Errorf("ratio 1 should be yellow, got %v", burnColor(1))
+	if burnColor(1) != dialGreen {
+		t.Errorf("ratio 1 (lasts exactly to the reset) should be green, got %v", burnColor(1))
+	}
+	if burnColor(1.25) != dialYellow {
+		t.Errorf("ratio 1.25 should be yellow, got %v", burnColor(1.25))
 	}
 	if burnColor(1.5) != dialRed {
 		t.Errorf("ratio 1.5 should be red, got %v", burnColor(1.5))

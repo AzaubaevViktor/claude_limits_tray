@@ -114,8 +114,9 @@ Click it for everything as numbers, plus your account.
   over a shrinking wait), drops with every run, starts over at each observed
   reset, and is clipped to the top of the plot just before a reset, where
   almost any speed is affordable. Bar and area colour compare each run's
-  speed with the pace affordable at that moment on the speedometer's scale:
-  green at ½× or under, yellow at exactly 1× (runs out at the reset), red at
+  speed with the pace affordable at that moment on the speedometer's scale,
+  which follows the dial: purple when under pace, green at exactly 1× (runs
+  out precisely at the reset, like the credits ring), yellow at 1¼×, red at
   1½× or more. The y axis is scaled from the flat whole-window pace instead,
   so it stays put while the reference curve moves. If a window's reset is
   unknown the line falls back to that flat pace. The 1h and 5h rows blur
@@ -135,7 +136,8 @@ Click it for everything as numbers, plus your account.
   with lots of quota and a reset minutes away the needle relaxes even under
   heavy use, while a thin remainder with a long wait pushes it into red at a
   modest rate. Three fixed notches mark **½×**, **1×** (runs out exactly at
-  reset) and **1½×** of that affordable pace, and a small accent-coloured
+  reset, the green peak) and **1½×** (where red begins) of that affordable
+  pace, and a small accent-coloured
   pointer outside the arc shows where the plain whole-window pace currently
   sits on that scale — left of 1× you can go faster than normal, right of it
   even normal is too fast. If a quota window's reset time is unknown the

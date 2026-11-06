@@ -285,17 +285,17 @@ func renderPctBar(pct float64, label string) []byte {
 }
 
 // burnColor maps a burn ratio (a rate over the pace affordable at that moment,
-// see ratioAt) to purple -> green -> yellow -> red. Half the affordable pace is
-// green, exactly affordable (runs out at the reset) is yellow, and 1.5x or
-// more is red — the same scale as the speedometer notches.
+// see ratioAt) to purple -> green -> yellow -> red, matching the dial: under
+// pace shades from purple up to green at exactly 1x (lasts precisely to the
+// reset, like the credits ring's green), yellow at 1¼x, red from 1½x on.
 func burnColor(ratio float64) [3]int {
-	if ratio <= 0.5 {
-		return lerpColor(dialPurple, dialGreen, clamp(ratio/0.5, 0, 1))
-	}
 	if ratio <= 1 {
-		return lerpColor(dialGreen, dialYellow, clamp((ratio-0.5)/0.5, 0, 1))
+		return lerpColor(dialPurple, dialGreen, clamp(ratio, 0, 1))
 	}
-	return lerpColor(dialYellow, dialRed, clamp((ratio-1)/0.5, 0, 1))
+	if ratio <= 1.25 {
+		return lerpColor(dialGreen, dialYellow, (ratio-1)/0.25)
+	}
+	return lerpColor(dialYellow, dialRed, clamp((ratio-1.25)/0.25, 0, 1))
 }
 
 var trendBlue = [3]int{10, 132, 255}
@@ -600,7 +600,7 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
-	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(48,209,88)"/><stop offset="50%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
+	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="62.5%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
 	writeBurnPanel(&b, left, 0, panelW, ws, we)
 	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
 	b.WriteString(`</svg>`)
@@ -831,8 +831,8 @@ func panelBurnRatio(panel burnChartPanel) float64 {
 }
 
 // speedTicks are the fixed affordable-pace thresholds notched on the speedometer
-// arc. They coincide with the gradient's colour changes: ½x is where green
-// peaks, 1x (exactly lasting to the reset) is yellow, 1½x is where red begins.
+// arc: ½x (half pace), 1x (exactly lasting to the reset — where green peaks)
+// and 1½x (where red begins), on the burnColor scale.
 var speedTicks = []float64{0.5, 1, 1.5}
 
 // speedAngle maps a burn ratio to the semicircle: 0 on the left, 2x+ on the right.
