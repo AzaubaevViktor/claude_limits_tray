@@ -76,7 +76,8 @@ dial has two concentric rings, split left/right:
 - **Spend pulse** — every time a provider's quota % ticks up, that dial plays a
   short burst: the centre dot flashes and swells, the rim flares, and a
   shockwave rolls **out of the icon** throwing sparks across the menu bar and
-  the screen below it. The sparks are drawn in a borderless, click-through
+  the screen below it — the fat ones burst into fragments on the way, like a
+  firework. The sparks are drawn in a borderless, click-through
   window layered over the menu bar (the icon itself can't paint outside its own
   rectangle), so nothing about the icon's size or position changes. Pick
   **Spend pulse** in the dropdown: *off*, *pulse the dial* (inside the icon

@@ -116,13 +116,42 @@ func TestSparksFlyOutPastTheIcon(t *testing.T) {
 	}
 }
 
+// The fat shells have to go off: late in the burst there should be noticeably
+// more particles in the air than there were before any shell split.
+func TestShellsBurstIntoFragments(t *testing.T) {
+	const reach = 90.0
+	early := pulseSparkle(7, 1, shellSplitLo-0.05, reach)
+	late := pulseSparkle(7, 1, 0.8, reach)
+	if len(late) <= len(early) {
+		t.Errorf("shells should multiply the particles: %d before, %d after", len(early), len(late))
+	}
+	var fattest, finest float64 = 0, math.MaxFloat64
+	for _, s := range early {
+		fattest = math.Max(fattest, s.R)
+	}
+	for _, s := range late {
+		finest = math.Min(finest, s.R)
+	}
+	if finest >= fattest {
+		t.Errorf("fragments (%.2f) should be smaller than the shells that threw them (%.2f)", finest, fattest)
+	}
+	// Whenever a shell goes off, its fragments must still respect the window.
+	for _, at := range []float64{shellSplitLo + 0.01, 0.6, 0.99} {
+		for _, s := range pulseSparkle(7, 1, at, reach) {
+			if d := math.Hypot(s.X, s.Y); d > reach+1e-9 {
+				t.Errorf("fragment at %.2f flew past the window at t=%.2f", d, at)
+			}
+		}
+	}
+}
+
 // "Shaking" means the ember's own offset keeps changing direction over the
 // flight — a steady drift would just be a different trajectory.
 func TestEmbersShakeAlongTheWay(t *testing.T) {
 	var prev float64
 	flips := 0
 	for i := 0; i <= 40; i++ {
-		x, _ := emberShake(99, 3, float64(i)/40)
+		x, _ := emberShake(99, 3, float64(i)/40, 1)
 		if i > 0 && (x > 0) != (prev > 0) {
 			flips++
 		}
@@ -131,7 +160,7 @@ func TestEmbersShakeAlongTheWay(t *testing.T) {
 	if flips < 4 {
 		t.Errorf("the shake should swing back and forth, got %d direction changes", flips)
 	}
-	if x, y := emberShake(99, 3, 0.5); math.Hypot(x, y) > wobbleAmp+1e-9 {
+	if x, y := emberShake(99, 3, 0.5, 1); math.Hypot(x, y) > wobbleAmp+1e-9 {
 		t.Errorf("the shake vector %.2f should stay within the budget %.2f", math.Hypot(x, y), wobbleAmp)
 	}
 }

@@ -49,6 +49,14 @@ const (
 	// haloShare is how far along the embers' flight the shockwave gets before
 	// it gives up — a ring sweeping the whole way out reads as a flying saucer.
 	haloShare = 0.3
+
+	// Some embers are shells: they fly out fat, then burst into a handful of
+	// smaller ones that scatter from wherever they got to, firework-style.
+	shellShare    = 0.45 // share of the embers that are shells
+	shellSplitLo  = 0.28 // earliest point of the burst a shell can go off
+	shellSplitHi  = 0.55 // ... and the latest
+	shellFatten   = 1.45 // how much bigger a shell is than a plain ember
+	shellChildren = 5    // fragments per shell
 )
 
 // spendPulse is one in-flight burst. The zero value is "nothing playing".
@@ -153,14 +161,16 @@ func pulseBump(t float64) float64 {
 // the rim and coast to a stop.
 func pulseEase(t float64) float64 { return 1 - (1-t)*(1-t) }
 
-// pulseSparkle places the embers for a burst: thrown in every direction off the
-// rim, each at its own speed and shaking as it goes. Travel is measured so that
-// even a fully shaken ember stays inside reach.
+// pulseSparkle places the particles for a burst at t. Every ember is thrown off
+// the rim in its own direction, at its own speed, shaking as it goes; a share of
+// them are shells that fly out fat and then burst into fragments which scatter
+// on from wherever they had got to. Travel is budgeted so that even a fully
+// shaken fragment stays inside reach.
 func pulseSparkle(seed int64, mag, t, reach float64) []spark {
 	n := sparkMin + iround(float64(sparkMax-sparkMin)*mag)
 	fade := clamp(t/0.12, 0, 1) * math.Pow(1-t, 1.5)
 	flight := math.Max(0, reach-wobbleAmp-sparkRim)
-	out := make([]spark, 0, n)
+	out := make([]spark, 0, n*shellChildren)
 	for i := 0; i < n; i++ {
 		ph := pulseRand(seed, i, 0) * 2 * math.Pi
 		speed := 0.55 + 0.45*pulseRand(seed, i, 1)
@@ -169,19 +179,54 @@ func pulseSparkle(seed int64, mag, t, reach float64) []spark {
 		// are chunky — anything smaller turns to dust.
 		size := 0.7 + 0.6*pulseRand(seed, i, 2)
 		d := sparkRim + flight*pulseEase(t)*speed
-		jx, jy := emberShake(seed, i, t)
+		x, y := d*math.Cos(ph), d*math.Sin(ph)
+
+		if pulseRand(seed, i, 6) >= shellShare { // a plain ember: just flies
+			jx, jy := emberShake(seed, i, t, 1)
+			out = append(out, spark{X: x + jx, Y: y + jy, R: size,
+				Alpha: clamp(1.3*mag*fade, 0, 1)})
+			continue
+		}
+		split := shellSplitLo + (shellSplitHi-shellSplitLo)*pulseRand(seed, i, 7)
+		if t < split {
+			jx, jy := emberShake(seed, i, t, 1)
+			out = append(out, spark{X: x + jx, Y: y + jy, R: size * shellFatten,
+				Alpha: clamp(1.3*mag*fade, 0, 1)})
+			continue
+		}
+		out = append(out, shellFragments(seed, i, mag, t, split, reach, size, x, y)...)
+	}
+	return out
+}
+
+// shellFragments scatters one burst shell. The fragments start where the shell
+// got to (sx, sy) and spread from there, each in its own direction; their reach
+// is what is left of the window from that point, so the scatter can't carry one
+// past the edge however late the shell went off.
+func shellFragments(seed int64, i int, mag, t, split, reach, size, sx, sy float64) []spark {
+	age := (t - split) / (1 - split) // 0..1 since the shell went off
+	room := math.Max(0, reach-wobbleAmp/2-math.Hypot(sx, sy))
+	fade := math.Pow(1-age, 1.4)
+	out := make([]spark, 0, shellChildren)
+	for k := 0; k < shellChildren; k++ {
+		ph := pulseRand(seed, i*31+k, 8) * 2 * math.Pi
+		speed := 0.45 + 0.55*pulseRand(seed, i*31+k, 9)
+		d := room * pulseEase(age) * speed
+		jx, jy := emberShake(seed, i*31+k, t, 0.5)
 		out = append(out, spark{
-			X: d*math.Cos(ph) + jx, Y: d*math.Sin(ph) + jy, R: size,
-			Alpha: clamp(1.3*mag*fade, 0, 1),
+			X: sx + d*math.Cos(ph) + jx, Y: sy + d*math.Sin(ph) + jy,
+			R:     size * (0.65 - 0.25*age),
+			Alpha: clamp(1.5*mag*fade, 0, 1),
 		})
 	}
 	return out
 }
 
-// emberShake is ember i's wobble at t: two detuned oscillations that build up as
-// it gets clear of the rim, so nothing vibrates while still sitting on the dial.
-func emberShake(seed int64, i int, t float64) (x, y float64) {
-	amp := wobbleAmp * (0.25 + 0.75*pulseEase(t))
+// emberShake is particle i's wobble at t: two detuned oscillations that build up
+// as it gets clear of the rim, so nothing vibrates while still sitting on the
+// dial. scale trims the amplitude (fragments shake less than whole embers).
+func emberShake(seed int64, i int, t, scale float64) (x, y float64) {
+	amp := scale * wobbleAmp * (0.25 + 0.75*pulseEase(t))
 	hz := wobbleHz * (0.7 + 0.6*pulseRand(seed, i, 3))
 	phx := pulseRand(seed, i, 4) * 2 * math.Pi
 	phy := pulseRand(seed, i, 5) * 2 * math.Pi

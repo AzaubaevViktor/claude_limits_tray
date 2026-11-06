@@ -220,7 +220,7 @@ func pulseLegendText() string {
 	case pulseGlow:
 		return "the centre dot flashes and the rim flares each time the quota % ticks up"
 	default:
-		return "the centre dot flashes and a shockwave throws sparks out past the icon, across the menu bar, each time the quota % ticks up"
+		return "the centre dot flashes and a shockwave throws sparks out past the icon, bursting firework-style across the menu bar, each time the quota % ticks up"
 	}
 }
 
