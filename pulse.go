@@ -17,16 +17,21 @@ import (
 type pulseMode int
 
 const (
-	pulseOff    pulseMode = iota // no animation at all
-	pulseGlow                    // the dot and the edge flare, inside the icon
-	pulseSparks                  // ... plus the shockwave and embers, outside it
+	pulseOff      pulseMode = iota // no animation at all
+	pulseGlow                      // the dot and the edge flare, inside the icon
+	pulseSparks                    // ... plus a shockwave and embers, outside it
+	pulseFirework                  // ... thrown across a slice of the screen
 )
+
+// throwsSparks is true for the modes that open the overlay window.
+func (m pulseMode) throwsSparks() bool { return m == pulseSparks || m == pulseFirework }
 
 // pulseFX is the user's choice, menu-toggled and persisted (see setPulseMode).
 var pulseFX = pulseSparks
 
 const (
-	pulseDur       = 1.4  // seconds one burst lasts
+	pulseDur       = 1.8  // seconds a spark burst lasts
+	fireworkDur    = 3.4  // ... and a firework, which has much further to travel
 	pulseFrameSecs = 0.04 // frame interval while a burst is running
 	pulseRefDelta  = 1.5  // quota % in one step that gives a full-strength burst
 	pulseMinDelta  = 0.01 // smaller steps are rounding noise, not spend
@@ -50,13 +55,20 @@ const (
 	// it gives up — a ring sweeping the whole way out reads as a flying saucer.
 	haloShare = 0.3
 
-	// Some embers are shells: they fly out fat, then burst into a handful of
-	// smaller ones that scatter from wherever they got to, firework-style.
-	shellShare    = 0.45 // share of the embers that are shells
-	shellSplitLo  = 0.28 // earliest point of the burst a shell can go off
-	shellSplitHi  = 0.55 // ... and the latest
-	shellFatten   = 1.45 // how much bigger a shell is than a plain ember
-	shellChildren = 5    // fragments per shell
+	// Some embers are shells: they fly out fat, then burst — and their
+	// fragments burst again — scattering from wherever each got to.
+	shellShare  = 0.5  // share of the embers that are shells rather than plain
+	shellFatten = 1.5  // how much bigger a shell is than a plain ember
+	fallShare   = 0.18 // share of the reach the whole burst sags by at the end
+
+	// fragmentCone keeps what a shell throws heading outward, within this many
+	// degrees of the way the shell itself was going — otherwise half the
+	// fragments fly back over the dial and the burst reads as a mess.
+	fragmentCone = 72.0
+
+	// sparkReachRef is the reach a plain spark burst has, in dial units; sizes
+	// are scaled up from there as the throw gets longer.
+	sparkReachRef = 95.0
 )
 
 // spendPulse is one in-flight burst. The zero value is "nothing playing".
@@ -77,12 +89,21 @@ func (p spendPulse) arm(now time.Time, delta float64) spendPulse {
 	return spendPulse{At: now, Mag: mag, Seed: now.UnixNano()}
 }
 
+// pulseLen is how long one burst lasts, in seconds: a firework has a great deal
+// further to travel, so it is given longer to do it.
+func pulseLen() float64 {
+	if pulseFX == pulseFirework {
+		return fireworkDur
+	}
+	return pulseDur
+}
+
 // progress is how far through the burst now is, and whether it is still playing.
 func (p spendPulse) progress(now time.Time) (float64, bool) {
 	if p.At.IsZero() {
 		return 0, false
 	}
-	t := now.Sub(p.At).Seconds() / pulseDur
+	t := now.Sub(p.At).Seconds() / pulseLen()
 	if t < 0 || t >= 1 {
 		return 0, false
 	}
@@ -130,7 +151,7 @@ func pulseIconFrame(p spendPulse, now time.Time, mode pulseMode) pulseFrame {
 // out from the rim to reach (in dial units, where 9 is the icon's own edge) and
 // the embers chasing it. Nothing to draw unless the sparks are on.
 func pulseOverlayFrame(p spendPulse, now time.Time, mode pulseMode, reach float64) pulseFrame {
-	if mode != pulseSparks || reach <= 9 {
+	if !mode.throwsSparks() || reach <= 9 {
 		return pulseFrame{}
 	}
 	t, ok := p.progress(now)
@@ -161,66 +182,127 @@ func pulseBump(t float64) float64 {
 // the rim and coast to a stop.
 func pulseEase(t float64) float64 { return 1 - (1-t)*(1-t) }
 
-// pulseSparkle places the particles for a burst at t. Every ember is thrown off
-// the rim in its own direction, at its own speed, shaking as it goes; a share of
-// them are shells that fly out fat and then burst into fragments which scatter
-// on from wherever they had got to. Travel is budgeted so that even a fully
-// shaken fragment stays inside reach.
+// pulseStages are the generations of a firework: a shell goes off somewhere in
+// the first window, each of its fragments again in the second, and what those
+// throw are the last, smallest particles. splitLo/splitHi are shares of the
+// time the particle has left, so a late parent still gets to burst.
+var pulseStages = []struct {
+	splitLo, splitHi float64
+	children         int
+	shrink           float64
+}{
+	{0.24, 0.40, 4, 0.70},
+	{0.40, 0.58, 3, 0.70},
+}
+
+// particle is one lit dot in the burst — the shell itself at gen 0, then what
+// it threw. They are regenerated from the seed every frame, never carried over.
+type particle struct {
+	id   int
+	gen  int
+	born float64 // burst progress when it appeared
+	x, y float64 // ... and where
+	size float64
+}
+
+// pulseSparkle places every particle of a burst at t: the embers thrown off the
+// rim, and for the shells among them the fragments and sub-fragments their
+// splits produced. Travel is budgeted so that nothing — however late it is
+// born, however hard it shakes, however far the burst has sagged — leaves the
+// window at reach.
 func pulseSparkle(seed int64, mag, t, reach float64) []spark {
 	n := sparkMin + iround(float64(sparkMax-sparkMin)*mag)
-	fade := clamp(t/0.12, 0, 1) * math.Pow(1-t, 1.5)
-	flight := math.Max(0, reach-wobbleAmp-sparkRim)
-	out := make([]spark, 0, n*shellChildren)
+	// The further the burst is thrown, the fatter its particles have to be:
+	// across half a screen a one-point dot is nothing to look at.
+	fat := clamp(math.Sqrt(reach/sparkReachRef), 1, 2.5)
+	out := make([]spark, 0, 4*n)
 	for i := 0; i < n; i++ {
-		ph := pulseRand(seed, i, 0) * 2 * math.Pi
-		speed := 0.55 + 0.45*pulseRand(seed, i, 1)
-		// Embers must read against the desktop as well as the menu bar, and the
-		// far ones are a long way from anything to judge them against, so they
-		// are chunky — anything smaller turns to dust.
-		size := 0.7 + 0.6*pulseRand(seed, i, 2)
-		d := sparkRim + flight*pulseEase(t)*speed
-		x, y := d*math.Cos(ph), d*math.Sin(ph)
-
-		if pulseRand(seed, i, 6) >= shellShare { // a plain ember: just flies
-			jx, jy := emberShake(seed, i, t, 1)
-			out = append(out, spark{X: x + jx, Y: y + jy, R: size,
-				Alpha: clamp(1.3*mag*fade, 0, 1)})
-			continue
+		p := particle{id: i + 1, size: (0.7 + 0.6*pulseRand(seed, i, 2)) * fat}
+		if emberSplits(seed, p.id, p.gen) {
+			p.size *= shellFatten
 		}
-		split := shellSplitLo + (shellSplitHi-shellSplitLo)*pulseRand(seed, i, 7)
-		if t < split {
-			jx, jy := emberShake(seed, i, t, 1)
-			out = append(out, spark{X: x + jx, Y: y + jy, R: size * shellFatten,
-				Alpha: clamp(1.3*mag*fade, 0, 1)})
-			continue
-		}
-		out = append(out, shellFragments(seed, i, mag, t, split, reach, size, x, y)...)
+		out = walkEmber(out, seed, p, mag, t, reach)
 	}
 	return out
 }
 
-// shellFragments scatters one burst shell. The fragments start where the shell
-// got to (sx, sy) and spread from there, each in its own direction; their reach
-// is what is left of the window from that point, so the scatter can't carry one
-// past the edge however late the shell went off.
-func shellFragments(seed int64, i int, mag, t, split, reach, size, sx, sy float64) []spark {
-	age := (t - split) / (1 - split) // 0..1 since the shell went off
-	room := math.Max(0, reach-wobbleAmp/2-math.Hypot(sx, sy))
-	fade := math.Pow(1-age, 1.4)
-	out := make([]spark, 0, shellChildren)
-	for k := 0; k < shellChildren; k++ {
-		ph := pulseRand(seed, i*31+k, 8) * 2 * math.Pi
-		speed := 0.45 + 0.55*pulseRand(seed, i*31+k, 9)
-		d := room * pulseEase(age) * speed
-		jx, jy := emberShake(seed, i*31+k, t, 0.5)
-		out = append(out, spark{
-			X: sx + d*math.Cos(ph) + jx, Y: sy + d*math.Sin(ph) + jy,
-			R:     size * (0.65 - 0.25*age),
-			Alpha: clamp(1.5*mag*fade, 0, 1),
-		})
+// walkEmber draws p where it has got to, or — once its split is due — hands over
+// to the children it threw from that spot.
+func walkEmber(out []spark, seed int64, p particle, mag, t, reach float64) []spark {
+	if split, ok := emberSplitAt(seed, p); ok && t >= split {
+		sx, sy := emberAt(seed, p, split, reach)
+		st := pulseStages[p.gen]
+		for k := 0; k < st.children; k++ {
+			out = walkEmber(out, seed, particle{
+				id: p.id*37 + k + 1, gen: p.gen + 1, born: split,
+				x: sx, y: sy, size: p.size * st.shrink,
+			}, mag, t, reach)
+		}
+		return out
 	}
-	return out
+	alpha := clamp(1.4*mag*emberFade(t, p.born), 0, 1)
+	if alpha <= 0.01 {
+		return out
+	}
+	x, y := emberAt(seed, p, t, reach)
+	jx, jy := emberShake(seed, p.id, t, 1/float64(p.gen+1))
+	return append(out, spark{X: x + jx, Y: y + jy + emberFall(t, reach), R: p.size, Alpha: alpha})
 }
+
+// emberAt is where p has drifted to by at: outward from where it was born, in
+// its own direction, at its own speed, into whatever room is left between it
+// and the edge of the window.
+func emberAt(seed int64, p particle, at, reach float64) (x, y float64) {
+	ph := emberHeading(seed, p)
+	speed := 0.5 + 0.5*pulseRand(seed, p.id, 1)
+	if p.gen == 0 { // the first generation starts on the rim, not at the centre
+		p.x, p.y = sparkRim*math.Cos(ph), sparkRim*math.Sin(ph)
+	}
+	age := clamp((at-p.born)/math.Max(1-p.born, 1e-6), 0, 1)
+	room := math.Max(0, reach*(1-fallShare)-wobbleAmp-math.Hypot(p.x, p.y))
+	d := room * pulseEase(age) * speed
+	return p.x + d*math.Cos(ph), p.y + d*math.Sin(ph)
+}
+
+// emberHeading is the direction a particle travels: anywhere at all for an
+// ember leaving the rim, but within a cone of its parent's outward direction
+// for a fragment, so every generation keeps moving away from the icon.
+func emberHeading(seed int64, p particle) float64 {
+	r := pulseRand(seed, p.id, 0)
+	if p.gen == 0 {
+		return r * 2 * math.Pi
+	}
+	return math.Atan2(p.y, p.x) + (2*r-1)*fragmentCone*math.Pi/180
+}
+
+// emberSplits reports whether a particle bursts at all: only some of the
+// first-generation embers are shells, but everything a shell throws goes on to
+// burst in its turn, until the stages run out.
+func emberSplits(seed int64, id, gen int) bool {
+	if gen >= len(pulseStages) {
+		return false
+	}
+	return gen > 0 || pulseRand(seed, id, 6) < shellShare
+}
+
+// emberSplitAt is the burst progress at which p goes off, if it ever does.
+func emberSplitAt(seed int64, p particle) (float64, bool) {
+	if !emberSplits(seed, p.id, p.gen) {
+		return 0, false
+	}
+	st := pulseStages[p.gen]
+	life := 1 - p.born
+	return p.born + life*(st.splitLo+(st.splitHi-st.splitLo)*pulseRand(seed, p.id, 7)), true
+}
+
+// emberFade lights a particle as it appears and lets it linger, going out only
+// near the end of the burst.
+func emberFade(t, born float64) float64 {
+	return clamp((t-born)/0.06, 0, 1) * math.Pow(clamp(1-t, 0, 1), 0.8)
+}
+
+// emberFall is how far the whole burst has sagged by t — fireworks drop.
+func emberFall(t, reach float64) float64 { return fallShare * reach * t * t }
 
 // emberShake is particle i's wobble at t: two detuned oscillations that build up
 // as it gets clear of the rim, so nothing vibrates while still sitting on the
@@ -230,7 +312,7 @@ func emberShake(seed int64, i int, t, scale float64) (x, y float64) {
 	hz := wobbleHz * (0.7 + 0.6*pulseRand(seed, i, 3))
 	phx := pulseRand(seed, i, 4) * 2 * math.Pi
 	phy := pulseRand(seed, i, 5) * 2 * math.Pi
-	turns := 2 * math.Pi * hz * t * pulseDur
+	turns := 2 * math.Pi * hz * t * pulseLen()
 	// Split over the two axes so the shake vector itself never exceeds amp.
 	amp /= math.Sqrt2
 	return amp * math.Sin(turns+phx), amp * math.Sin(0.83*turns+phy)
@@ -256,12 +338,14 @@ var pulseModeOrder = []struct {
 	{pulseOff, "Off"},
 	{pulseGlow, "Pulse the dial"},
 	{pulseSparks, "Pulse + sparks (outside the icon)"},
+	{pulseFirework, "Firework (across the screen)"},
 }
 
 var pulseModeNames = map[pulseMode]string{
-	pulseOff:    "off",
-	pulseGlow:   "pulse",
-	pulseSparks: "pulse + sparks",
+	pulseOff:      "off",
+	pulseGlow:     "pulse",
+	pulseSparks:   "pulse + sparks",
+	pulseFirework: "firework",
 }
 
 func pulseModeString() string { return pulseModeNames[pulseFX] }

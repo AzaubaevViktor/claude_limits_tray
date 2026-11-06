@@ -104,6 +104,15 @@ func (a *App) buildMenu() {
 		a.onClick(it, func() { a.setPulseMode(mode) })
 	}
 
+	a.fireworkSizeParent = a.pulseParent.AddSubMenuItem(
+		"Firework size: "+fireworkShareLabel(a.fireworkSize), "")
+	for _, o := range fireworkShareOptions {
+		key := o.key
+		it := a.fireworkSizeParent.AddSubMenuItemCheckbox(o.label, "", key == a.fireworkSize)
+		a.fireworkSizeItems = append(a.fireworkSizeItems, it)
+		a.onClick(it, func() { a.setFireworkSize(key) })
+	}
+
 	a.pulseTest = a.pulseParent.AddSubMenuItem("Test it now", "")
 	setEnabled(a.pulseTest, pulseFX != pulseOff)
 	a.onClick(a.pulseTest, func() { a.firePulseTest() })
@@ -289,6 +298,18 @@ func (a *App) setPulseMode(m pulseMode) {
 	a.renderLegend()
 	a.iconKey = ""
 	a.renderIcon()
+	a.saveState(true)
+}
+
+// setFireworkSize picks how far across the screen a firework throws.
+func (a *App) setFireworkSize(key string) {
+	a.fireworkSize = normFireworkShare(key)
+	a.fireworkSizeParent.SetTitle("Firework size: " + fireworkShareLabel(a.fireworkSize))
+	for i, o := range fireworkShareOptions {
+		setCheck(a.fireworkSizeItems[i], o.key == a.fireworkSize)
+	}
+	a.renderLegend()
+	a.clearPulseOverlay() // the next frame needs a window of the new size
 	a.saveState(true)
 }
 

@@ -14,12 +14,12 @@ func TestSpendPulseRunsForItsDurationOnly(t *testing.T) {
 	if p.Mag != 1 {
 		t.Errorf("a reference-size step should be a full-strength burst, got %.2f", p.Mag)
 	}
-	for _, at := range []float64{0, 0.3, pulseDur - 0.01} {
+	for _, at := range []float64{0, 0.3, pulseLen() - 0.01} {
 		if _, ok := p.progress(now.Add(time.Duration(at * float64(time.Second)))); !ok {
 			t.Errorf("burst should still be playing at %.2fs", at)
 		}
 	}
-	if _, ok := p.progress(now.Add(time.Duration(pulseDur * float64(time.Second)))); ok {
+	if _, ok := p.progress(now.Add(time.Duration(pulseLen() * float64(time.Second)))); ok {
 		t.Error("burst should be over once its duration has elapsed")
 	}
 	if _, ok := (spendPulse{}).progress(now); ok {
@@ -79,7 +79,7 @@ func TestPulseFramesFadeOutAndRespectTheMode(t *testing.T) {
 	if oLate.Halo <= oEarly.Halo || oLate.HaloAlpha >= oEarly.HaloAlpha {
 		t.Errorf("the shockwave should grow and fade: %+v then %+v", oEarly, oLate)
 	}
-	if icon(pulseSparks, pulseDur+0.01).Active || over(pulseSparks, pulseDur+0.01).Active {
+	if icon(pulseSparks, pulseLen()+0.01).Active || over(pulseSparks, pulseLen()+0.01).Active {
 		t.Error("the frame after the burst should draw nothing")
 	}
 }
@@ -92,7 +92,7 @@ func TestSparksFlyOutPastTheIcon(t *testing.T) {
 	p := spendPulse{}.arm(now, pulseRefDelta)
 	const reach = 25.0
 	var far, prevMean float64
-	for _, secs := range []float64{0.1, 0.5, 1.2} {
+	for _, secs := range []float64{0.1, 0.5, 1.4} {
 		f := pulseOverlayFrame(p, now.Add(time.Duration(secs*float64(time.Second))), pulseSparks, reach)
 		mean := 0.0
 		for _, s := range f.Sparks {
@@ -116,15 +116,18 @@ func TestSparksFlyOutPastTheIcon(t *testing.T) {
 	}
 }
 
-// The fat shells have to go off: late in the burst there should be noticeably
-// more particles in the air than there were before any shell split.
-func TestShellsBurstIntoFragments(t *testing.T) {
+// The shells have to go off, and what they throw has to go off again: the
+// particle count should step up at each of the three stages.
+func TestShellsBurstInThreeStages(t *testing.T) {
 	const reach = 90.0
-	early := pulseSparkle(7, 1, shellSplitLo-0.05, reach)
-	late := pulseSparkle(7, 1, 0.8, reach)
-	if len(late) <= len(early) {
-		t.Errorf("shells should multiply the particles: %d before, %d after", len(early), len(late))
+	whole := len(pulseSparkle(7, 1, pulseStages[0].splitLo-0.05, reach))
+	split := len(pulseSparkle(7, 1, pulseStages[1].splitLo-0.02, reach))
+	scattered := len(pulseSparkle(7, 1, 0.9, reach))
+	if !(whole < split && split < scattered) {
+		t.Errorf("want a step up per stage, got %d then %d then %d", whole, split, scattered)
 	}
+	early := pulseSparkle(7, 1, pulseStages[0].splitLo-0.05, reach)
+	late := pulseSparkle(7, 1, 0.9, reach)
 	var fattest, finest float64 = 0, math.MaxFloat64
 	for _, s := range early {
 		fattest = math.Max(fattest, s.R)
@@ -135,8 +138,8 @@ func TestShellsBurstIntoFragments(t *testing.T) {
 	if finest >= fattest {
 		t.Errorf("fragments (%.2f) should be smaller than the shells that threw them (%.2f)", finest, fattest)
 	}
-	// Whenever a shell goes off, its fragments must still respect the window.
-	for _, at := range []float64{shellSplitLo + 0.01, 0.6, 0.99} {
+	// Whenever something goes off, what it throws must still respect the window.
+	for _, at := range []float64{pulseStages[0].splitLo + 0.01, 0.6, 0.99} {
 		for _, s := range pulseSparkle(7, 1, at, reach) {
 			if d := math.Hypot(s.X, s.Y); d > reach+1e-9 {
 				t.Errorf("fragment at %.2f flew past the window at t=%.2f", d, at)
@@ -258,7 +261,7 @@ func TestPulseTestFiresBothDials(t *testing.T) {
 	if _, ok := a.codexPulse.progress(later); !ok {
 		t.Error("the Codex dial should burst after the stagger")
 	}
-	if a.pulseRunning(now.Add(time.Duration(2 * pulseDur * float64(time.Second)))) {
+	if a.pulseRunning(now.Add(time.Duration(2 * pulseLen() * float64(time.Second)))) {
 		t.Error("the loop should go quiet once both bursts are over")
 	}
 }

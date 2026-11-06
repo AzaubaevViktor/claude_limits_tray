@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -14,9 +15,71 @@ import (
 // above the menu bar (systray.ShowSparkOverlay), which lets a burst spill over
 // the bar and onto the screen below it.
 
-// overlayPad is how far, in points, the overlay window reaches past the icon on
-// every side — i.e. how far from the dial an ember can get.
+// overlayPad is how far, in points, a plain spark burst reaches past the icon on
+// every side — i.e. how far from the dial an ember can get. A firework instead
+// takes its reach from the screen (see fireworkShare).
 const overlayPad = 90.0
+
+// fallbackScreenHeight stands in when the window server won't say how tall the
+// screen is, so a firework still has somewhere to go.
+const fallbackScreenHeight = 900.0
+
+// fireworkShareOptions are the menu's firework sizes, as a share of the screen
+// height. The key is what gets persisted.
+var fireworkShareOptions = []struct {
+	key   string
+	label string
+	share float64
+}{
+	{"1/8", "1/8 of the screen", 0.125},
+	{"1/4", "1/4 of the screen", 0.25},
+	{"1/3", "1/3 of the screen", 1.0 / 3},
+	{"1/2", "1/2 of the screen", 0.5},
+}
+
+const fireworkShareDefault = "1/4"
+
+// normFireworkShare maps a persisted key onto a known size, falling back to the
+// default for an absent or unknown one.
+func normFireworkShare(key string) string {
+	for _, o := range fireworkShareOptions {
+		if o.key == key {
+			return key
+		}
+	}
+	return fireworkShareDefault
+}
+
+func fireworkShareValue(key string) float64 {
+	for _, o := range fireworkShareOptions {
+		if o.key == key {
+			return o.share
+		}
+	}
+	return fireworkShareValue(fireworkShareDefault)
+}
+
+func fireworkShareLabel(key string) string {
+	for _, o := range fireworkShareOptions {
+		if o.key == key {
+			return o.label
+		}
+	}
+	return fireworkShareLabel(fireworkShareDefault)
+}
+
+// overlayReach is how far past the icon, in points, this mode throws: a fixed
+// margin for the sparks, the chosen slice of the screen for a firework.
+func (a *App) overlayReach() float64 {
+	if pulseFX != pulseFirework {
+		return overlayPad
+	}
+	h := a.screenHeight
+	if h <= 0 {
+		h = fallbackScreenHeight
+	}
+	return math.Max(overlayPad, h*fireworkShareValue(a.fireworkSize))
+}
 
 // paintPulseOverlay draws the current frame of the burst around the icon, or
 // takes the window down once both sides are quiet. Called from the frame loop.
@@ -45,14 +108,15 @@ func (a *App) clearPulseOverlay() {
 // finished.
 func (a *App) pulseOverlaySVG(now time.Time) (svg []byte, w, h float64, ok bool) {
 	iconH := a.appliedIconHeight
-	if pulseFX != pulseSparks || iconH <= 0 {
+	if !pulseFX.throwsSparks() || iconH <= 0 {
 		return nil, 0, 0, false
 	}
+	pad := a.overlayReach()
 	scale := iconH / 18 // points per dial unit
-	w = dialViewWidth(2)*scale + 2*overlayPad
-	h = iconH + 2*overlayPad
+	w = dialViewWidth(2)*scale + 2*pad
+	h = iconH + 2*pad
 	// An ember may just reach the edge of the window; 9 is the icon's own rim.
-	reach := 9 + overlayPad/scale
+	reach := 9 + pad/scale
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
@@ -74,8 +138,8 @@ func (a *App) pulseOverlaySVG(now time.Time) (svg []byte, w, h float64, ok bool)
 		if !f.Active {
 			continue
 		}
-		cx := overlayPad + (float64(i)*(18+dialGap)+dialCX)*scale
-		cy := overlayPad + dialCY*scale
+		cx := pad + (float64(i)*(18+dialGap)+dialCX)*scale
+		cy := pad + dialCY*scale
 		writeOverlayPulse(&b, cx, cy, scale, side.color, f)
 		drawn = true
 	}

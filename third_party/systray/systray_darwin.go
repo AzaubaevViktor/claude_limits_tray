@@ -46,6 +46,12 @@ func HideSparkOverlay() {
 	C.hideSparkOverlay()
 }
 
+// MainScreenHeight is the height in points of the screen that holds the menu
+// bar, or 0 if it can't be determined.
+func MainScreenHeight() float64 {
+	return float64(C.mainScreenHeight())
+}
+
 // SetIcon sets the icon of a menu item. Only works on macOS and Windows.
 // iconBytes should be the content of .ico/.jpg/.png
 func (item *MenuItem) SetIcon(iconBytes []byte) {

@@ -337,6 +337,24 @@ void showSparkOverlay(const char* iconBytes, int length, double width, double he
   }
 }
 
+// mainScreenHeight is the height in points of the screen holding the menu bar,
+// so callers can size an overlay against it.
+double mainScreenHeight(void) {
+  __block double h = 0;
+  void (^read)(void) = ^{
+    NSScreen *screen = [[NSScreen screens] firstObject];
+    if (screen != nil) {
+      h = screen.frame.size.height;
+    }
+  };
+  if ([NSThread isMainThread]) {
+    read();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), read);
+  }
+  return h;
+}
+
 void hideSparkOverlay(void) {
   @autoreleasepool {
     runInMainThread(@selector(hideSpark:), nil);

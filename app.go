@@ -100,6 +100,10 @@ type App struct {
 	// colour each dial was last painted in — the sparks fly in that colour.
 	overlayUp bool
 	sideMark  [2][3]int
+	// screenHeight (points, menu-bar screen) sizes a firework burst, and
+	// fireworkSize is the share of it the user picked. Both feed overlayReach.
+	screenHeight float64
+	fireworkSize string
 
 	// runtime state
 	profile          *Profile
@@ -196,6 +200,8 @@ type App struct {
 	pulseParent                                *systray.MenuItem
 	pulseItems                                 []*systray.MenuItem
 	pulseTest                                  *systray.MenuItem
+	fireworkSizeParent                         *systray.MenuItem
+	fireworkSizeItems                          []*systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
 	dynIconItem                                *systray.MenuItem
@@ -225,6 +231,7 @@ func newApp() *App {
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
 		weekSmooth:   weekSmoothDefault,
+		fireworkSize: fireworkShareDefault,
 		iconHeight:   defaultIconHeight,
 		pollInterval: basePollSecs,
 		lastSave:     time.Time{},
@@ -247,6 +254,7 @@ func defaultStatePath() string {
 func (a *App) onReady() {
 	systray.SetTitle("…")
 	systray.SetTooltip("Claude and Codex limits")
+	a.screenHeight = systray.MainScreenHeight()
 	a.applyIconHeight()
 	a.buildMenu()
 	a.renderHistory()
@@ -1985,7 +1993,8 @@ type persistState struct {
 	WorkStart    string   `json:"work_start"`
 	WorkEnd      string   `json:"work_end"`
 	TimeFill     string   `json:"time_fill"`
-	SpendPulse   string   `json:"spend_pulse"` // pulseModeNames key; absent => default
+	SpendPulse   string   `json:"spend_pulse"`   // pulseModeNames key; absent => default
+	FireworkSize string   `json:"firework_size"` // fireworkShareOptions key; absent => default
 	IconHeight   float64  `json:"icon_height"`
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
 	WeekSmooth   string   `json:"week_smooth"`  // weekSmoothOptions key; absent/unknown => default
@@ -2042,6 +2051,7 @@ func (a *App) loadState() {
 	}
 	setTimeFillFromString(s.TimeFill)
 	setPulseModeFromString(s.SpendPulse)
+	a.fireworkSize = normFireworkShare(s.FireworkSize)
 	if s.IconHeight >= minIconHeight && s.IconHeight <= maxIconHeight {
 		a.iconHeight = s.IconHeight
 	}
@@ -2142,6 +2152,7 @@ func (a *App) saveState(force bool) {
 		WorkEnd:          fmtHHMM(a.workEnd),
 		TimeFill:         timeFillString(),
 		SpendPulse:       pulseModeString(),
+		FireworkSize:     a.fireworkSize,
 		IconHeight:       a.iconHeight,
 		DynIconOff:       a.dynIconOff,
 		WeekSmooth:       a.weekSmooth,

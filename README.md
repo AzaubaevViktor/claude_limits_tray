@@ -81,9 +81,12 @@ dial has two concentric rings, split left/right:
   window layered over the menu bar (the icon itself can't paint outside its own
   rectangle), so nothing about the icon's size or position changes. Pick
   **Spend pulse** in the dropdown: *off*, *pulse the dial* (inside the icon
-  only) or *pulse + sparks* (the default) — plus **Test it now**, which plays a
-  burst on both dials so you can see it without waiting for a poll to find
-  spend. Only quota counters pulse — credits don't — and a restart never
+  only), *pulse + sparks* (the default) or *firework* — which throws the burst
+  clear across the screen, a quarter of its height by default and adjustable
+  from 1/8 to 1/2 under **Firework size**. Every burst runs in three stages:
+  shells fly out, split into fragments, and those split again, all of it
+  drifting down as it fades. **Test it now** plays a burst on both dials so you
+  can see it without waiting for a poll to find spend. Only quota counters pulse — credits don't — and a restart never
   replays spend from the previous run.
 - On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.

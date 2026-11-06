@@ -219,6 +219,8 @@ func pulseLegendText() string {
 		return "off — the dial stays still as quota is spent"
 	case pulseGlow:
 		return "the centre dot flashes and the rim flares each time the quota % ticks up"
+	case pulseFirework:
+		return "every tick of the quota % is a firework thrown across the screen, bursting in three stages — size from the Spend pulse menu"
 	default:
 		return "the centre dot flashes and a shockwave throws sparks out past the icon, bursting firework-style across the menu bar, each time the quota % ticks up"
 	}
