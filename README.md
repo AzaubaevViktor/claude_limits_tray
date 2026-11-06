@@ -78,7 +78,8 @@ dial has two concentric rings, split left/right:
   rim and sparks fly off into the margin around the circle. Pick **Spend pulse**
   in the dropdown: *off*, *pulse the dial* (dot and a flare, icon keeps its
   width) or *pulse + sparks* (the default; the icon reserves a little room on
-  each side for the embers). Only quota counters pulse — credits don't — and a
+  each side for the embers) — plus **Test it now**, which plays a burst on both
+  dials so you can see it without waiting for a poll to find spend. Only quota counters pulse — credits don't — and a
   restart never replays spend from the previous run.
 - On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.

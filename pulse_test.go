@@ -181,6 +181,31 @@ func TestQuotaStepsFireThePulse(t *testing.T) {
 	}
 }
 
+// The menu's "Test it now" row has to play a burst on both dials without any
+// spend to go on, with Codex a beat behind — and the frame loop must stay awake
+// until that later burst has had its turn.
+func TestPulseTestFiresBothDials(t *testing.T) {
+	a := newApp()
+	a.firePulseTest()
+	now := time.Now()
+	if _, ok := a.claudePulse.progress(now); !ok {
+		t.Error("the Claude dial should burst immediately")
+	}
+	if _, ok := a.codexPulse.progress(now); ok {
+		t.Error("the Codex dial should wait out the stagger")
+	}
+	if !a.pulseRunning(now) {
+		t.Error("the frame loop should be awake while a burst is pending")
+	}
+	later := now.Add(pulseTestStagger + 100*time.Millisecond)
+	if _, ok := a.codexPulse.progress(later); !ok {
+		t.Error("the Codex dial should burst after the stagger")
+	}
+	if a.pulseRunning(now.Add(time.Duration(2 * pulseDur * float64(time.Second)))) {
+		t.Error("the loop should go quiet once both bursts are over")
+	}
+}
+
 func TestPulseFrameReachesTheSVG(t *testing.T) {
 	defer func(m pulseMode) { pulseFX = m }(pulseFX)
 	pulseFX = pulseSparks

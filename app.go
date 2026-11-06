@@ -191,6 +191,7 @@ type App struct {
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
 	pulseParent                                *systray.MenuItem
 	pulseItems                                 []*systray.MenuItem
+	pulseTest                                  *systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
 	dynIconItem                                *systray.MenuItem
@@ -305,6 +306,16 @@ func (a *App) pulseLoop() {
 	}
 }
 
+// firePulseTest plays a full-strength burst on both dials, Codex a beat behind
+// Claude, so the menu's "Test it" row shows what spend looks like without
+// waiting for the next poll to find some.
+func (a *App) firePulseTest() {
+	now := time.Now()
+	a.claudePulse = spendPulse{At: now, Mag: 1, Seed: now.UnixNano()}
+	a.codexPulse = spendPulse{At: now.Add(pulseTestStagger), Mag: 1, Seed: now.UnixNano() + 1}
+	a.renderIcon()
+}
+
 // pulseRunning reports whether either side has a burst to draw right now.
 func (a *App) pulseRunning(now time.Time) bool {
 	if pulseFX == pulseOff {
@@ -312,7 +323,9 @@ func (a *App) pulseRunning(now time.Time) bool {
 	}
 	_, c := a.claudePulse.progress(now)
 	_, x := a.codexPulse.progress(now)
-	return c || x
+	// A burst armed for a moment still ahead (the staggered test) has to keep
+	// the loop awake until it starts.
+	return c || x || now.Before(a.codexPulse.At)
 }
 
 // --- polling ----------------------------------------------------------------

@@ -104,6 +104,10 @@ func (a *App) buildMenu() {
 		a.onClick(it, func() { a.setPulseMode(mode) })
 	}
 
+	a.pulseTest = a.pulseParent.AddSubMenuItem("Test it now", "")
+	setEnabled(a.pulseTest, pulseFX != pulseOff)
+	a.onClick(a.pulseTest, func() { a.firePulseTest() })
+
 	a.weekSmoothParent = systray.AddMenuItem("7d smoothing: "+weekSmoothLabel(a.weekSmooth), "")
 	for _, o := range weekSmoothOptions {
 		key := o.key
@@ -280,6 +284,7 @@ func (a *App) setPulseMode(m pulseMode) {
 	for i, o := range pulseModeOrder {
 		setCheck(a.pulseItems[i], o.mode == pulseFX)
 	}
+	setEnabled(a.pulseTest, pulseFX != pulseOff) // nothing to show with it off
 	a.renderLegend()
 	a.iconKey = ""
 	a.renderIcon()
@@ -306,6 +311,14 @@ func (a *App) setWeekSmooth(key string) {
 	}
 	a.renderHistory()
 	a.saveState(true)
+}
+
+func setEnabled(it *systray.MenuItem, on bool) {
+	if on {
+		it.Enable()
+	} else {
+		it.Disable()
+	}
 }
 
 func setCheck(it *systray.MenuItem, on bool) {

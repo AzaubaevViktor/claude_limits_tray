@@ -30,6 +30,10 @@ const (
 	pulseMinDelta  = 0.01 // smaller steps are rounding noise, not spend
 	pulseMergeSecs = 0.25 // a step this soon after another just re-arms it
 
+	// pulseTestStagger delays the Codex side of the menu's test burst, so the
+	// two dials read as two events rather than one wide flash.
+	pulseTestStagger = 220 * time.Millisecond
+
 	// sparkPad is the canvas the embers need beyond the 18-unit dial box, on
 	// each side. Only width is padded: the menu bar fixes the icon height, so
 	// vertical room would have to come out of the dial itself.
