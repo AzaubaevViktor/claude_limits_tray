@@ -148,6 +148,35 @@ func TestShellsBurstInThreeStages(t *testing.T) {
 	}
 }
 
+// Each leg of the flight is a throw, not a drift: most of its travel has to
+// happen in the first quarter, so the particle visibly shoots out, creeps to a
+// stop and then goes off.
+func TestEachLegLaunchesHardThenCoasts(t *testing.T) {
+	if early := pulseEase(0.25); early < 0.65 {
+		t.Errorf("a quarter into a leg only %.2f of it is covered — too slow off the mark", early)
+	}
+	if pulseEase(0) != 0 || math.Abs(pulseEase(1)-1) > 1e-9 {
+		t.Errorf("a leg should run 0..1, got %.3f..%.3f", pulseEase(0), pulseEase(1))
+	}
+	// Across a whole burst that shows up as a kick after every split: the mean
+	// particle moves faster just after one than it did just before.
+	const reach = 240.0
+	at := func(t float64) float64 {
+		ps := pulseSparkle(11, 1, t, reach)
+		mean := 0.0
+		for _, s := range ps {
+			mean += math.Hypot(s.X, s.Y) / float64(len(ps))
+		}
+		return mean
+	}
+	step := func(t float64) float64 { return at(t+0.05) - at(t) }
+	for _, split := range []float64{0.25, 0.55} {
+		if before, after := step(split-0.1), step(split+0.05); after <= before {
+			t.Errorf("no kick at the %.2f split: %.1f before, %.1f after", split, before, after)
+		}
+	}
+}
+
 // "Shaking" means the ember's own offset keeps changing direction over the
 // flight — a steady drift would just be a different trajectory.
 func TestEmbersShakeAlongTheWay(t *testing.T) {

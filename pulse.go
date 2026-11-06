@@ -178,21 +178,27 @@ func pulseBump(t float64) float64 {
 	return (1 - t) / 0.9
 }
 
-// pulseEase decelerates outward travel, so the shockwave and the embers leap off
-// the rim and coast to a stop.
-func pulseEase(t float64) float64 { return 1 - (1-t)*(1-t) }
+// pulseEase is a hard launch that bleeds off: roughly three quarters of a leg's
+// travel happens in its first quarter, then the particle creeps the rest of the
+// way and goes off. The same curve drives the shockwave.
+func pulseEase(t float64) float64 {
+	t = clamp(t, 0, 1)
+	const drag = 5.0
+	return (1 - math.Exp(-drag*t)) / (1 - math.Exp(-drag))
+}
 
 // pulseStages are the generations of a firework: a shell goes off somewhere in
 // the first window, each of its fragments again in the second, and what those
 // throw are the last, smallest particles. splitLo/splitHi are shares of the
 // time the particle has left, so a late parent still gets to burst.
 var pulseStages = []struct {
-	splitLo, splitHi float64
+	splitLo, splitHi float64 // when this generation goes off
 	children         int
-	shrink           float64
+	shrink           float64 // size of a child, relative to its parent
+	reachShare       float64 // share of the room left that this leg uses up
 }{
-	{0.24, 0.40, 4, 0.70},
-	{0.40, 0.58, 3, 0.70},
+	{0.20, 0.30, 4, 0.70, 0.5},
+	{0.38, 0.52, 3, 0.70, 0.55},
 }
 
 // particle is one lit dot in the burst — the shell itself at gen 0, then what
@@ -250,16 +256,26 @@ func walkEmber(out []spark, seed int64, p particle, mag, t, reach float64) []spa
 }
 
 // emberAt is where p has drifted to by at: outward from where it was born, in
-// its own direction, at its own speed, into whatever room is left between it
-// and the edge of the window.
+// its own direction, at its own speed. Its leg of the flight is measured
+// against its own split — it is thrown hard, slows to a crawl and is there just
+// as it goes off, and the next generation starts the same way over again. Each
+// leg spends only a share of the room left between the particle and the edge of
+// the window, so there is always something left for the generation after it.
 func emberAt(seed int64, p particle, at, reach float64) (x, y float64) {
 	ph := emberHeading(seed, p)
-	speed := 0.5 + 0.5*pulseRand(seed, p.id, 1)
+	speed := 0.6 + 0.4*pulseRand(seed, p.id, 1)
 	if p.gen == 0 { // the first generation starts on the rim, not at the centre
 		p.x, p.y = sparkRim*math.Cos(ph), sparkRim*math.Sin(ph)
 	}
-	age := clamp((at-p.born)/math.Max(1-p.born, 1e-6), 0, 1)
+	leg := 1.0 // a particle that never splits has until the end of the burst
+	if split, ok := emberSplitAt(seed, p); ok {
+		leg = split
+	}
+	age := clamp((at-p.born)/math.Max(leg-p.born, 1e-6), 0, 1)
 	room := math.Max(0, reach*(1-fallShare)-wobbleAmp-math.Hypot(p.x, p.y))
+	if p.gen < len(pulseStages) {
+		room *= pulseStages[p.gen].reachShare
+	}
 	d := room * pulseEase(age) * speed
 	return p.x + d*math.Cos(ph), p.y + d*math.Sin(ph)
 }
