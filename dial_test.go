@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -82,8 +83,8 @@ func TestHealthColorEndpoints(t *testing.T) {
 }
 
 func TestLegendMatchesSegments(t *testing.T) {
-	if len(legendRows()) != len(segments)+4 {
-		t.Error("legend should be one row per segment + four colour rows")
+	if len(legendRows()) != len(segments)+5 {
+		t.Error("legend should be one row per segment + four colour rows + the spend pulse")
 	}
 }
 
@@ -93,8 +94,28 @@ func TestRenderDialProducesSVG(t *testing.T) {
 	if !strings.HasPrefix(s, `<svg `) {
 		t.Fatalf("not an SVG: %q", s[:min(len(s), 32)])
 	}
-	if !strings.Contains(s, `viewBox="0 0 18.00 18"`) {
-		t.Errorf("single dial viewBox missing: %s", s)
+	// The default mode throws sparks, so the box carries sparkPad on each side.
+	if want := fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 18+2*sparkPad); !strings.Contains(s, want) {
+		t.Errorf("single dial viewBox %s missing: %s", want, s)
+	}
+}
+
+// Sparks are the only thing that needs room around the dial: with them off the
+// icon must be exactly as wide as it always was.
+func TestPulseModeSetsTheCanvasPadding(t *testing.T) {
+	defer func(m pulseMode) { pulseFX = m }(pulseFX)
+	for _, tc := range []struct {
+		mode pulseMode
+		want string
+	}{
+		{pulseOff, `viewBox="0 0 18.00 18"`},
+		{pulseGlow, `viewBox="0 0 18.00 18"`},
+		{pulseSparks, fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 18+2*sparkPad)},
+	} {
+		pulseFX = tc.mode
+		if s := string(renderDial(blankLimits, [3]int{1, 2, 3}, true)); !strings.Contains(s, tc.want) {
+			t.Errorf("mode %s: want %s, got %s", pulseModeString(), tc.want, s)
+		}
 	}
 }
 
@@ -102,8 +123,9 @@ func TestRenderDualDialProducesWideSVG(t *testing.T) {
 	data := renderDualDial(blankLimits, [3]int{1, 2, 3}, true,
 		blankLimits, [3]int{4, 5, 6}, true)
 	s := string(data)
-	if !strings.Contains(s, `viewBox="0 0 38.00 18"`) {
-		t.Errorf("dual dial viewBox missing: %s", s)
+	want := fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 2*sparkPad+2*18+(2+sparkPad))
+	if !strings.Contains(s, want) {
+		t.Errorf("dual dial viewBox %s missing: %s", want, s)
 	}
 }
 

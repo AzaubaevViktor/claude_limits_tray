@@ -96,6 +96,14 @@ func (a *App) buildMenu() {
 	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
 	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
 
+	a.pulseParent = systray.AddMenuItem("Spend pulse: "+pulseModeString(), "")
+	for _, o := range pulseModeOrder {
+		mode := o.mode
+		it := a.pulseParent.AddSubMenuItemCheckbox(o.label, "", mode == pulseFX)
+		a.pulseItems = append(a.pulseItems, it)
+		a.onClick(it, func() { a.setPulseMode(mode) })
+	}
+
 	a.weekSmoothParent = systray.AddMenuItem("7d smoothing: "+weekSmoothLabel(a.weekSmooth), "")
 	for _, o := range weekSmoothOptions {
 		key := o.key
@@ -260,6 +268,22 @@ func (a *App) setTimeFill(m fillMode) {
 	if a.lastUsage != nil && !a.errorOn {
 		a.apply()
 	}
+}
+
+// setPulseMode picks how the dial reacts when quota % is spent: nothing, a
+// flash of the centre dot and halo, or that plus sparks flying off the rim.
+// Sparks need room around the dial, so switching them on/off changes the icon's
+// width — force a repaint rather than trusting the cached key.
+func (a *App) setPulseMode(m pulseMode) {
+	pulseFX = m
+	a.pulseParent.SetTitle("Spend pulse: " + pulseModeString())
+	for i, o := range pulseModeOrder {
+		setCheck(a.pulseItems[i], o.mode == pulseFX)
+	}
+	a.renderLegend()
+	a.iconKey = ""
+	a.renderIcon()
+	a.saveState(true)
 }
 
 func (a *App) renderLegend() {

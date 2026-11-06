@@ -189,9 +189,10 @@ var segments = []segment{
 }
 
 // legendRows: one row per dial segment, then four rows explaining the colour
-// systems (outer pace, inner time, centre aggregate, credits edge ring).
+// systems (outer pace, inner time, centre aggregate, credits edge ring) and one
+// for the spend pulse.
 func legendRows() [][2]string {
-	rows := make([][2]string, 0, len(segments)+4)
+	rows := make([][2]string, 0, len(segments)+5)
 	for _, s := range segments {
 		label := s.label
 		if s.metric == "time" {
@@ -204,8 +205,22 @@ func legendRows() [][2]string {
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "worst outer pace — grey while both windows are still learning"},
 		[2]string{"Thin edge ring", "credits: share of the time to reset the balance covers at the recent rate · lighter head = next day's spend · grey: not projectable · red: exhausted"},
+		[2]string{"Spend pulse", pulseLegendText()},
 	)
 	return rows
+}
+
+// pulseLegendText describes what the dial does when quota % is spent, per the
+// current Spend pulse setting.
+func pulseLegendText() string {
+	switch pulseFX {
+	case pulseOff:
+		return "off — the dial stays still as quota is spent"
+	case pulseGlow:
+		return "the centre dot flashes and a halo rolls out each time the quota % ticks up"
+	default:
+		return "the centre dot flashes, a halo rolls out and sparks fly off the rim each time the quota % ticks up"
+	}
 }
 
 func timeSegLabel(source string) string {
@@ -300,20 +315,27 @@ type dialRenderInput struct {
 	source string
 	// credits is the thin edge ring; zero value (Show false) draws nothing.
 	credits creditRing
+	// pulse is the spend animation for this side; zero value draws nothing.
+	pulse pulseFrame
 }
 
 func renderDialSVG(inputs []dialRenderInput) []byte {
 	if len(inputs) == 0 {
 		inputs = []dialRenderInput{{limits: blankLimits}}
 	}
-	const gap = 2.0
-	width := 18.0*float64(len(inputs)) + gap*float64(len(inputs)-1)
+	// pad reserves room around each dial for the spend sparks; the gap between
+	// two dials grows with it so neighbouring bursts don't collide. Both depend
+	// on the pulse mode only, so the icon keeps its width while one plays.
+	pad := pulseCanvasPad()
+	gap := 2.0 + pad
+	n := float64(len(inputs))
+	width := 2*pad + 18.0*n + gap*(n-1)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %.2f 18">`,
-		pxSize*len(inputs), pxSize, width))
+		iround(float64(pxSize)*width/18), pxSize, width))
 	for i, input := range inputs {
-		renderDialGroup(&b, input, float64(i)*(18+gap))
+		renderDialGroup(&b, input, pad+float64(i)*(18+gap))
 	}
 	b.WriteString(`</svg>`)
 	return []byte(b.String())
@@ -392,8 +414,10 @@ func renderDialGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 
 	writeCreditRing(b, xoff+dialCX, input.credits)
 
+	writePulse(b, xoff+dialCX, input.markColor, input.pulse)
+
 	if input.hasMark {
-		writeMark(b, xoff, input.markColor)
+		writeMark(b, xoff, input.markColor, input.pulse)
 	}
 }
 
@@ -418,9 +442,10 @@ func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 	writeFullBlockTicks(b, ox, l.BlockPct)
 	writeFullRingTicks(b, ox, rings["inner"], l.TimeTicks)
 	writeCreditRing(b, ox, input.credits)
+	writePulse(b, ox, input.markColor, input.pulse)
 
 	if input.hasMark {
-		writeMark(b, xoff, input.markColor)
+		writeMark(b, xoff, input.markColor, input.pulse)
 	}
 }
 
@@ -429,10 +454,10 @@ func writeCircle(b *strings.Builder, ox, r float64, c [3]int, alpha float64) {
 	writeCircleTagged(b, "", ox, r, c, alpha, dialSW)
 }
 
-func writeCircleTagged(b *strings.Builder, tag string, ox, r float64, c [3]int, alpha, width float64) {
+func writeCircleTagged(b *strings.Builder, attr string, ox, r float64, c [3]int, alpha, width float64) {
 	b.WriteString(fmt.Sprintf(
 		`<circle%s cx="%.2f" cy="%.2f" r="%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f"/>`,
-		tagAttr(tag), ox, dialCY, r, svgRGB(c), width, alpha))
+		attr, ox, dialCY, r, svgRGB(c), width, alpha))
 }
 
 // writeSweep draws frac (0..1) of a full circle, starting at the top and going
@@ -442,25 +467,26 @@ func writeSweep(b *strings.Builder, ox, r, frac float64, c [3]int, alpha float64
 	writeSweepTagged(b, "", ox, r, frac, c, alpha, dialSW)
 }
 
-func writeSweepTagged(b *strings.Builder, tag string, ox, r, frac float64, c [3]int, alpha, width float64) {
+func writeSweepTagged(b *strings.Builder, attr string, ox, r, frac float64, c [3]int, alpha, width float64) {
 	frac = clamp(frac, 0, 1)
 	if frac <= 0.004 {
 		return
 	}
 	if frac >= 0.999 {
-		writeCircleTagged(b, tag, ox, r, c, alpha, width)
+		writeCircleTagged(b, attr, ox, r, c, alpha, width)
 		return
 	}
-	writeArcTagged(b, tag, ox, r, 0, frac*360, c, alpha, width)
+	writeArcTagged(b, attr, ox, r, 0, frac*360, c, alpha, width)
 }
 
 // tagAttr renders an optional data-* marker so tests (and curious readers of
-// the SVG) can tell the credits ring parts apart.
-func tagAttr(tag string) string {
+// the SVG) can tell parts of the drawing apart; the tagged writers take the
+// finished attribute, so each caller picks its own marker name.
+func tagAttr(kind, tag string) string {
 	if tag == "" {
 		return ""
 	}
-	return ` data-credit="` + tag + `"`
+	return ` data-` + kind + `="` + tag + `"`
 }
 
 // writeCreditRing draws the thin credits ring (see creditRing). The ring is
@@ -473,14 +499,14 @@ func writeCreditRing(b *strings.Builder, ox float64, r creditRing) {
 	if r.Empty {
 		track, alpha = dialRed, 0.85
 	}
-	writeCircleTagged(b, "track", ox, creditR, track, alpha, creditSW)
+	writeCircleTagged(b, tagAttr("credit", "track"), ox, creditR, track, alpha, creditSW)
 	if !r.Projected || r.Empty {
 		return
 	}
 	cover := healthColor(r.Cover)
-	writeSweepTagged(b, "cover", ox, creditR, r.Cover, cover, 1.0, creditSW)
+	writeSweepTagged(b, tagAttr("credit", "cover"), ox, creditR, r.Cover, cover, 1.0, creditSW)
 	if r.DaySlice > 0.004 {
-		writeSweepTagged(b, "day", ox, creditR, math.Min(r.DaySlice, r.Cover),
+		writeSweepTagged(b, tagAttr("credit", "day"), ox, creditR, math.Min(r.DaySlice, r.Cover),
 			lerpColor(cover, dialWhite, 0.45), 1.0, creditSW)
 	}
 }
@@ -576,7 +602,7 @@ func writeArc(b *strings.Builder, ox, r, startDeg, endDeg float64, c [3]int, alp
 	writeArcTagged(b, "", ox, r, startDeg, endDeg, c, alpha, width)
 }
 
-func writeArcTagged(b *strings.Builder, tag string, ox, r, startDeg, endDeg float64, c [3]int, alpha, width float64) {
+func writeArcTagged(b *strings.Builder, attr string, ox, r, startDeg, endDeg float64, c [3]int, alpha, width float64) {
 	sx, sy := arcPoint(ox, r, startDeg)
 	ex, ey := arcPoint(ox, r, endDeg)
 	large := 0
@@ -588,12 +614,12 @@ func writeArcTagged(b *strings.Builder, tag string, ox, r, startDeg, endDeg floa
 		sweep = 1
 	}
 	cap := "round"
-	if tag != "" {
-		cap = "butt"
+	if strings.Contains(attr, `data-credit=`) {
+		cap = "butt" // the credits ring parts sit flush against each other
 	}
 	b.WriteString(fmt.Sprintf(
 		`<path%s d="M%.2f,%.2f A%.2f,%.2f 0 %d %d %.2f,%.2f" fill="none" stroke="%s" stroke-width="%.2f" stroke-opacity="%.2f" stroke-linecap="%s"/>`,
-		tagAttr(tag), sx, sy, r, r, large, sweep, ex, ey, svgRGB(c), width, alpha, cap))
+		attr, sx, sy, r, r, large, sweep, ex, ey, svgRGB(c), width, alpha, cap))
 }
 
 func arcPoint(ox, r, deg float64) (float64, float64) {
@@ -606,11 +632,45 @@ func svgRGB(c [3]int) string {
 }
 
 // writeMark draws the centre pace dot: a filled circle matching the worst known
-// outer quota window.
-func writeMark(b *strings.Builder, xoff float64, c [3]int) {
+// outer quota window. A spend pulse swells it and flashes it toward white.
+func writeMark(b *strings.Builder, xoff float64, c [3]int, p pulseFrame) {
+	r, fill := 2.0, c
+	if p.Active {
+		r *= p.MarkScale
+		fill = lerpColor(c, dialWhite, p.MarkFlash)
+	}
 	b.WriteString(fmt.Sprintf(
 		`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s"/>`,
-		xoff+dialCX, dialCY, 2.0, svgRGB(c)))
+		xoff+dialCX, dialCY, r, svgRGB(fill)))
+}
+
+// writePulse draws the spend burst around a dial centred at ox: the halo
+// rolling out past the quota ring, then the embers in the side padding. Both
+// take a lightened pace colour — white alone would vanish on a light menu bar.
+func writePulse(b *strings.Builder, ox float64, c [3]int, p pulseFrame) {
+	if !p.Active {
+		return
+	}
+	glow := lerpColor(c, dialWhite, 0.15)
+	if p.HaloAlpha > 0.01 && p.Halo > 0 {
+		halo := tagAttr("pulse", "halo")
+		if p.HaloFan <= 0 {
+			writeCircleTagged(b, halo, ox, p.Halo, glow, p.HaloAlpha, p.HaloWidth)
+		} else {
+			for _, mid := range []float64{90, 270} { // the right and left sides
+				writeArcTagged(b, halo, ox, p.Halo, mid-p.HaloFan, mid+p.HaloFan,
+					glow, p.HaloAlpha, p.HaloWidth)
+			}
+		}
+	}
+	for _, s := range p.Sparks {
+		if s.Alpha <= 0.01 {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(
+			`<circle data-pulse="spark" cx="%.2f" cy="%.2f" r="%.2f" fill="%s" fill-opacity="%.2f"/>`,
+			ox+s.X, dialCY+s.Y, s.R, svgRGB(glow), s.Alpha))
+	}
 }
 
 var blankLimits = map[string]Limit{

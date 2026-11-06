@@ -73,6 +73,13 @@ dial has two concentric rings, split left/right:
   hours' spend** at that rate. A plain grey ring means the budget exists but
   can't be projected yet (no rate measured or no reset time); a red ring means
   the balance is exhausted. No budget → no ring, the icon is as before.
+- **Spend pulse** — every time a provider's quota % ticks up, that dial plays a
+  short burst: the centre dot flashes and swells, a shockwave rolls out past the
+  rim and sparks fly off into the margin around the circle. Pick **Spend pulse**
+  in the dropdown: *off*, *pulse the dial* (dot and a flare, icon keeps its
+  width) or *pulse + sparks* (the default; the icon reserves a little room on
+  each side for the embers). Only quota counters pulse — credits don't — and a
+  restart never replays spend from the previous run.
 - On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.
 
@@ -89,8 +96,9 @@ Click it for everything as numbers, plus your account.
 - **Burn-driven icon size** — the menu-bar icon **grows while tokens are
   actively burning** (18→24 pt, scored per window so a fast weekly burn and a
   fast 5h burn count equally) and shrinks back when idle. On by default; turn it
-  off to pin a fixed **icon size** (14–24 pt, default 19). Both this toggle and
-  the **Time ring** fill direction are picked from the dropdown and saved to disk.
+  off to pin a fixed **icon size** (14–24 pt, default 19). This toggle, the
+  **Time ring** fill direction and the **Spend pulse** mode are picked from the
+  dropdown and saved to disk.
 - **Weekly limit in 5-hour-session blocks** — the dropdown spells out the dial's
   notches as "≈ N / M × 5h blocks left", with the calibrated cost of one block
   (weekly-% per session) and the spend basis it was measured from, globally and
@@ -290,6 +298,7 @@ A single Go program (SVG icon rendering, menu bar via a repo-local patched
   their runway projection, and the credits menu text.
 - `history.go` — per-series utilisation log and the burn-history charts.
 - `dial.go` — `renderDial`, the SVG icon drawn from the `SEGMENTS` table.
+- `pulse.go` — the spend-pulse animation: burst envelope, shockwave and sparks.
 - `app.go` — `App`: polling loop, state, and rendering.
 - `menu.go` — menu-bar layout and the working-hours pickers.
 - `main.go` — thin entry point.

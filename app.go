@@ -87,6 +87,15 @@ type App struct {
 	// per-series log of raw utilisation readings, for the burn-history charts.
 	// Keyed by seriesClaude*/seriesCodex*; persisted in the state file.
 	history map[string][]histSample
+	// last quota reading seen in THIS process, per series: a step up fires the
+	// side's spend pulse. Not persisted — a restart must not flash the dial for
+	// spend that happened while the app was down.
+	lastPct map[string]float64
+	// in-flight spend bursts, one per dial side, and whether the last painted
+	// icon carried a burst frame (so the loop can paint one clean frame once it
+	// has finished).
+	claudePulse, codexPulse spendPulse
+	pulsePainted            bool
 
 	// runtime state
 	profile          *Profile
@@ -180,6 +189,8 @@ type App struct {
 	weekSmoothParent                           *systray.MenuItem
 	weekSmoothItems                            []*systray.MenuItem
 	timeFillRemaining, timeFillElapsed         *systray.MenuItem
+	pulseParent                                *systray.MenuItem
+	pulseItems                                 []*systray.MenuItem
 	iconSizeParent                             *systray.MenuItem
 	iconSizeItems                              []hourItem
 	dynIconItem                                *systray.MenuItem
@@ -204,6 +215,7 @@ func newApp() *App {
 		calib:        &WeeklyCalibrator{},
 		calibByModel: map[string]*WeeklyCalibrator{},
 		history:      map[string][]histSample{},
+		lastPct:      map[string]float64{},
 		results:      make(chan pollResult, 1),
 		workStart:    9 * 60,
 		workEnd:      18 * 60,
@@ -244,6 +256,7 @@ func (a *App) onReady() {
 	a.renderCodex()
 	go a.tickLoop()
 	go a.blinkLoop()
+	go a.pulseLoop()
 	go a.signalLoop()
 }
 
@@ -274,6 +287,32 @@ func (a *App) blinkLoop() {
 		}
 		a.mu.Unlock()
 	}
+}
+
+// pulseLoop animates the spend bursts. It only paints while a burst is running,
+// plus one frame after the last one ends to clear the halo and embers.
+func (a *App) pulseLoop() {
+	for range time.Tick(time.Duration(pulseFrameSecs * float64(time.Second))) {
+		a.mu.Lock()
+		if a.pulseRunning(time.Now()) {
+			a.pulsePainted = true
+			a.renderIcon()
+		} else if a.pulsePainted {
+			a.pulsePainted = false
+			a.renderIcon()
+		}
+		a.mu.Unlock()
+	}
+}
+
+// pulseRunning reports whether either side has a burst to draw right now.
+func (a *App) pulseRunning(now time.Time) bool {
+	if pulseFX == pulseOff {
+		return false
+	}
+	_, c := a.claudePulse.progress(now)
+	_, x := a.codexPulse.progress(now)
+	return c || x
 }
 
 // --- polling ----------------------------------------------------------------
@@ -1160,6 +1199,44 @@ func (a *App) recordHistory(series string, v float64) {
 		a.history = map[string][]histSample{}
 	}
 	a.history[series] = addHistSample(a.history[series], time.Now().Unix(), v)
+	a.notePctStep(series, v)
+}
+
+// notePctStep watches a quota series for a step up — quota just got spent — and
+// fires the owning dial's pulse, scaled by how much went. The first reading of a
+// series in this process only seeds the comparison; resets (which drop the
+// counter) and the credit series fire nothing.
+func (a *App) notePctStep(series string, v float64) {
+	side := pulseSideFor(series)
+	if side == "" {
+		return
+	}
+	if a.lastPct == nil {
+		a.lastPct = map[string]float64{}
+	}
+	prev, seen := a.lastPct[series]
+	a.lastPct[series] = v
+	if !seen || v <= prev+pulseMinDelta {
+		return
+	}
+	now := time.Now()
+	if side == "codex" {
+		a.codexPulse = a.codexPulse.arm(now, v-prev)
+	} else {
+		a.claudePulse = a.claudePulse.arm(now, v-prev)
+	}
+}
+
+// pulseSideFor maps a history series onto the dial side that should pulse, or
+// "" for series that shouldn't (the credit counters).
+func pulseSideFor(series string) string {
+	switch series {
+	case seriesClaudeSession, seriesClaudeWeekly:
+		return "claude"
+	case seriesCodexPrimary, seriesCodexSecondary:
+		return "codex"
+	}
+	return ""
 }
 
 type historyWindow struct {
@@ -1587,9 +1664,27 @@ func (a *App) setIcon(png []byte, key string) {
 // live dial or, when that side is in error, a red spark that the blink loop
 // toggles on and off — so Claude and Codex can blink red on their own.
 func (a *App) renderIcon() {
+	now := time.Now()
 	ci, ck := a.errorOr(a.errorOn, "claude", a.claudeDial)
 	xi, xk := a.errorOr(a.codexErrorOn, "codex", a.codexDial)
+	if !a.errorOn {
+		ci.pulse, ck = withPulse(a.claudePulse, now, ck)
+	}
+	if !a.codexErrorOn {
+		xi.pulse, xk = withPulse(a.codexPulse, now, xk)
+	}
 	a.setIcon(renderDialSVG([]dialRenderInput{ci, xi}), ck+"|"+xk)
+}
+
+// withPulse renders p's current frame and extends the icon cache key with it, so
+// every animation frame counts as a different icon.
+func withPulse(p spendPulse, now time.Time, key string) (pulseFrame, string) {
+	f := pulseFrameAt(p, now, pulseFX)
+	if !f.Active {
+		return f, key
+	}
+	t, _ := p.progress(now)
+	return f, fmt.Sprintf("%s-pulse%d-%d", key, p.Seed, iround(t*pulseDur/pulseFrameSecs))
 }
 
 // errorOr returns the red-blink error frame for a side that's erroring, or the
@@ -1869,6 +1964,7 @@ type persistState struct {
 	WorkStart    string   `json:"work_start"`
 	WorkEnd      string   `json:"work_end"`
 	TimeFill     string   `json:"time_fill"`
+	SpendPulse   string   `json:"spend_pulse"` // pulseModeNames key; absent => default
 	IconHeight   float64  `json:"icon_height"`
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
 	WeekSmooth   string   `json:"week_smooth"`  // weekSmoothOptions key; absent/unknown => default
@@ -1924,6 +2020,7 @@ func (a *App) loadState() {
 		a.workEnd = m
 	}
 	setTimeFillFromString(s.TimeFill)
+	setPulseModeFromString(s.SpendPulse)
 	if s.IconHeight >= minIconHeight && s.IconHeight <= maxIconHeight {
 		a.iconHeight = s.IconHeight
 	}
@@ -2023,6 +2120,7 @@ func (a *App) saveState(force bool) {
 		WorkStart:        fmtHHMM(a.workStart),
 		WorkEnd:          fmtHHMM(a.workEnd),
 		TimeFill:         timeFillString(),
+		SpendPulse:       pulseModeString(),
 		IconHeight:       a.iconHeight,
 		DynIconOff:       a.dynIconOff,
 		WeekSmooth:       a.weekSmooth,
