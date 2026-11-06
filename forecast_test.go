@@ -70,7 +70,7 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 	}
 
 	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	end, ok := projectedQuotaEnd(20, rate, now)
+	end, ok := projectedBudgetEnd(80, rate, now)
 	if !ok {
 		t.Fatal("positive recent rate should have a finite quota end")
 	}
@@ -79,7 +79,7 @@ func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
 	}
 }
 
-func TestQuotaRunwayText(t *testing.T) {
+func TestBudgetRunwayText(t *testing.T) {
 	tests := []struct {
 		name          string
 		usedPct, rate float64
@@ -96,8 +96,8 @@ func TestQuotaRunwayText(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := quotaRunwayText(tc.usedPct, tc.rate, tc.known); got != tc.want {
-				t.Fatalf("quotaRunwayText() = %q, want %q", got, tc.want)
+			if got := budgetRunwayText(100-tc.usedPct, tc.rate, tc.known); got != tc.want {
+				t.Fatalf("budgetRunwayText() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -137,16 +137,16 @@ func TestRecentRateAndQuotaEndText(t *testing.T) {
 	}
 
 	rate := 40.0 / (4 * 60 * 60) // 10%/h; 20% left -> empty in two hours
-	if got := quotaEndText(80, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {
+	if got := budgetEndText(20, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {
 		t.Fatalf("finite end text = %q", got)
 	}
-	if got := quotaEndText(80, rate, now.Add(time.Hour), now); got != "lasts to reset" {
+	if got := budgetEndText(20, rate, now.Add(time.Hour), now); got != "lasts to reset" {
 		t.Fatalf("reset-safe text = %q", got)
 	}
-	if got := quotaEndText(80, 0, now.Add(time.Hour), now); got != "empty —" {
+	if got := budgetEndText(20, 0, now.Add(time.Hour), now); got != "empty —" {
 		t.Fatalf("idle end text = %q", got)
 	}
-	if got := quotaEndText(100, rate, now.Add(time.Hour), now); got != "empty now" {
+	if got := budgetEndText(0, rate, now.Add(time.Hour), now); got != "empty now" {
 		t.Fatalf("spent quota text = %q", got)
 	}
 }
@@ -182,15 +182,6 @@ func TestForecastPosMonotonic(t *testing.T) {
 	r := projectForecast(80, 40.0/3600, 4*3600, true).Pos()
 	if !(p < g && g < y && y < r) {
 		t.Errorf("pos not monotonic: %v %v %v %v", p, g, y, r)
-	}
-}
-
-func TestGradientEndpoints(t *testing.T) {
-	if gradient(0) != [3]int{175, 82, 222} {
-		t.Error("pos 0 should be purple")
-	}
-	if gradient(1) != [3]int{255, 69, 58} {
-		t.Error("pos 1 should be red")
 	}
 }
 

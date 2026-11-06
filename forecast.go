@@ -132,14 +132,9 @@ func nominalPaceRatio(usedPct, remainingSecs, windowSecs float64, resetKnown boo
 	return affordableBurnRatio(100/windowSecs, usedPct, remainingSecs, windowSecs, true), true
 }
 
-// projectedQuotaEnd returns when the remaining quota reaches zero if the most
-// recently measured rate holds. A zero/unknown rate has no finite projection.
-func projectedQuotaEnd(usedPct, ratePerSec float64, now time.Time) (time.Time, bool) {
-	return projectedBudgetEnd(math.Max(0, 100-usedPct), ratePerSec, now)
-}
-
-// projectedBudgetEnd is projectedQuotaEnd for an explicit remaining budget in
-// any unit (quota % or credits).
+// projectedBudgetEnd returns when a remaining budget (quota % or credits)
+// reaches zero if the most recently measured rate holds. A zero/unknown rate
+// has no finite projection.
 func projectedBudgetEnd(remaining, ratePerSec float64, now time.Time) (time.Time, bool) {
 	if remaining <= 0 {
 		return now, true
@@ -184,14 +179,9 @@ func quotaDurationText(seconds float64, known bool) string {
 	return wholeText + fractionText + unit
 }
 
-// quotaRunwayText says how long the remaining quota would last at one explicit
+// budgetRunwayText says how long a remaining budget would last at one explicit
 // consumption rate. Hours and days are rounded to thirds to keep chart labels
 // compact while still making e.g. 3h20m visible as 3⅓H.
-func quotaRunwayText(usedPct, ratePerSec float64, known bool) string {
-	return budgetRunwayText(math.Max(0, 100-usedPct), ratePerSec, known)
-}
-
-// budgetRunwayText is quotaRunwayText for an explicit remaining budget.
 func budgetRunwayText(remaining, ratePerSec float64, known bool) string {
 	if !known {
 		return "— left"
@@ -232,14 +222,10 @@ func recentMeasurementText(ratePerSec, measuredSpan float64, usedAt, now time.Ti
 	return fmt.Sprintf("measured over %s · last use %s ago", spanLabel(measuredSpan), fmtSpan(age))
 }
 
-// quotaEndText formats the finite exhaustion time from the latest rate. If it
-// lands after a known reset, the useful answer is that the current quota lasts
-// to reset rather than a misleading time in the next window.
-func quotaEndText(usedPct, ratePerSec float64, resetAt, now time.Time) string {
-	return budgetEndText(math.Max(0, 100-usedPct), ratePerSec, resetAt, now)
-}
-
-// budgetEndText is quotaEndText for an explicit remaining budget.
+// budgetEndText formats the finite exhaustion time of a remaining budget from
+// the latest rate. If it lands after a known reset, the useful answer is that
+// the current budget lasts to reset rather than a misleading time in the next
+// window.
 func budgetEndText(remaining, ratePerSec float64, resetAt, now time.Time) string {
 	end, ok := projectedBudgetEnd(remaining, ratePerSec, now)
 	if !ok {
@@ -304,18 +290,9 @@ func spareText(pct, rate, ttr float64, ttrKnown bool) string {
 var burnRed = [3]int{255, 69, 58}
 var dialGray = [3]int{142, 142, 147} // unknown pace — not enough window history yet
 
-// gradient stops along the continuous severity axis (pos 0..1).
-var stops = []struct {
-	p float64
-	c [3]int
-}{
-	{0.00, [3]int{175, 82, 222}}, // purple — lots of headroom
-	{0.33, [3]int{48, 209, 88}},  // green  — finishing near zero
-	{0.66, [3]int{255, 204, 0}},  // yellow — small overshoot
-	{1.00, burnRed},              // red    — large overshoot
-}
-
-// Pos is the continuous severity, 0 (relaxed) .. 1 (way over budget).
+// Pos is the continuous severity, 0 (relaxed) .. 1 (way over budget): purple
+// headroom up to 0.33, green finishing near zero, yellow for a small
+// overshoot up to 0.66, red beyond. Used to pick the worse of two windows.
 func (f Forecast) Pos() float64 {
 	if !f.HasBreak {
 		return 0.33 * (1 - clamp(f.Spare/30, 0, 1))
@@ -326,27 +303,6 @@ func (f Forecast) Pos() float64 {
 	over := (f.BreakSecs - 3600) / (3 * 3600)
 	return 0.66 + 0.34*clamp(over, 0, 1)
 }
-
-func gradient(pos float64) [3]int {
-	pos = clamp(pos, 0, 1)
-	for i := 0; i+1 < len(stops); i++ {
-		p0, c0, p1, c1 := stops[i].p, stops[i].c, stops[i+1].p, stops[i+1].c
-		if pos <= p1 {
-			t := 0.0
-			if p1 > p0 {
-				t = (pos - p0) / (p1 - p0)
-			}
-			var out [3]int
-			for j := 0; j < 3; j++ {
-				out[j] = int(math.Round(float64(c0[j]) + (float64(c1[j])-float64(c0[j]))*t))
-			}
-			return out
-		}
-	}
-	return burnRed
-}
-
-func (f Forecast) Color() [3]int { return gradient(f.Pos()) }
 
 func (f Forecast) Text() string {
 	if f.HasBreak {

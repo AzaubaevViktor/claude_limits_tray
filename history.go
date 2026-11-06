@@ -805,10 +805,6 @@ func axisUnit(horizonSecs int64) string {
 	return "h"
 }
 
-func axisRateText(v float64, horizonSecs int64) string {
-	return axisPctText(v) + "/" + axisUnit(horizonSecs)
-}
-
 func chartTimeText(t time.Time, horizonSecs int64) string {
 	if horizonSecs >= 24*60*60 {
 		return t.Format("Jan 02")
