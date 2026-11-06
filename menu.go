@@ -13,7 +13,7 @@ import (
 func (a *App) buildMenu() {
 	// Burn history sits at the very top of the menu so the charts are visible
 	// without drilling into a submenu.
-	a.histHeader = systray.AddMenuItem("Burn history · dashed = sustainable pace", "")
+	a.histHeader = systray.AddMenuItem("Burn history · dashed = affordable pace (left ÷ time to reset)", "")
 	a.histHeader.Disable()
 	a.histHour = systray.AddMenuItem("", "")
 	a.histSession = systray.AddMenuItem("", "")

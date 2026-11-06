@@ -284,9 +284,10 @@ func renderPctBar(pct float64, label string) []byte {
 	return []byte(b.String())
 }
 
-// burnColor maps a burn ratio (spend vs the sustainable share for the interval)
-// to purple -> green -> yellow -> red. Half the sustainable rate is green,
-// exactly sustainable is yellow, and 1.5x or more is red.
+// burnColor maps a burn ratio (a rate over the pace affordable at that moment,
+// see ratioAt) to purple -> green -> yellow -> red. Half the affordable pace is
+// green, exactly affordable (runs out at the reset) is yellow, and 1.5x or
+// more is red — the same scale as the speedometer notches.
 func burnColor(ratio float64) [3]int {
 	if ratio <= 0.5 {
 		return lerpColor(dialPurple, dialGreen, clamp(ratio/0.5, 0, 1))
@@ -356,8 +357,8 @@ type burnChartPanel struct {
 	ResetAt      int64
 	// Unit switches the card from quota percent ("" — the default, where 100 is
 	// the whole window) to credits in that unit (see fmtAmount); Remaining is
-	// then the balance left, and the dashed sustainable pace becomes the pace
-	// that spends exactly that balance by the reset.
+	// then the balance left, which the affordable pace (see affordableAt) is
+	// measured from.
 	Unit      string
 	Remaining float64
 	// SmoothSecs > 0 draws the burn as a blurred area (Gaussian sigma in
@@ -588,8 +589,10 @@ func abs(v int) int {
 
 // renderPairedBurnChart draws two independent provider cards in one wide menu
 // image. Every bar is one run between quota counter changes, normalised to a
-// speed; the dashed line is exactly sustainable pace, and the y scale always
-// leaves room above it so "healthy" does not look pegged to the ceiling.
+// speed and coloured against the pace affordable at that moment; the dashed
+// line is that affordable pace through time (see writeAffordableLine), drawn
+// over the burn. The y scale is set from the flat whole-window pace, so it
+// stays put while the reference curve climbs toward each reset.
 func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	const gap = 8.0
 	panelW := (pairedChartWidth - gap) / 2

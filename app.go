@@ -1337,7 +1337,7 @@ func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPan
 
 // renderHistory keeps the two providers visible as peer cards at the top of
 // the menu: Claude on the left, Codex on the right. Each card retains its own
-// update intervals and sustainable-pace denominator.
+// update intervals, window length and reset, so its affordable pace is its own.
 func (a *App) renderHistory() {
 	if a.histHour == nil {
 		return
@@ -1504,8 +1504,9 @@ func setDetailRow(it *systray.MenuItem, text string) {
 }
 
 // makeCreditPanel builds the 5-hour credits burn card. Bars are credit spend
-// per real poll interval; the dashed line is the pace that spends the whole
-// balance exactly by the horizon reset; AVG is the rate over the last 24h.
+// per run between balance changes; the dashed line is the pace that would
+// have spent the balance left at each moment exactly by the horizon reset;
+// AVG is the rate over the last 24h.
 func makeCreditPanel(provider string, samples []histSample, b creditBudget, resetAt, now int64, accent [3]int) burnChartPanel {
 	horizon := int64(fiveHourSecs)
 	fifteen := windowUseRate(samples, now, int64(rateWindow))
@@ -1638,8 +1639,9 @@ func (a *App) sessionLeftText(sessPct, weekPct float64) string {
 	return fmt.Sprintf("%.0f%% left", sessLeft)
 }
 
-// weeklyBlockPct is the weekly % one full 5-hour session costs, clamped so the
-// dial's separators stay countable (<= maxWeekTicks). 0 until a real spend is
+// weeklyBlockPct is the weekly % one full 5-hour session costs, floored so the
+// dial's separators stay countable: this is where maxWeekTicks is enforced,
+// writeBlockTicks draws whatever BlockPct it is given. 0 until a real spend is
 // measured — no separators are drawn before then.
 func (a *App) weeklyBlockPct() float64 {
 	bp, ok := a.calib.BlockPct()

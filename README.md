@@ -93,7 +93,8 @@ Click it for everything as numbers, plus your account.
   (weekly-% per session) and the spend basis it was measured from, globally and
   **per model**.
 - Consumption **speed** two ways — a **recent** rate and the **average since the
-  window opened** — with session in **%/h** and weekly in **%/d**, each with the
+  window opened** — with session in **%/h** and weekly in **%/d** (Codex
+  windows pick the unit the same way, by their length), each with the
   **spare left at reset** if that pace holds. The recent line is labelled with
   the **actual span it was measured over** (nominally ~15 min, but widening to the
   real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
@@ -106,28 +107,43 @@ Click it for everything as numbers, plus your account.
   whole percent, so every bar is one run between counter changes: a 1% step is
   spread evenly over the flat polls since the previous step, giving the exact
   average speed of that run instead of a spike at the poll that happened to
-  reveal it. The run still waiting for its next step is drawn at zero. Bar
-  height and colour show consumption speed relative to the dashed sustainable
-  pace. The 1h and 5h rows blur those runs into a smooth area (a Gaussian
-  of 1/60 of the horizon, so ~60s and ~5min) drawn over the raw bars at low
-  opacity. The blur never leaks past the window edges, so the curve's
-  integral equals the bars' integral and the SPENT total exactly, and any run
-  faster than the curve pokes out above it as a faint stub, so outliers stay
-  visible. The 7d row's width is a menu choice, **7d smoothing**: plain bars,
+  reveal it. The run still waiting for its next step is drawn at zero. The
+  dashed line, drawn over the burn, is the **affordable pace** at each moment
+  of the chart: the quota that was still left then ÷ the time that was left
+  to that window's reset. It climbs while nothing is spent (the same remainder
+  over a shrinking wait), drops with every run, starts over at each observed
+  reset, and is clipped to the top of the plot just before a reset, where
+  almost any speed is affordable. Bar and area colour compare each run's
+  speed with the pace affordable at that moment on the speedometer's scale:
+  green at ½× or under, yellow at exactly 1× (runs out at the reset), red at
+  1½× or more. The y axis is scaled from the flat whole-window pace instead,
+  so it stays put while the reference curve moves. If a window's reset is
+  unknown the line falls back to that flat pace. The 1h and 5h rows blur
+  those runs into a smooth area (a Gaussian of 1/60 of the horizon, so ~60s
+  and ~5min) drawn over the raw bars at low opacity. The blur never leaks
+  past the window edges, so the area's integral equals the bars' integral and
+  the SPENT total exactly, and any run faster than the blur pokes out above it
+  as a faint stub, so outliers stay visible. The 7d row's width is a menu
+  choice, **7d smoothing**: plain bars,
   30 min, 1 hour (default), 2 hours or 4 hours. The
   top-right total is explicitly labelled **SPENT**. Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
   charts. The needle reads the rolling **last 15 minutes** against the pace you
-  can still **afford before the reset** (quota left ÷ time left), not against a
-  flat whole-window pace: with lots of quota and a reset minutes away the
-  needle relaxes even under heavy use, while a thin remainder with a long wait
-  pushes it into red at a modest rate. Three fixed notches mark **½×**, **1×**
-  (runs out exactly at reset) and **1½×** of that affordable pace, and a small
-  accent-coloured pointer outside the arc shows where the plain whole-window
-  pace currently sits on that scale — left of 1× you can go faster than
-  normal, right of it even normal is too fast. If the reset time is unknown the
-  needle falls back to the whole-window pace. The quota-end ETA also uses the
+  can still **afford before the reset** (quota left ÷ time left) — the same
+  reference the dashed line and the bar colours use, at its current value:
+  with lots of quota and a reset minutes away the needle relaxes even under
+  heavy use, while a thin remainder with a long wait pushes it into red at a
+  modest rate. Three fixed notches mark **½×**, **1×** (runs out exactly at
+  reset) and **1½×** of that affordable pace, and a small accent-coloured
+  pointer outside the arc shows where the plain whole-window pace currently
+  sits on that scale — left of 1× you can go faster than normal, right of it
+  even normal is too fast. If a quota window's reset time is unknown the
+  needle falls back to the whole-window pace; a credit card with nothing
+  finite to pace against (an unlimited balance, or no reset) rests the needle
+  and greys its label instead. The chart's wall-clock reference is deliberately
+  different from the menu's **Forecast** rows, which project over working
+  hours only. The quota-end ETA also uses the
   15-minute rate (including how long ago the last increase was), not the
   average since the window opened. Each card separately labels, in fixed distinct colours, the
   **time to reset**, the quota runway at the **current 15-minute rate**, and the
@@ -150,8 +166,10 @@ Click it for everything as numbers, plus your account.
   units scaled by `decimal_places`. Codex credits are tracked as a running
   counter of balance drops, since its API only reports the balance.
 - A fourth **Credits 5h** chart row (Claude left, Codex right) in credit units:
-  bars are credits spent per poll interval, the dashed line is the pace that
-  spends the whole balance exactly by the reset, `AVG` is the last 24 h.
+  bars are credits spent per run between balance changes, the dashed line is
+  the pace that would have spent the balance left at each moment exactly by
+  the reset (only for the current period — an earlier period's budget is not
+  recorded), `AVG` is the last 24 h.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, credits, **available rate-limit

@@ -17,7 +17,8 @@ type Limit struct {
 }
 
 // maxWeekTicks caps how many 5-hour-block separators the weekly semicircle can
-// show, so a cheap-per-session estimate can't draw an unreadable comb.
+// show, so a cheap-per-session estimate can't draw an unreadable comb. It is
+// applied where BlockPct is produced (weeklyBlockPct in app.go), not here.
 const maxWeekTicks = 40
 
 type segment struct {
@@ -163,8 +164,12 @@ func setTimeFillFromString(s string) {
 
 // SEGMENTS: edit this table; the icon and the legend both follow.
 //
-//	metric         arc length            colour (green plenty -> red low)
-//	percent_left   % of quota remaining  same  (long green arc = lots left)
+//	metric         arc length            colour
+//	percent_left   % of quota spendable  PACE category (quotaPaceColor via
+//	               (session: capped by   limitPace): purple/green/yellow/red by
+//	               the weekly, see       the since-reset projection, grey while
+//	               effectiveLimitLeft)   learning; a light-grey tail marks the
+//	                                     part the weekly cap makes unspendable
 //	time           time within window    GREENS toward reset (the less time
 //	               left, the greener); the arc fills with elapsed or remaining
 //	               time per the timeFill toggle, but the colour is unchanged
@@ -187,7 +192,7 @@ func legendRows() [][2]string {
 		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
 	rows = append(rows,
-		[2]string{"Outer colour", "purple: under pace · green: on pace · yellow: short gap · red: long gap · grey: learning/capped"},
+		[2]string{"Outer colour", "since-reset pace — purple: under · green: on · yellow: short gap · red: long gap · grey: learning · light-grey tail: unspendable (weekly cap)"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "worst outer pace — grey while both windows are still learning"},
 		[2]string{"Thin edge ring", "credits: share of the time to reset the balance covers at the recent rate · lighter head = next day's spend · grey: not projectable · red: exhausted"},
