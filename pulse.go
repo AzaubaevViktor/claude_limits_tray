@@ -69,6 +69,13 @@ const (
 	// sparkReachRef is the reach a plain spark burst has, in dial units; sizes
 	// are scaled up from there as the throw gets longer.
 	sparkReachRef = 95.0
+
+	// Every particle drags its own short trail of ghosts — only visible while
+	// it is actually moving, since a ghost on top of its particle is just a
+	// fatter dot.
+	trailDots   = 2
+	trailStep   = 0.018 // burst progress between a particle and its first ghost
+	trailMinGap = 0.4   // ... which is dropped if it has not moved this far
 )
 
 // spendPulse is one in-flight burst. The zero value is "nothing playing".
@@ -180,11 +187,19 @@ func pulseBump(t float64) float64 {
 
 // pulseEase is a hard launch that bleeds off: roughly three quarters of a leg's
 // travel happens in its first quarter, then the particle creeps the rest of the
-// way and goes off. The same curve drives the shockwave.
-func pulseEase(t float64) float64 {
+// way and goes off. It drives the shockwave and the shake ramp; particles use
+// emberEase, which is the same curve at their own drag.
+func pulseEase(t float64) float64 { return emberEase(t, 5) }
+
+func emberEase(t, drag float64) float64 {
 	t = clamp(t, 0, 1)
-	const drag = 5.0
 	return (1 - math.Exp(-drag*t)) / (1 - math.Exp(-drag))
+}
+
+// emberDrag is how sharply particle id gives up its speed: a low drag coasts a
+// long way into its leg, a high one is over almost at once.
+func emberDrag(seed int64, id int) float64 {
+	return 2.5 + 4.0*pulseRand(seed, id, 10)
 }
 
 // pulseStages are the generations of a firework: a shell goes off somewhere in
@@ -197,8 +212,8 @@ var pulseStages = []struct {
 	shrink           float64 // size of a child, relative to its parent
 	reachShare       float64 // share of the room left that this leg uses up
 }{
-	{0.20, 0.30, 4, 0.70, 0.5},
-	{0.38, 0.52, 3, 0.70, 0.55},
+	{0.13, 0.32, 4, 0.70, 0.5},
+	{0.20, 0.42, 3, 0.70, 0.55},
 }
 
 // particle is one lit dot in the burst — the shell itself at gen 0, then what
@@ -250,9 +265,37 @@ func walkEmber(out []spark, seed int64, p particle, mag, t, reach float64) []spa
 	if alpha <= 0.01 {
 		return out
 	}
-	x, y := emberAt(seed, p, t, reach)
-	jx, jy := emberShake(seed, p.id, t, 1/float64(p.gen+1))
-	return append(out, spark{X: x + jx, Y: y + jy + emberFall(t, reach), R: p.size, Alpha: alpha})
+	x, y := emberDot(seed, p, t, reach)
+	out = append(out, spark{X: x, Y: y, R: p.size, Alpha: alpha})
+	return appendTrail(out, seed, p, x, y, alpha, t, reach)
+}
+
+// emberDot is p's drawn position at t — where it has flown to, plus its shake
+// and the burst's sag.
+func emberDot(seed int64, p particle, at, reach float64) (x, y float64) {
+	x, y = emberAt(seed, p, at, reach)
+	jx, jy := emberShake(seed, p.id, at, 1/float64(p.gen+1))
+	return x + jx, y + jy + emberFall(at, reach)
+}
+
+// appendTrail streaks a couple of dimmer, smaller ghosts behind a particle at
+// where it was a moment ago. They are dropped once it has slowed down enough
+// that they would just sit on top of it.
+func appendTrail(out []spark, seed int64, p particle, x, y, alpha, t, reach float64) []spark {
+	for k := 1; k <= trailDots; k++ {
+		at := t - float64(k)*trailStep
+		if at <= p.born {
+			break
+		}
+		gx, gy := emberDot(seed, p, at, reach)
+		if math.Hypot(gx-x, gy-y) < trailMinGap*float64(k) {
+			break
+		}
+		out = append(out, spark{X: gx, Y: gy,
+			R:     p.size * math.Pow(0.72, float64(k)),
+			Alpha: alpha * math.Pow(0.45, float64(k))})
+	}
+	return out
 }
 
 // emberAt is where p has drifted to by at: outward from where it was born, in
@@ -263,7 +306,11 @@ func walkEmber(out []spark, seed int64, p particle, mag, t, reach float64) []spa
 // the window, so there is always something left for the generation after it.
 func emberAt(seed int64, p particle, at, reach float64) (x, y float64) {
 	ph := emberHeading(seed, p)
-	speed := 0.6 + 0.4*pulseRand(seed, p.id, 1)
+	// Wide spreads in both speed and drag, so the wave front frays instead of
+	// arriving as one ring: some particles are still coasting while others have
+	// long since parked.
+	// Kept at or below 1 so a particle cannot outrun the room it was given.
+	speed := 0.35 + 0.65*pulseRand(seed, p.id, 1)
 	if p.gen == 0 { // the first generation starts on the rim, not at the centre
 		p.x, p.y = sparkRim*math.Cos(ph), sparkRim*math.Sin(ph)
 	}
@@ -276,7 +323,7 @@ func emberAt(seed int64, p particle, at, reach float64) (x, y float64) {
 	if p.gen < len(pulseStages) {
 		room *= pulseStages[p.gen].reachShare
 	}
-	d := room * pulseEase(age) * speed
+	d := room * emberEase(age, emberDrag(seed, p.id)) * speed
 	return p.x + d*math.Cos(ph), p.y + d*math.Sin(ph)
 }
 

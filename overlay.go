@@ -165,7 +165,7 @@ func writeOverlayPulse(b *strings.Builder, cx, cy, scale float64, c [3]int, f pu
 			continue
 		}
 		b.WriteString(fmt.Sprintf(
-			`<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s" fill-opacity="%.2f"/>`,
+			`<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" fill-opacity="%.2f"/>`,
 			cx+s.X*scale, cy+s.Y*scale, s.R*scale, svgRGB(c), s.Alpha))
 	}
 }

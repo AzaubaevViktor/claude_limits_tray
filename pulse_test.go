@@ -158,22 +158,57 @@ func TestEachLegLaunchesHardThenCoasts(t *testing.T) {
 	if pulseEase(0) != 0 || math.Abs(pulseEase(1)-1) > 1e-9 {
 		t.Errorf("a leg should run 0..1, got %.3f..%.3f", pulseEase(0), pulseEase(1))
 	}
-	// Across a whole burst that shows up as a kick after every split: the mean
-	// particle moves faster just after one than it did just before.
+	// Across a whole burst that shows up as a kick: the swarm's outward speed
+	// picks up again after the splits instead of decaying all the way down.
 	const reach = 240.0
-	at := func(t float64) float64 {
+	mean := func(t float64) float64 {
 		ps := pulseSparkle(11, 1, t, reach)
-		mean := 0.0
+		m := 0.0
 		for _, s := range ps {
-			mean += math.Hypot(s.X, s.Y) / float64(len(ps))
+			m += math.Hypot(s.X, s.Y) / float64(len(ps))
 		}
-		return mean
+		return m
 	}
-	step := func(t float64) float64 { return at(t+0.05) - at(t) }
-	for _, split := range []float64{0.25, 0.55} {
-		if before, after := step(split-0.1), step(split+0.05); after <= before {
-			t.Errorf("no kick at the %.2f split: %.1f before, %.1f after", split, before, after)
+	step := func(t float64) float64 { return mean(t+0.05) - mean(t) }
+	slowest, kick := step(0.15), 0.0
+	for t := 0.2; t < 0.8; t += 0.05 {
+		slowest = math.Min(slowest, step(t))
+		kick = math.Max(kick, step(t))
+	}
+	if kick < 1.5*slowest {
+		t.Errorf("the splits should re-launch the swarm: slowest %.1f, fastest %.1f", slowest, kick)
+	}
+}
+
+// The wave front must not arrive as one ring: particles differ in speed, in
+// drag and in when they go off.
+func TestBurstsFrayRatherThanMarchInStep(t *testing.T) {
+	const reach = 240.0
+	var splits []float64
+	for i := 1; i <= 34; i++ {
+		if at, ok := emberSplitAt(7, particle{id: i}); ok {
+			splits = append(splits, at)
 		}
+	}
+	if len(splits) < 5 {
+		t.Fatalf("expected a good few shells, got %d", len(splits))
+	}
+	lo, hi := splits[0], splits[0]
+	for _, v := range splits {
+		lo, hi = math.Min(lo, v), math.Max(hi, v)
+	}
+	if hi-lo < 0.1 {
+		t.Errorf("shells go off too much in step: %.2f..%.2f", lo, hi)
+	}
+	// ... and at the end of the burst they are spread over a wide band, not
+	// sitting on one circle.
+	near, far := math.MaxFloat64, 0.0
+	for _, s := range pulseSparkle(7, 1, 0.9, reach) {
+		d := math.Hypot(s.X, s.Y)
+		near, far = math.Min(near, d), math.Max(far, d)
+	}
+	if far-near < 0.3*far {
+		t.Errorf("the front is too tight: %.1f..%.1f", near, far)
 	}
 }
 
