@@ -26,8 +26,8 @@ const (
 var pulseFX = pulseSparks
 
 const (
-	pulseDur       = 1.1  // seconds one burst lasts
-	pulseFrameSecs = 0.07 // frame interval while a burst is running
+	pulseDur       = 1.4  // seconds one burst lasts
+	pulseFrameSecs = 0.04 // frame interval while a burst is running
 	pulseRefDelta  = 1.5  // quota % in one step that gives a full-strength burst
 	pulseMinDelta  = 0.01 // smaller steps are rounding noise, not spend
 	pulseMergeSecs = 0.25 // a step this soon after another just re-arms it
@@ -38,8 +38,17 @@ const (
 
 	iconHaloR = 8.6 // the in-icon flare, just inside the 18-unit icon box
 	sparkRim  = 8.4 // embers leave from the rim of the dial
-	sparkMin  = 4   // embers per burst at the faintest spend
-	sparkMax  = 11  // ... and at pulseRefDelta or above
+	sparkMin  = 10  // embers per burst at the faintest spend
+	sparkMax  = 34  // ... and at pulseRefDelta or above
+
+	// Embers shake as they fly. The wobble has to stay well under half the
+	// frame rate or it aliases into drift instead of a shake.
+	wobbleAmp = 1.3 // dial units of shake at full flight
+	wobbleHz  = 5.0 // base shake rate; each ember varies around it
+
+	// haloShare is how far along the embers' flight the shockwave gets before
+	// it gives up — a ring sweeping the whole way out reads as a flying saucer.
+	haloShare = 0.3
 )
 
 // spendPulse is one in-flight burst. The zero value is "nothing playing".
@@ -124,7 +133,7 @@ func pulseOverlayFrame(p spendPulse, now time.Time, mode pulseMode, reach float6
 	out := pulseEase(t)
 	return pulseFrame{
 		Active:    true,
-		Halo:      sparkRim + (reach-sparkRim)*out,
+		Halo:      sparkRim + (reach-sparkRim)*haloShare*out,
 		HaloWidth: 0.35 + 1.2*(1-out),
 		HaloAlpha: 0.65 * mag * (1 - t) * (1 - t),
 		Sparks:    pulseSparkle(p.Seed, mag, t, reach),
@@ -145,24 +154,41 @@ func pulseBump(t float64) float64 {
 func pulseEase(t float64) float64 { return 1 - (1-t)*(1-t) }
 
 // pulseSparkle places the embers for a burst: thrown in every direction off the
-// rim, each at its own speed, none travelling past reach.
+// rim, each at its own speed and shaking as it goes. Travel is measured so that
+// even a fully shaken ember stays inside reach.
 func pulseSparkle(seed int64, mag, t, reach float64) []spark {
 	n := sparkMin + iround(float64(sparkMax-sparkMin)*mag)
 	fade := clamp(t/0.12, 0, 1) * math.Pow(1-t, 1.5)
+	flight := math.Max(0, reach-wobbleAmp-sparkRim)
 	out := make([]spark, 0, n)
 	for i := 0; i < n; i++ {
 		ph := pulseRand(seed, i, 0) * 2 * math.Pi
 		speed := 0.55 + 0.45*pulseRand(seed, i, 1)
-		// Embers must read against the desktop as well as the menu bar, so they
-		// are chunky — anything smaller turns to dust at menu-bar scale.
-		size := 0.45 + 0.4*pulseRand(seed, i, 2)
-		d := sparkRim + (reach-sparkRim)*pulseEase(t)*speed
+		// Embers must read against the desktop as well as the menu bar, and the
+		// far ones are a long way from anything to judge them against, so they
+		// are chunky — anything smaller turns to dust.
+		size := 0.7 + 0.6*pulseRand(seed, i, 2)
+		d := sparkRim + flight*pulseEase(t)*speed
+		jx, jy := emberShake(seed, i, t)
 		out = append(out, spark{
-			X: d * math.Cos(ph), Y: d * math.Sin(ph), R: size,
+			X: d*math.Cos(ph) + jx, Y: d*math.Sin(ph) + jy, R: size,
 			Alpha: clamp(1.3*mag*fade, 0, 1),
 		})
 	}
 	return out
+}
+
+// emberShake is ember i's wobble at t: two detuned oscillations that build up as
+// it gets clear of the rim, so nothing vibrates while still sitting on the dial.
+func emberShake(seed int64, i int, t float64) (x, y float64) {
+	amp := wobbleAmp * (0.25 + 0.75*pulseEase(t))
+	hz := wobbleHz * (0.7 + 0.6*pulseRand(seed, i, 3))
+	phx := pulseRand(seed, i, 4) * 2 * math.Pi
+	phy := pulseRand(seed, i, 5) * 2 * math.Pi
+	turns := 2 * math.Pi * hz * t * pulseDur
+	// Split over the two axes so the shake vector itself never exceeds amp.
+	amp /= math.Sqrt2
+	return amp * math.Sin(turns+phx), amp * math.Sin(0.83*turns+phy)
 }
 
 // pulseRand is a deterministic 0..1 draw for ember i's k-th attribute, so a

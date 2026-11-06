@@ -16,7 +16,7 @@ import (
 
 // overlayPad is how far, in points, the overlay window reaches past the icon on
 // every side — i.e. how far from the dial an ember can get.
-const overlayPad = 18.0
+const overlayPad = 90.0
 
 // paintPulseOverlay draws the current frame of the burst around the icon, or
 // takes the window down once both sides are quiet. Called from the frame loop.

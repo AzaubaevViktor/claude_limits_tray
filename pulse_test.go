@@ -85,33 +85,54 @@ func TestPulseFramesFadeOutAndRespectTheMode(t *testing.T) {
 }
 
 // The whole point of the overlay is that the burst leaves the icon: embers have
-// to get past its rim (9 dial units) without overshooting the window.
+// to get past its rim (9 dial units) without overshooting the window, shake and
+// all.
 func TestSparksFlyOutPastTheIcon(t *testing.T) {
 	now := time.Now()
 	p := spendPulse{}.arm(now, pulseRefDelta)
 	const reach = 25.0
-	var far, prevNear float64
-	for _, secs := range []float64{0.1, 0.4, 0.9} {
+	var far, prevMean float64
+	for _, secs := range []float64{0.1, 0.5, 1.2} {
 		f := pulseOverlayFrame(p, now.Add(time.Duration(secs*float64(time.Second))), pulseSparks, reach)
-		near := math.MaxFloat64
+		mean := 0.0
 		for _, s := range f.Sparks {
 			d := math.Hypot(s.X, s.Y)
-			if d < sparkRim-0.01 {
+			if d < sparkRim-wobbleAmp-0.01 {
 				t.Errorf("spark at %.2f started inside the rim", d)
 			}
 			if d > reach+0.01 {
 				t.Errorf("spark at %.2f flew past the overlay window", d)
 			}
-			near = math.Min(near, d)
+			mean += d / float64(len(f.Sparks))
 			far = math.Max(far, d)
 		}
-		if prevNear > 0 && near < prevNear {
+		if mean < prevMean {
 			t.Error("sparks should only travel outward")
 		}
-		prevNear = near
+		prevMean = mean
 	}
 	if far <= 9 {
 		t.Errorf("sparks should leave the icon, got %.2f", far)
+	}
+}
+
+// "Shaking" means the ember's own offset keeps changing direction over the
+// flight — a steady drift would just be a different trajectory.
+func TestEmbersShakeAlongTheWay(t *testing.T) {
+	var prev float64
+	flips := 0
+	for i := 0; i <= 40; i++ {
+		x, _ := emberShake(99, 3, float64(i)/40)
+		if i > 0 && (x > 0) != (prev > 0) {
+			flips++
+		}
+		prev = x
+	}
+	if flips < 4 {
+		t.Errorf("the shake should swing back and forth, got %d direction changes", flips)
+	}
+	if x, y := emberShake(99, 3, 0.5); math.Hypot(x, y) > wobbleAmp+1e-9 {
+		t.Errorf("the shake vector %.2f should stay within the budget %.2f", math.Hypot(x, y), wobbleAmp)
 	}
 }
 
