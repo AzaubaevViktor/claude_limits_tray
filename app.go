@@ -1157,6 +1157,7 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 		AverageRate: averageRate, AverageKnown: averageKnown,
 		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: fifteenMin.Span,
 		LastUseAt: fifteenMin.At, Trend: trend, TrendKnown: trendKnown, ResetAt: series.resetAt,
+		Samples: series.samples,
 	}
 }
 
@@ -1513,6 +1514,7 @@ func makeCreditPanel(provider string, samples []histSample, b creditBudget, rese
 		AverageRate: day.Rate, AverageKnown: day.OK,
 		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: fifteen.Span,
 		LastUseAt: fifteen.At, Trend: trend, TrendKnown: trendKnown, ResetAt: resetAt,
+		Samples: samples,
 	}
 }
 

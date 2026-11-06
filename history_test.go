@@ -576,3 +576,98 @@ func TestSmoothRatesKeepsMassAtTheEdges(t *testing.T) {
 		t.Fatalf("edge mass leaked: curve %v vs bars %v", area, totalSpent(intervals))
 	}
 }
+
+func TestUsedAtSpreadsStepsAndHoldsAcrossResets(t *testing.T) {
+	s := []histSample{{0, 10}, {100, 10}, {200, 14}, {300, 14}, {400, 2}, {500, 2}}
+	for _, tc := range []struct {
+		t    int64
+		want float64
+	}{
+		{-50, 10}, {0, 10}, {50, 11}, {150, 13}, {200, 14}, {350, 14}, {400, 2}, {450, 2}, {900, 2},
+	} {
+		if got := usedAt(s, tc.t); !near(got, tc.want, 1e-9) {
+			t.Fatalf("usedAt(%d) = %v, want %v", tc.t, got, tc.want)
+		}
+	}
+	if end, ok := windowEndAfter(s, 150); !ok || end != 400 {
+		t.Fatalf("reset after 150 = %v,%v, want 400", end, ok)
+	}
+	if _, ok := windowEndAfter(s, 400); ok {
+		t.Fatal("the sample that reveals the reset already belongs to the open window")
+	}
+}
+
+func TestAffordablePaceFollowsRemainingQuotaAndTime(t *testing.T) {
+	now := int64(10_000)
+	// One window: 20% used at the start, a 20% step revealed at now-1000 and
+	// so spread over the 2000s since the previous change, then idle; the reset
+	// is 1000s after now.
+	samples := []histSample{{now - 3000, 20}, {now - 2000, 20}, {now - 1000, 40}, {now, 40}}
+	panel := burnChartPanel{
+		Provider: "Claude", Label: "1h", Samples: samples,
+		Intervals:  burnIntervals(samples, now, 3600),
+		WindowSecs: int64(fiveHourSecs), Start: now - 3600, Now: now, Known: true,
+		UsedPct: 40, PeriodLeft: 1000, PeriodKnown: true, ResetAt: now + 1000,
+		Accent: claudeChartAccent,
+	}
+	// Idle at the start: 80% left over 4000s to reset.
+	if got, ok := panel.affordableAt(now - 3000); !ok || !near(got, 80.0/4000, 1e-12) {
+		t.Fatalf("afford at start = %v,%v", got, ok)
+	}
+	// Three quarters through the run 35% is used, 2500s remain.
+	if got, ok := panel.affordableAt(now - 1500); !ok || !near(got, 65.0/2500, 1e-12) {
+		t.Fatalf("afford mid-run = %v,%v", got, ok)
+	}
+	// Idle again: the same 60% over a shrinking wait climbs.
+	a1, _ := panel.affordableAt(now - 900)
+	a2, _ := panel.affordableAt(now - 100)
+	if !(a2 > a1) || !near(a2, 60.0/1100, 1e-12) {
+		t.Fatalf("idle pace should climb toward the reset: %v then %v", a1, a2)
+	}
+	// Unknown reset: the flat whole-window pace, as the needle falls back to.
+	flat := panel
+	flat.PeriodKnown = false
+	if got, ok := flat.affordableAt(now - 100); !ok || !near(got, 100/float64(fiveHourSecs), 1e-12) {
+		t.Fatalf("flat fallback = %v,%v", got, ok)
+	}
+	// The bar is coloured against the pace affordable at its midpoint, not the
+	// whole-window pace: 20%/2000s vs 70%/3000s at the midpoint = 0.429x.
+	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, `data-burn-ratio="0.429"`) {
+		t.Fatalf("bar ratio should use the local affordable pace: %s", svg)
+	}
+	if got := countSubstr(svg, `data-pace-line="true"`); got != 1 {
+		t.Fatalf("want one affordable-pace line, got %d", got)
+	}
+	// The reference line lies over the burn, not under it.
+	if strings.Index(svg, `data-pace-line="true"`) < strings.LastIndex(svg, `data-burn-bar="true"`) {
+		t.Fatal("pace line must be drawn after the bars")
+	}
+}
+
+func TestAffordablePaceRestartsAtObservedResets(t *testing.T) {
+	now := int64(10_000)
+	// A reset 2000s ago: before it 90% was used with the drop revealed at
+	// now-2000; after it the window is fresh and resets 8000s from now.
+	samples := []histSample{{now - 3600, 90}, {now - 2000, 5}, {now, 5}}
+	panel := burnChartPanel{
+		Samples: samples, WindowSecs: int64(fiveHourSecs), Start: now - 3600, Now: now,
+		UsedPct: 5, PeriodLeft: 8000, PeriodKnown: true, ResetAt: now + 8000,
+	}
+	if got, ok := panel.affordableAt(now - 3000); !ok || !near(got, 10.0/1000, 1e-12) {
+		t.Fatalf("before the reset 10%% over 1000s: %v,%v", got, ok)
+	}
+	if got, ok := panel.affordableAt(now - 1000); !ok || !near(got, 95.0/9000, 1e-12) {
+		t.Fatalf("after the reset 95%% over 9000s: %v,%v", got, ok)
+	}
+	credits := burnChartPanel{
+		Samples: samples, Unit: "$", Remaining: 50, Start: now - 3600, Now: now,
+		PeriodLeft: 8000, PeriodKnown: true, ResetAt: now + 8000,
+	}
+	if _, ok := credits.affordableAt(now - 3000); ok {
+		t.Fatal("a credit card cannot pace the previous period: its budget is unknown")
+	}
+	if got, ok := credits.affordableAt(now - 1000); !ok || !near(got, 50.0/9000, 1e-12) {
+		t.Fatalf("credits after the reset: %v,%v", got, ok)
+	}
+}

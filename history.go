@@ -365,6 +365,11 @@ type burnChartPanel struct {
 	// alone. Raw bars still define the axis scale and poke out above the
 	// curve, so outliers stay visible.
 	SmoothSecs float64
+	// Samples is the raw history the Intervals were cut from. With it the
+	// card can read the quota level back at any past moment and draw the
+	// affordable pace as it was then (see affordableAt); without it the
+	// reference falls back to the flat sustainableRate.
+	Samples []histSample
 }
 
 // smooth reports whether the panel draws the blurred curve.
@@ -416,6 +421,97 @@ func (p burnChartPanel) sustainableRate() float64 {
 		return p.remaining() / p.PeriodLeft
 	}
 	return 0
+}
+
+// affordableAt is the pace that could still be afforded at moment t: the
+// budget unspent at t divided by the time from t to the reset of the window t
+// falls in. It is what the speedometer measures against, read back through
+// the history: it climbs while nothing is spent (the same remainder over a
+// shrinking wait), drops with every run, and starts over at each reset. Past
+// resets are the drops in Samples; the current window ends at ResetAt. ok is
+// false when there is nothing to pace against: a credit card before its last
+// observed reset, or one with no reset at all. Quota cards with an unknown
+// reset fall back to the flat whole-window pace, like the needle does.
+func (p burnChartPanel) affordableAt(t int64) (float64, bool) {
+	if len(p.Samples) == 0 {
+		rate := p.sustainableRate()
+		return rate, rate > 0
+	}
+	end, inPast := windowEndAfter(p.Samples, t)
+	if !inPast {
+		if !p.PeriodKnown || p.ResetAt <= t {
+			if p.Unit == "" && p.WindowSecs > 0 {
+				return 100 / float64(p.WindowSecs), true
+			}
+			return 0, false
+		}
+		end = p.ResetAt
+	}
+	var remaining float64
+	if p.Unit == "" {
+		remaining = math.Max(0, 100-usedAt(p.Samples, t))
+	} else {
+		if inPast {
+			return 0, false // the previous period's budget is not recorded
+		}
+		remaining = math.Max(0, p.Remaining+usedAt(p.Samples, p.Now)-usedAt(p.Samples, t))
+	}
+	return remaining / math.Max(1, float64(end-t)), true
+}
+
+// ratioAt compares a measured rate at moment t with the pace affordable then,
+// on the same scale as the speedometer (see panelBurnRatio). Unknown
+// references read as 0 so the colour stays neutral rather than alarming.
+func (p burnChartPanel) ratioAt(rate float64, t int64) float64 {
+	afford, ok := p.affordableAt(t)
+	switch {
+	case !ok || rate <= 0:
+		return 0
+	case afford <= 1e-12:
+		return burnRatioCap
+	}
+	return math.Min(rate/afford, burnRatioCap)
+}
+
+// usedAt reads the history back the way the bars draw it: a counter step is
+// spread linearly from the previous change (or the first sample) up to the
+// poll that revealed it, a drop (reset) ends its run flat, and the trailing
+// run holds its level. Before the first sample the first level is assumed.
+func usedAt(s []histSample, t int64) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	if t <= s[0].T {
+		return s[0].V
+	}
+	runStart := 0
+	for i := 1; i < len(s); i++ {
+		if s[i].V == s[runStart].V && i < len(s)-1 {
+			continue
+		}
+		if t < s[i].T {
+			level := s[runStart].V
+			if s[i].V > level {
+				f := float64(t-s[runStart].T) / float64(s[i].T-s[runStart].T)
+				return level + (s[i].V-level)*f
+			}
+			return level
+		}
+		runStart = i
+	}
+	return s[len(s)-1].V
+}
+
+// windowEndAfter is the first observed reset strictly after t (the sample
+// whose reading dropped below its predecessor), or false when t lies in the
+// window that is still open.
+func windowEndAfter(s []histSample, t int64) (int64, bool) {
+	for i := 1; i < len(s); i++ {
+		if s[i].V < s[i-1].V && s[i].T > t {
+			return s[i].T, true
+		}
+	}
+	return 0, false
 }
 
 // smoothColumns is how many columns the blurred burn curve is sampled at
@@ -597,22 +693,13 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 			axisX, y+2, panel.amount(axisMax*fraction)+"/"+axisUnit(horizon)))
 	}
 	usableH := plotBase - plotTop - 2
-	if sustainableRate > 0 {
-		y := plotBase - usableH/maxRatio
-		b.WriteString(fmt.Sprintf(
-			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="0.55" stroke-opacity="0.72" stroke-dasharray="2 1.5"/>`,
-			plotX, y, plotX+plotW, y, accent))
-	}
 	if panel.Known && axisMax > 0 {
 		barOpacity := 0.96
 		if panel.smooth() {
 			barOpacity = 0.3 // outliers above the curve stay visible as faint stubs
 		}
 		for _, interval := range panel.Intervals {
-			ratio := 0.0
-			if sustainableRate > 0 {
-				ratio = math.Max(0, interval.Rate/sustainableRate)
-			}
+			ratio := panel.ratioAt(interval.Rate, (interval.Start+interval.End)/2)
 			h := math.Max(1, usableH*interval.Rate*unitSecs/axisMax)
 			x0, x1 := xOf(interval.Start), xOf(interval.End)
 			barW := math.Max(0.55, x1-x0-0.35)
@@ -622,8 +709,11 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 				ratio, barX, plotBase-h, barW, h, svgRGB(burnColor(ratio)), barOpacity))
 		}
 		if panel.smooth() {
-			writeSmoothArea(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate)
+			writeSmoothArea(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs)
 		}
+	}
+	if axisMax > 0 {
+		writeAffordableLine(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, accent)
 	}
 	b.WriteString(fmt.Sprintf(
 		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
@@ -842,7 +932,7 @@ func trendPoint(cx, cy, r, position float64) (float64, float64) {
 // writeSmoothArea draws the blurred burn curve as a filled area whose colour
 // follows the same speed scale as the bars, via a horizontal gradient with
 // one stop per column.
-func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, sustainableRate float64) {
+func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs float64) {
 	curve := smoothRates(panel.Intervals, panel.Start, panel.Now, smoothColumns, panel.SmoothSecs)
 	if len(curve) == 0 {
 		return
@@ -854,11 +944,9 @@ func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plo
 	// idle stretches don't get a coloured line along the axis.
 	var stops, top, edge strings.Builder
 	penDown := false
+	colSecs := float64(panel.Now-panel.Start) / float64(len(curve))
 	for i, rate := range curve {
-		ratio := 0.0
-		if sustainableRate > 0 {
-			ratio = math.Max(0, rate/sustainableRate)
-		}
+		ratio := panel.ratioAt(rate, panel.Start+int64((float64(i)+0.5)*colSecs))
 		stops.WriteString(fmt.Sprintf(`<stop offset="%.4f" stop-color="%s"/>`,
 			(float64(i)+0.5)/float64(len(curve)), svgRGB(burnColor(ratio))))
 		h := clamp(usableH*rate*unitSecs/axisMax, 0, plotBase-plotTop-1)
@@ -885,4 +973,37 @@ func writeSmoothArea(b *strings.Builder, panel burnChartPanel, plotX, plotW, plo
 			`<path d="%s" fill="none" stroke="url(#%s)" stroke-width="0.7" stroke-linejoin="round" stroke-linecap="round"/>`,
 			edge.String(), id))
 	}
+}
+
+// writeAffordableLine draws the dashed reference pace on top of the burn: the
+// affordable pace at each moment of the chart (see affordableAt), sampled one
+// value per column. It is clipped to the top of the plot — just before a reset
+// almost any speed is affordable — and lifts the pen where no reference exists.
+func writeAffordableLine(b *strings.Builder, panel burnChartPanel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs float64, accent string) {
+	colSecs := float64(panel.Now-panel.Start) / smoothColumns
+	colW := plotW / smoothColumns
+	var path strings.Builder
+	penDown := false
+	for i := 0; i < smoothColumns; i++ {
+		t := panel.Start + int64((float64(i)+0.5)*colSecs)
+		afford, ok := panel.affordableAt(t)
+		if !ok {
+			penDown = false
+			continue
+		}
+		x := plotX + (float64(i)+0.5)*colW
+		y := clamp(plotBase-usableH*afford*unitSecs/axisMax, plotTop, plotBase)
+		if penDown {
+			path.WriteString(fmt.Sprintf("L%.2f,%.2f", x, y))
+		} else {
+			path.WriteString(fmt.Sprintf("M%.2f,%.2f", x, y))
+			penDown = true
+		}
+	}
+	if path.Len() == 0 {
+		return
+	}
+	b.WriteString(fmt.Sprintf(
+		`<path data-pace-line="true" d="%s" fill="none" stroke="%s" stroke-width="0.55" stroke-opacity="0.85" stroke-linejoin="round" stroke-dasharray="2 1.5"/>`,
+		path.String(), accent))
 }
