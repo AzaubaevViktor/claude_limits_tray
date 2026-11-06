@@ -11,9 +11,15 @@ type Limit struct {
 	Pct        float64 // used 0..100
 	TimeLeft   float64 // fraction of window remaining 0..1
 	WindowSecs float64 // whole window; 0 means its clock is unknown
-	WaitOKSecs float64 // tolerable gap between exhaustion and reset
-	BlockPct   float64 // weekly % per 5-hour-session block; 0 = no separators
-	TimeTicks  int     // segments to split the time ring into (hours/days); <2 = none
+	WaitOKSecs float64 // tolerable gap between exhaustion and reset (pace seconds)
+	// PaceLeftSecs and PaceWindowSecs are the working-hours clock the pace
+	// colour is projected on: working seconds to the reset and in the whole
+	// window. When PaceWindowSecs is 0 the wall clock (TimeLeft, WindowSecs)
+	// is used instead.
+	PaceLeftSecs   float64
+	PaceWindowSecs float64
+	BlockPct       float64 // weekly % per 5-hour-session block; 0 = no separators
+	TimeTicks      int     // segments to split the time ring into (hours/days); <2 = none
 }
 
 // maxWeekTicks caps how many 5-hour-block separators the weekly semicircle can
@@ -94,13 +100,15 @@ func quotaPaceColor(pace quotaPace) [3]int {
 	}
 }
 
+// limitPace is the window's pace category, projected over working hours when
+// the Limit carries that clock (see Limit.PaceWindowSecs) so an evening's
+// spend is measured against the working time left, not 24h days.
 func limitPace(l Limit, limitLeft float64) quotaPace {
-	return quotaPaceFor(
-		100*(1-clamp(limitLeft, 0, 1)),
-		clamp(l.TimeLeft, 0, 1)*l.WindowSecs,
-		l.WindowSecs,
-		l.WaitOKSecs,
-	)
+	left, window := clamp(l.TimeLeft, 0, 1)*l.WindowSecs, l.WindowSecs
+	if l.PaceWindowSecs > 0 {
+		left, window = l.PaceLeftSecs, l.PaceWindowSecs
+	}
+	return quotaPaceFor(100*(1-clamp(limitLeft, 0, 1)), left, window, l.WaitOKSecs)
 }
 
 // effectiveLimitLeft applies the weekly cap to the short/session window. It is
@@ -192,7 +200,7 @@ func legendRows() [][2]string {
 		rows = append(rows, [2]string{ringLabel[s.ring] + " · " + sideLabel[s.side], label})
 	}
 	rows = append(rows,
-		[2]string{"Outer colour", "since-reset pace — purple: under · green: on · yellow: short gap · red: long gap · grey: learning · light-grey tail: unspendable (weekly cap)"},
+		[2]string{"Outer colour", "since-reset pace over working hours — purple: under · green: on · yellow: short gap · red: long gap · grey: learning · light-grey tail: unspendable (weekly cap)"},
 		[2]string{"Inner colour", "time left — greener toward the reset"},
 		[2]string{"Centre dot", "worst outer pace — grey while both windows are still learning"},
 		[2]string{"Thin edge ring", "credits: share of the time to reset the balance covers at the recent rate · lighter head = next day's spend · grey: not projectable · red: exhausted"},

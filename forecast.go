@@ -21,6 +21,8 @@ const (
 
 // quotaPaceFor mirrors the Claude Code statusline's limit_color rule. It
 // projects the average pace since the window opened across the whole window.
+// The clock is the caller's: the dial passes working seconds (see limitPace),
+// so the projection and the tolerances are in working time.
 // During the first 10% it normally withholds an opinion because an early burst
 // is noisy, but a reading with at least 30 minutes and 5% of real spend is
 // already strong enough evidence to surface an early warning. If the quota

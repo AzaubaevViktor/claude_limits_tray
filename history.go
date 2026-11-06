@@ -371,6 +371,47 @@ type burnChartPanel struct {
 	// affordable pace as it was then (see affordableAt); without it the
 	// reference falls back to the flat sustainableRate.
 	Samples []histSample
+	// WorkStart/WorkEnd (minutes from local midnight) are the working hours
+	// the quota pace is measured on, like the menu's forecast rows: time to a
+	// reset counts only working time, so a night or a weekend does not make
+	// the affordable pace look tighter than it is. Credits keep the wall
+	// clock. Both zero means all day (see workMinutesPerDay).
+	WorkStart, WorkEnd int
+}
+
+// paceSecs is the time between two moments on the panel's pace clock:
+// working seconds for quota cards, wall-clock seconds for credit cards.
+func (p burnChartPanel) paceSecs(from, to int64) float64 {
+	if p.Unit != "" {
+		return math.Max(0, float64(to-from))
+	}
+	return workSecsBetween(from, to, p.WorkStart, p.WorkEnd)
+}
+
+// paceWindowSecs is the whole quota window on the pace clock (0 if unknown).
+func (p burnChartPanel) paceWindowSecs() float64 {
+	if p.WindowSecs <= 0 {
+		return 0
+	}
+	if p.Unit != "" {
+		return float64(p.WindowSecs)
+	}
+	return float64(p.WindowSecs) * workDayFraction(p.WorkStart, p.WorkEnd)
+}
+
+// paceLeft is the time from now to the reset on the pace clock, and whether
+// the reset is known.
+func (p burnChartPanel) paceLeft() (float64, bool) {
+	if !p.PeriodKnown {
+		return 0, false
+	}
+	if p.Unit != "" {
+		return p.PeriodLeft, p.PeriodLeft > 0
+	}
+	if p.ResetAt <= p.Now {
+		return 0, false
+	}
+	return p.paceSecs(p.Now, p.ResetAt), true
 }
 
 // smooth reports whether the panel draws the blurred curve.
@@ -410,32 +451,35 @@ func (p burnChartPanel) rateText(ratePerSec, chartSpanSecs float64, known bool) 
 
 // sustainableRate is the flat reference pace the y axis is scaled from (and
 // the reference line falls back to when the panel carries no Samples): for
-// quota cards the nominal whole-window pace, or the pace affordable right now
-// when the window length is unknown; for credit cards the pace that spends the
-// remaining balance exactly by the reset (0 when the reset is unknown).
+// quota cards the nominal whole-window pace on the working-hours clock, or
+// the pace affordable right now when the window length is unknown; for
+// credit cards the pace that spends the remaining balance exactly by the
+// reset (0 when the reset is unknown).
 func (p burnChartPanel) sustainableRate() float64 {
-	if p.Unit == "" && p.WindowSecs > 0 {
-		return 100 / float64(p.WindowSecs)
+	if window := p.paceWindowSecs(); p.Unit == "" && window > 0 {
+		return 100 / window
 	}
-	if p.PeriodKnown && p.PeriodLeft > 0 {
-		return p.remaining() / p.PeriodLeft
+	if left, ok := p.paceLeft(); ok && left > 0 {
+		return p.remaining() / left
 	}
 	return 0
 }
 
 // affordableAt is the pace that could still be afforded at moment t: the
 // budget unspent at t divided by the time from t to the reset of the window t
-// falls in. It is what the speedometer measures against, read back through
-// the history: it climbs while nothing is spent (the same remainder over a
-// shrinking wait), drops with every run, and starts over at each reset. Past
-// resets are the drops in Samples; the current window ends at ResetAt. ok is
-// false when there is nothing to pace against: a credit card before its last
-// observed reset, or one with no reset at all. Quota cards with an unknown
-// reset fall back to the flat whole-window pace, like the needle does.
+// falls in, on the pace clock (working hours for quota, see paceSecs). It is
+// what the speedometer measures against, read back through the history: it
+// climbs while nothing is spent (the same remainder over a shrinking wait),
+// holds flat outside working hours, drops with every run, and starts over at
+// each reset. Past resets are the drops in Samples; the current window ends
+// at ResetAt. ok is false when there is nothing to pace against: a credit
+// card before its last observed reset, or one with no reset at all. Quota
+// cards with an unknown reset fall back to the flat whole-window pace, like
+// the needle does.
 func (p burnChartPanel) affordableAt(t int64) (float64, bool) {
 	if len(p.Samples) == 0 {
-		if p.Unit != "" && p.PeriodKnown && p.PeriodLeft > 0 {
-			return p.remaining() / p.PeriodLeft, true // 0 when exhausted
+		if left, ok := p.paceLeft(); p.Unit != "" && ok && left > 0 {
+			return p.remaining() / left, true // 0 when exhausted
 		}
 		rate := p.sustainableRate()
 		return rate, rate > 0
@@ -443,8 +487,8 @@ func (p burnChartPanel) affordableAt(t int64) (float64, bool) {
 	end, inPast := windowEndAfter(p.Samples, t)
 	if !inPast {
 		if !p.PeriodKnown || p.ResetAt <= t {
-			if p.Unit == "" && p.WindowSecs > 0 {
-				return 100 / float64(p.WindowSecs), true
+			if window := p.paceWindowSecs(); p.Unit == "" && window > 0 {
+				return 100 / window, true
 			}
 			return 0, false
 		}
@@ -459,7 +503,7 @@ func (p burnChartPanel) affordableAt(t int64) (float64, bool) {
 		}
 		remaining = math.Max(0, p.Remaining+usedAt(p.Samples, p.Now)-usedAt(p.Samples, t))
 	}
-	return remaining / math.Max(1, float64(end-t)), true
+	return remaining / math.Max(1, p.paceSecs(t, end)), true
 }
 
 // ratioAt compares a measured rate at moment t with the pace affordable then,
@@ -601,6 +645,8 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
 	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="62.5%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
+	left.WorkStart, left.WorkEnd = ws, we
+	right.WorkStart, right.WorkEnd = ws, we
 	writeBurnPanel(&b, left, 0, panelW, ws, we)
 	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
 	b.WriteString(`</svg>`)
@@ -822,8 +868,8 @@ func panelBurnRatio(panel burnChartPanel) float64 {
 	if panel.Unit != "" {
 		return panel.ratioAt(panel.RecentRate, panel.Now)
 	}
-	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, panel.PeriodLeft,
-		float64(panel.WindowSecs), panel.PeriodKnown)
+	left, known := panel.paceLeft()
+	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, left, panel.paceWindowSecs(), known)
 }
 
 // speedTicks are the fixed affordable-pace thresholds notched on the speedometer
@@ -888,7 +934,8 @@ func writeNominalPaceMark(b *strings.Builder, panel burnChartPanel, cx, cy, r fl
 	if panel.Unit != "" {
 		return // credits have no nominal whole-window pace
 	}
-	ratio, ok := nominalPaceRatio(panel.UsedPct, panel.PeriodLeft, float64(panel.WindowSecs), panel.PeriodKnown)
+	left, known := panel.paceLeft()
+	ratio, ok := nominalPaceRatio(panel.UsedPct, left, panel.paceWindowSecs(), known)
 	if !ok {
 		return
 	}

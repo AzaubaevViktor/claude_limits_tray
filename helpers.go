@@ -64,29 +64,53 @@ func workingSecondsUntil(resetAt string, wsMin, weMin int, now time.Time) (float
 	if now.IsZero() {
 		now = time.Now()
 	}
-	loc := now.Location()
-	reset := t.In(loc)
-	if !reset.After(now) {
-		return 0, true
-	}
-	duration := (((weMin-wsMin)%(24*60))+24*60)%(24*60)
+	return workingSecondsBetween(now, t, wsMin, weMin), true
+}
+
+// workMinutesPerDay is the length of the daily working window in minutes; an
+// empty window (end == start) means the whole day.
+func workMinutesPerDay(wsMin, weMin int) int {
+	duration := (((weMin - wsMin) % (24 * 60)) + 24*60) % (24 * 60)
 	if duration == 0 {
 		duration = 24 * 60
 	}
+	return duration
+}
+
+// workDayFraction is the share of each day that is working time.
+func workDayFraction(wsMin, weMin int) float64 {
+	return float64(workMinutesPerDay(wsMin, weMin)) / (24 * 60)
+}
+
+// workingSecondsBetween counts the seconds of working time from one moment to
+// another (0 when to is not after from), using the daily [wsMin, weMin]
+// window in from's local zone; see workingSecondsUntil.
+func workingSecondsBetween(from, to time.Time, wsMin, weMin int) float64 {
+	loc := from.Location()
+	to = to.In(loc)
+	if !to.After(from) {
+		return 0
+	}
+	duration := workMinutesPerDay(wsMin, weMin)
 	total := 0.0
-	day := now.AddDate(0, 0, -1) // start a day early for overnight windows
+	day := from.AddDate(0, 0, -1) // start a day early for overnight windows
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
-	endDay := time.Date(reset.Year(), reset.Month(), reset.Day(), 0, 0, 0, 0, loc)
+	endDay := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
 	for !day.After(endDay) {
 		start := time.Date(day.Year(), day.Month(), day.Day(), wsMin/60, wsMin%60, 0, 0, loc)
 		end := start.Add(time.Duration(duration) * time.Minute)
-		lo, hi := maxTime(start, now), minTime(end, reset)
+		lo, hi := maxTime(start, from), minTime(end, to)
 		if hi.After(lo) {
 			total += hi.Sub(lo).Seconds()
 		}
 		day = day.AddDate(0, 0, 1)
 	}
-	return total, true
+	return total
+}
+
+// workSecsBetween is workingSecondsBetween on unix seconds.
+func workSecsBetween(from, to int64, wsMin, weMin int) float64 {
+	return workingSecondsBetween(time.Unix(from, 0), time.Unix(to, 0), wsMin, weMin)
 }
 
 func maxTime(a, b time.Time) time.Time {

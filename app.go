@@ -814,8 +814,8 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	}
 	primary := u.primary()
 	secondary := u.secondary()
-	sess := codexLimitForDial(primary)
-	week := codexLimitForDial(secondary)
+	sess := a.codexLimitForDial(primary)
+	week := a.codexLimitForDial(secondary)
 	if primary != nil {
 		sess.TimeTicks = codexTimeTicks(primary.WindowSeconds)
 	}
@@ -842,17 +842,33 @@ func (a *App) codexDial() (dialRenderInput, string) {
 	return dialRenderInput{limits: limits, markColor: mark, hasMark: true, full: full, source: source, credits: ring}, key
 }
 
-func codexLimitForDial(w *CodexWindow) Limit {
+func (a *App) codexLimitForDial(w *CodexWindow) Limit {
 	if w == nil {
 		return Limit{Pct: 100, TimeLeft: 1}
 	}
 	window := float64(w.WindowSeconds)
+	reset, ok := codexResetAt(w)
+	paceLeft, paceWindow := a.paceClock(reset, ok, window)
 	return Limit{
-		Pct:        w.UsedPercent,
-		TimeLeft:   codexTimeFraction(w),
-		WindowSecs: window,
-		WaitOKSecs: paceWaitOK(window),
+		Pct:          w.UsedPercent,
+		TimeLeft:     codexTimeFraction(w),
+		WindowSecs:   window,
+		WaitOKSecs:   paceWaitOK(window),
+		PaceLeftSecs: paceLeft, PaceWindowSecs: paceWindow,
 	}
+}
+
+// paceClock is the working-hours clock a window's pace is projected on (see
+// limitPace): the working seconds left to its reset and in the whole window.
+// Both are 0 when the reset is unknown, which leaves the dial on the wall
+// clock.
+func (a *App) paceClock(reset time.Time, ok bool, windowSecs float64) (left, window float64) {
+	if !ok || windowSecs <= 0 {
+		return 0, 0
+	}
+	start := reset.Add(-time.Duration(windowSecs * float64(time.Second)))
+	return workingSecondsBetween(time.Now(), reset, a.workStart, a.workEnd),
+		workingSecondsBetween(start, reset, a.workStart, a.workEnd)
 }
 
 // paceWaitOK applies the statusline's two tolerances to API windows. Claude
@@ -1597,10 +1613,15 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 	sessTf := timeFraction(u.FiveHour.ResetsAt, fiveHourSecs)
 	weekTf := timeFraction(u.SevenDay.ResetsAt, weekSecs)
 	weekBlock := a.weeklyBlockPct()
+	sessReset, sessOk := parseISO(u.FiveHour.ResetsAt)
+	weekReset, weekOk := parseISO(u.SevenDay.ResetsAt)
+	sessPaceLeft, sessPaceWindow := a.paceClock(sessReset, sessOk, fiveHourSecs)
+	weekPaceLeft, weekPaceWindow := a.paceClock(weekReset, weekOk, weekSecs)
 	if !u.HasSession() {
 		// Weekly-only account: one big full circle for the weekly window, as
 		// for a weekly-only Codex plan. No 5h blocks to notch.
-		week := Limit{Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, TimeTicks: dayTicks(weekSecs)}
+		week := Limit{Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, TimeTicks: dayTicks(weekSecs),
+			PaceLeftSecs: weekPaceLeft, PaceWindowSecs: weekPaceWindow}
 		limits := map[string]Limit{"session": {Pct: 100, TimeLeft: 1}, "weekly": week}
 		pace := limitPace(week, clamp(1-weekPct/100, 0, 1))
 		ring := a.claudeCreditRing()
@@ -1610,8 +1631,10 @@ func (a *App) claudeDial() (dialRenderInput, string) {
 			full: true, source: "weekly", credits: ring}, key
 	}
 	limits := map[string]Limit{
-		"session": {Pct: sessPct, TimeLeft: sessTf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60, TimeTicks: hourTicks(fiveHourSecs)},
-		"weekly":  {Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs)},
+		"session": {Pct: sessPct, TimeLeft: sessTf, WindowSecs: fiveHourSecs, WaitOKSecs: 30 * 60, TimeTicks: hourTicks(fiveHourSecs),
+			PaceLeftSecs: sessPaceLeft, PaceWindowSecs: sessPaceWindow},
+		"weekly": {Pct: weekPct, TimeLeft: weekTf, WindowSecs: weekSecs, WaitOKSecs: 12 * 60 * 60, BlockPct: weekBlock, TimeTicks: dayTicks(weekSecs),
+			PaceLeftSecs: weekPaceLeft, PaceWindowSecs: weekPaceWindow},
 	}
 	pace := aggregateDialPace(limits)
 	mark := quotaPaceColor(pace)

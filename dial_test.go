@@ -244,3 +244,20 @@ func TestTimeTicksRendered(t *testing.T) {
 		t.Fatalf("want 0 ticks for <2 segments, got %d", got)
 	}
 }
+
+func TestLimitPaceProjectsOverWorkingHours(t *testing.T) {
+	// A fresh week: 6% spent in the first 7.5 hours. On the wall clock that
+	// extrapolates to 135% (red); on a 14h working day it is 7.5 of 98
+	// working hours, 78% projected — purple.
+	const workDay = 14 * 3600.0
+	wall := Limit{Pct: 6, TimeLeft: 1 - 7.5/(7*24), WindowSecs: weekSecs, WaitOKSecs: 12 * 3600}
+	if got := limitPace(wall, 0.94); got != paceRed {
+		t.Fatalf("wall-clock pace = %v, want red", got)
+	}
+	work := wall
+	work.PaceWindowSecs = 7 * workDay
+	work.PaceLeftSecs = 7*workDay - 7.5*3600
+	if got := limitPace(work, 0.94); got != pacePurple {
+		t.Fatalf("working-hours pace = %v, want purple", got)
+	}
+}

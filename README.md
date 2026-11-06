@@ -26,9 +26,11 @@ dial has two concentric rings, split left/right:
 ```
 
 - **Quota arcs** (outer) — how much quota is left, coloured by the same
-  since-reset pace projection as the Claude Code statusline. The first 10% of a
-  window normally stays grey because an early burst is too noisy to
-  extrapolate. An obvious early burn (at least 30 minutes of history and 5% of
+  since-reset pace projection as the Claude Code statusline, but on your
+  **working-hours clock**: the time elapsed and left is counted in working
+  hours, so an evening's spend is projected over the working time left in
+  the window, not over 24-hour days. The first 10% of a window normally stays
+  grey because an early burst is too noisy to extrapolate. An obvious early burn (at least 30 minutes of history and 5% of
   real spend) breaks out of that learning state immediately:
   - ⚪ grey — reset time is unknown, or the window is still in that learning period
   - 🟣 purple — projected to leave more than 10% of the quota unused
@@ -80,7 +82,8 @@ Click it for everything as numbers, plus your account.
 
 - Live **session (5h)** and **weekly** limits — % remaining and time to reset.
 - A **burn-rate forecast** per window, projected over your **working hours**
-  (so the weekly burn reflects ~9h workdays, not 24h of wall-clock).
+  (so the weekly burn reflects ~9h workdays, not 24h of wall-clock). The dial
+  colours and the chart's affordable pace use the same clock.
 - Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
   past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
 - **Burn-driven icon size** — the menu-bar icon **grows while tokens are
@@ -109,16 +112,19 @@ Click it for everything as numbers, plus your account.
   average speed of that run instead of a spike at the poll that happened to
   reveal it. The run still waiting for its next step is drawn at zero. The
   dashed line, drawn over the burn, is the **affordable pace** at each moment
-  of the chart: the quota that was still left then ÷ the time that was left
-  to that window's reset. It climbs while nothing is spent (the same remainder
-  over a shrinking wait), drops with every run, starts over at each observed
-  reset, and is clipped to the top of the plot just before a reset, where
-  almost any speed is affordable. Bar and area colour compare each run's
+  of the chart: the quota that was still left then ÷ the **working time** that
+  was left to that window's reset (the same working-hours clock as the menu's
+  forecast rows, so a night or a weekend never makes the pace look tighter).
+  It climbs while nothing is spent (the same remainder over a shrinking
+  wait), holds flat outside working hours, drops with every run, starts over
+  at each observed reset, and is clipped to the top of the plot just before a
+  reset, where almost any speed is affordable. Bar and area colour compare each run's
   speed with the pace affordable at that moment on the speedometer's scale,
   which follows the dial: purple when under pace, green at exactly 1× (runs
   out precisely at the reset, like the credits ring), yellow at 1¼×, red at
-  1½× or more. The y axis is scaled from the flat whole-window pace instead,
-  so it stays put while the reference curve moves. If a window's reset is
+  1½× or more. The y axis is scaled from the flat whole-window pace (over
+  the window's working hours) instead, so it stays put while the reference
+  curve moves. If a window's reset is
   unknown the line falls back to that flat pace. The 1h and 5h rows blur
   those runs into a smooth area (a Gaussian of 1/60 of the horizon, so ~60s
   and ~5min) drawn over the raw bars at low opacity. The blur never leaks
@@ -131,8 +137,9 @@ Click it for everything as numbers, plus your account.
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
   charts. The needle reads the rolling **last 15 minutes** against the pace you
-  can still **afford before the reset** (quota left ÷ time left) — the same
-  reference the dashed line and the bar colours use, at its current value:
+  can still **afford before the reset** (quota left ÷ working time left) — the
+  same reference the dashed line and the bar colours use, at its current
+  value:
   with lots of quota and a reset minutes away the needle relaxes even under
   heavy use, while a thin remainder with a long wait pushes it into red at a
   modest rate. Three fixed notches mark **½×**, **1×** (runs out exactly at
@@ -143,9 +150,9 @@ Click it for everything as numbers, plus your account.
   even normal is too fast. If a quota window's reset time is unknown the
   needle falls back to the whole-window pace; a credit card with nothing
   finite to pace against (an unlimited balance, or no reset) rests the needle
-  and greys its label instead. The chart's wall-clock reference is deliberately
-  different from the menu's **Forecast** rows, which project over working
-  hours only. The quota-end ETA also uses the
+  and greys its label instead. Credits keep the wall clock throughout: they
+  only burn while the plan quota is exhausted, and the credits row shows the
+  wall-clock time to that reset. The quota-end ETA also uses the
   15-minute rate (including how long ago the last increase was), not the
   average since the window opened. Each card separately labels, in fixed distinct colours, the
   **time to reset**, the quota runway at the **current 15-minute rate**, and the

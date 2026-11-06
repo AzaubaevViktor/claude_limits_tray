@@ -252,7 +252,9 @@ func TestPctColor(t *testing.T) {
 }
 
 func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
-	now := int64(1_000_000)
+	// Noon on a working day with 09:00-18:00 hours, so the pace clock is
+	// deterministic: 6 working hours remain today, 9 on every later day.
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.Local).Unix()
 	leftIntervals := []burnInterval{
 		{Start: now - 2700, End: now - 1800, Spent: 2, Rate: 2.0 / 900},
 		{Start: now - 1800, End: now - 900, Spent: 8, Rate: 8.0 / 900},
@@ -317,15 +319,20 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if got := countSubstr(svg, `data-burn-bar="true"`); got != 4 {
 		t.Fatalf("want one granular bar per update interval, got %d", got)
 	}
-	if !strings.Contains(svg, `data-burn-ratio="0.400"`) || !strings.Contains(svg, `data-burn-ratio="26.880"`) {
-		t.Fatal("bars should carry their provider-specific speed ratio")
+	// Without samples the bars measure against the flat nominal pace over the
+	// window's working hours (a 9h day is 0.375 of it, so that pace is 2.67x
+	// the wall-clock one): the 2%/15min run is 0.15x of 100% over 5h*0.375,
+	// the 4%/15min run 10.08x of 100% over 7d*0.375.
+	if !strings.Contains(svg, `data-burn-ratio="0.150"`) || !strings.Contains(svg, `data-burn-ratio="10.080"`) {
+		t.Fatalf("bars should carry their provider-specific speed ratio: %s", svg)
 	}
 	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
 		t.Fatalf("want one speedometer per provider, got %d", got)
 	}
-	// Claude: 60% left over 7h affords 8.57%/h; the 10%/h reading is 1.167x that.
-	// Codex: 80% left over 7d affords 11.4%/d; 80%/d is 7x — pegged past the dial.
-	if !strings.Contains(svg, `data-speed-ratio="1.167"`) || !strings.Contains(svg, `data-speed-ratio="7.000"`) {
+	// Claude: 60% left over the 6 working hours to a 19:00 reset affords
+	// 10%/h; the 10%/h reading is exactly 1x. Codex: 80% left over the 63
+	// working hours of a week affords 1.27%/h; 3.33%/h is 2.625x.
+	if !strings.Contains(svg, `data-speed-ratio="1.000"`) || !strings.Contains(svg, `data-speed-ratio="2.625"`) {
 		t.Fatalf("needles should measure against the affordable pace to reset: %s", svg)
 	}
 	for _, tick := range []string{"0.5", "1.0", "1.5"} {
@@ -335,7 +342,9 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	}
 	// Nominal pace (100%/window) on the affordable scale: Claude 20%/h vs 8.57%/h
 	// affordable = 2.333x; Codex 14.3%/d vs 11.4%/d = 1.25x.
-	if !strings.Contains(svg, `data-pace-ratio="2.333"`) || !strings.Contains(svg, `data-pace-ratio="1.250"`) {
+	// Nominal pace on the affordable scale: Claude 100% over 1.875 working
+	// hours vs 60% over 6 is 5.33x; Codex 100% vs 80% over the same 63h is 1.25x.
+	if !strings.Contains(svg, `data-pace-ratio="5.333"`) || !strings.Contains(svg, `data-pace-ratio="1.250"`) {
 		t.Fatalf("nominal pace marks should sit on the affordable scale: %s", svg)
 	}
 	if got := countSubstr(svg, `data-trend-bar="true"`); got != 2 {
@@ -601,7 +610,9 @@ func TestUsedAtSpreadsStepsAndHoldsAcrossResets(t *testing.T) {
 }
 
 func TestAffordablePaceFollowsRemainingQuotaAndTime(t *testing.T) {
-	now := int64(10_000)
+	// Noon on a working day: everything here happens inside 09:00-18:00, so
+	// the working-hours clock and the wall clock agree.
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.Local).Unix()
 	// One window: 20% used at the start, a 20% step revealed at now-1000 and
 	// so spread over the 2000s since the previous change, then idle; the reset
 	// is 1000s after now.
@@ -611,7 +622,7 @@ func TestAffordablePaceFollowsRemainingQuotaAndTime(t *testing.T) {
 		Intervals:  burnIntervals(samples, now, 3600),
 		WindowSecs: int64(fiveHourSecs), Start: now - 3600, Now: now, Known: true,
 		UsedPct: 40, PeriodLeft: 1000, PeriodKnown: true, ResetAt: now + 1000,
-		Accent: claudeChartAccent,
+		Accent: claudeChartAccent, WorkStart: 9 * 60, WorkEnd: 18 * 60,
 	}
 	// Idle at the start: 80% left over 4000s to reset.
 	if got, ok := panel.affordableAt(now - 3000); !ok || !near(got, 80.0/4000, 1e-12) {
@@ -627,10 +638,11 @@ func TestAffordablePaceFollowsRemainingQuotaAndTime(t *testing.T) {
 	if !(a2 > a1) || !near(a2, 60.0/1100, 1e-12) {
 		t.Fatalf("idle pace should climb toward the reset: %v then %v", a1, a2)
 	}
-	// Unknown reset: the flat whole-window pace, as the needle falls back to.
+	// Unknown reset: the flat whole-window pace over its working hours (a 9h
+	// day is 0.375 of the window), as the needle falls back to.
 	flat := panel
 	flat.PeriodKnown = false
-	if got, ok := flat.affordableAt(now - 100); !ok || !near(got, 100/float64(fiveHourSecs), 1e-12) {
+	if got, ok := flat.affordableAt(now - 100); !ok || !near(got, 100/(fiveHourSecs*0.375), 1e-12) {
 		t.Fatalf("flat fallback = %v,%v", got, ok)
 	}
 	// The bar is coloured against the pace affordable at its midpoint, not the
@@ -701,5 +713,43 @@ func TestUnlimitedCreditsDoNotPegTheNeedle(t *testing.T) {
 	empty.PeriodKnown, empty.PeriodLeft, empty.Remaining = true, 3600, 0
 	if got := panelBurnRatio(empty); got != burnRatioCap {
 		t.Fatalf("an exhausted balance with time left should still peg, got %v", got)
+	}
+}
+
+func TestQuotaPaceCountsWorkingHoursOnly(t *testing.T) {
+	// Working hours 09:00-18:00. At 17:00 with the reset at 13:00 tomorrow
+	// there are 20 wall-clock hours left but only 5 working hours (one today,
+	// four tomorrow), so 50% left affords 10%/h, not 2.5%/h.
+	now := time.Date(2026, 6, 25, 17, 0, 0, 0, time.Local)
+	reset := now.Add(20 * time.Hour)
+	samples := []histSample{{now.Add(-3 * time.Hour).Unix(), 50}, {now.Unix(), 50}}
+	panel := burnChartPanel{
+		Samples: samples, WindowSecs: int64(fiveHourSecs),
+		Start: now.Add(-3 * time.Hour).Unix(), Now: now.Unix(),
+		UsedPct: 50, PeriodLeft: 20 * 3600, PeriodKnown: true, ResetAt: reset.Unix(),
+		WorkStart: 9 * 60, WorkEnd: 18 * 60,
+	}
+	if got, ok := panel.affordableAt(now.Unix()); !ok || !near(got, 50.0/(5*3600), 1e-12) {
+		t.Fatalf("working-hours afford = %v,%v, want 10%%/h", got*3600, ok)
+	}
+	// Outside working hours the reference holds flat: 20:00 and 23:00 both
+	// see the same four working hours ahead.
+	a, _ := panel.affordableAt(now.Add(3 * time.Hour).Unix())
+	b, _ := panel.affordableAt(now.Add(6 * time.Hour).Unix())
+	if !near(a, b, 1e-12) || !near(a, 50.0/(4*3600), 1e-12) {
+		t.Fatalf("night should not move the affordable pace: %v vs %v", a*3600, b*3600)
+	}
+	// The needle and the y axis use the same clock: 5h window at 9h/day.
+	if left, ok := panel.paceLeft(); !ok || !near(left, 5*3600, 1e-9) {
+		t.Fatalf("pace left = %v,%v, want 5h", left, ok)
+	}
+	if got := panel.paceWindowSecs(); !near(got, fiveHourSecs*9/24, 1e-9) {
+		t.Fatalf("pace window = %v, want 5h scaled to a 9h day", got)
+	}
+	// Credits stay on the wall clock.
+	credits := burnChartPanel{Unit: "$", Remaining: 10, PeriodLeft: 20 * 3600, PeriodKnown: true,
+		Now: now.Unix(), ResetAt: reset.Unix(), WorkStart: 9 * 60, WorkEnd: 18 * 60}
+	if got, ok := credits.affordableAt(now.Unix()); !ok || !near(got, 10.0/(20*3600), 1e-12) {
+		t.Fatalf("credits afford = %v,%v, want wall clock", got, ok)
 	}
 }
