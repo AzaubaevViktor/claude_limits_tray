@@ -769,11 +769,11 @@ func (a *App) renderCodex() {
 	a.codexBurnPrimary.SetTitle("Primary:  " + primaryFc.Text())
 	a.codexBurnSecondary.SetTitle("Secondary:  " + secondaryFc.Text())
 
-	a.codexSpeed.SetTitle(fmt.Sprintf("Last %s:  primary %.1f%%/h · secondary %.1f%%/h",
-		spanLabel(a.codexRateSpan), a.codexPrimaryRate*3600, a.codexSecondRate*3600))
+	a.codexSpeed.SetTitle(fmt.Sprintf("Last %s:  primary %s · secondary %s",
+		spanLabel(a.codexRateSpan), codexRateText(primary, a.codexPrimaryRate, true), codexRateText(secondary, a.codexSecondRate, true)))
 	a.codexSpeedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
 		a.codexSpare(primary, a.codexPrimaryRate), a.codexSpare(secondary, a.codexSecondRate)))
-	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s%%/h · secondary %s%%/h",
+	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s · secondary %s",
 		a.codexAvgRate(primary), a.codexAvgRate(secondary)))
 	a.codexSpeedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
 		a.codexSpare(primary, codexSinceRate(primary)), a.codexSpare(secondary, codexSinceRate(secondary))))
@@ -917,13 +917,34 @@ func (a *App) codexForecast(w *CodexWindow, rate float64) Forecast {
 	return projectForecast(w.UsedPercent, rate, work, known)
 }
 
+// codexRateUnit is the display unit for a window's rates, by its length: a
+// daily-or-longer window reads in %/d like the Claude weekly rows, a shorter
+// one in %/h.
+func codexRateUnit(w *CodexWindow) (secs float64, label string) {
+	if w != nil && w.WindowSeconds >= 24*3600 {
+		return 86400, "d"
+	}
+	return 3600, "h"
+}
+
+// codexRateText formats a per-second rate in the window's unit, or "—".
+func codexRateText(w *CodexWindow, ratePerSec float64, ok bool) string {
+	secs, label := codexRateUnit(w)
+	if !ok {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f%%/%s", ratePerSec*secs, label)
+}
+
+// codexAvgRate is the average pace since the window opened, in the window's
+// unit, or "—" while too little has elapsed.
 func (a *App) codexAvgRate(w *CodexWindow) string {
 	if w == nil {
 		return "—"
 	}
 	left, known := codexSecondsUntil(w)
-	r, ok := avgRate(w.UsedPercent, left, float64(w.WindowSeconds), 3600, known)
-	return fmtRate(r, ok)
+	r, ok := avgRate(w.UsedPercent, left, float64(w.WindowSeconds), 1, known)
+	return codexRateText(w, r, ok)
 }
 
 // codexSpare is the projected % left at the window's reset at the given rate.

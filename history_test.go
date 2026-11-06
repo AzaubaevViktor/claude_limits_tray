@@ -671,3 +671,32 @@ func TestAffordablePaceRestartsAtObservedResets(t *testing.T) {
 		t.Fatalf("credits after the reset: %v,%v", got, ok)
 	}
 }
+
+func TestUnlimitedCreditsDoNotPegTheNeedle(t *testing.T) {
+	now := int64(10_000)
+	panel := burnChartPanel{
+		Provider: "Codex", Label: "credits 5h", Unit: "cr", Known: true,
+		Intervals:  []burnInterval{{Start: now - 1200, End: now - 600, Spent: 30, Rate: 30.0 / 600}},
+		WindowSecs: 24 * 60 * 60, Start: now - 5*3600, Now: now,
+		RecentRate: 30.0 / 600, RateKnown: true,
+		PeriodKnown: false, // unlimited: nothing finite to pace against
+	}
+	if got := panelBurnRatio(panel); got != 0 {
+		t.Fatalf("unlimited credits should read 0 on the speedometer, got %v", got)
+	}
+	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, `data-speed-ratio="0.000"`) {
+		t.Fatalf("needle should rest, not peg red: %s", svg)
+	}
+	if !strings.Contains(svg, `fill="`+svgRGB(dialGray)+`">180.0 CR/H`) {
+		t.Fatalf("the rate label should stay grey with no reference pace: %s", svg)
+	}
+	if !strings.Contains(svg, "CURRENT EMPTY —") {
+		t.Fatalf("an unlimited balance has no exhaustion time: %s", svg)
+	}
+	empty := panel
+	empty.PeriodKnown, empty.PeriodLeft, empty.Remaining = true, 3600, 0
+	if got := panelBurnRatio(empty); got != burnRatioCap {
+		t.Fatalf("an exhausted balance with time left should still peg, got %v", got)
+	}
+}

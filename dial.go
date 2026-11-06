@@ -395,7 +395,7 @@ func renderFullGroup(b *strings.Builder, input dialRenderInput, xoff float64) {
 		writeCircle(b, ox, r, dialTrack, 0.45)
 	}
 
-	limitLeft := clamp(1-l.Pct/100, 0, 1)
+	limitLeft := effectiveLimitLeft(input.limits, input.source)
 	writeSweep(b, ox, rings["outer"], limitLeft,
 		quotaPaceColor(limitPace(l, limitLeft)), 1.0)
 

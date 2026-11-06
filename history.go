@@ -407,15 +407,14 @@ func (p burnChartPanel) rateText(ratePerSec, chartSpanSecs float64, known bool) 
 	return fmtAmount(ratePerSec*unitSecs, p.Unit) + "/" + unit
 }
 
-// sustainableRate is the dashed reference pace: for quota cards the nominal
-// whole-window pace; for credit cards the pace that spends the remaining
-// balance exactly by the reset (0 when the reset is unknown).
+// sustainableRate is the flat reference pace the y axis is scaled from (and
+// the reference line falls back to when the panel carries no Samples): for
+// quota cards the nominal whole-window pace, or the pace affordable right now
+// when the window length is unknown; for credit cards the pace that spends the
+// remaining balance exactly by the reset (0 when the reset is unknown).
 func (p burnChartPanel) sustainableRate() float64 {
-	if p.Unit == "" {
-		if p.WindowSecs > 0 {
-			return 100 / float64(p.WindowSecs)
-		}
-		return 0
+	if p.Unit == "" && p.WindowSecs > 0 {
+		return 100 / float64(p.WindowSecs)
 	}
 	if p.PeriodKnown && p.PeriodLeft > 0 {
 		return p.remaining() / p.PeriodLeft
@@ -434,6 +433,9 @@ func (p burnChartPanel) sustainableRate() float64 {
 // reset fall back to the flat whole-window pace, like the needle does.
 func (p burnChartPanel) affordableAt(t int64) (float64, bool) {
 	if len(p.Samples) == 0 {
+		if p.Unit != "" && p.PeriodKnown && p.PeriodLeft > 0 {
+			return p.remaining() / p.PeriodLeft, true // 0 when exhausted
+		}
 		rate := p.sustainableRate()
 		return rate, rate > 0
 	}
@@ -744,9 +746,12 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		if panel.ResetAt <= 0 {
 			resetAt = time.Time{}
 		}
+		// A credit card with no balance and no reset is unlimited: there is
+		// nothing to run out of.
+		hasBudget := panel.Unit == "" || panel.Remaining > 0 || panel.PeriodKnown
 		if panel.RateKnown && panel.RecentRate <= 1e-9 {
 			endText = "current lasts to reset"
-		} else if panel.RateKnown {
+		} else if panel.RateKnown && hasBudget {
 			endText = "current " + budgetEndText(panel.remaining(), panel.RecentRate, resetAt, time.Unix(panel.Now, 0))
 		}
 	}
@@ -812,16 +817,11 @@ func chartTimeText(t time.Time, horizonSecs int64) string {
 // pace that can still be afforded before this window's reset (remaining quota
 // over remaining time). Near a reset with quota to spare the needle relaxes even
 // under heavy use; with little quota and a long wait it climbs on modest use.
+// A credit card with nothing finite to pace against (unlimited, or no reset)
+// reads 0 rather than pegging the needle.
 func panelBurnRatio(panel burnChartPanel) float64 {
 	if panel.Unit != "" {
-		afford := panel.sustainableRate()
-		switch {
-		case panel.RecentRate <= 0:
-			return 0
-		case afford <= 1e-12:
-			return burnRatioCap
-		}
-		return math.Min(panel.RecentRate/afford, burnRatioCap)
+		return panel.ratioAt(panel.RecentRate, panel.Now)
 	}
 	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, panel.PeriodLeft,
 		float64(panel.WindowSecs), panel.PeriodKnown)
@@ -841,7 +841,7 @@ func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float
 	const r = 15.0
 	ratio := panelBurnRatio(panel)
 	needle := dialGray
-	if panel.WindowSecs > 0 && panel.RateKnown {
+	if _, ok := panel.affordableAt(panel.Now); ok && panel.RateKnown {
 		needle = burnColor(ratio)
 	}
 	chartSpan := float64(panel.Now - panel.Start)

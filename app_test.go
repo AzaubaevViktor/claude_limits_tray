@@ -454,3 +454,22 @@ func TestNearestResetAcrossProviders(t *testing.T) {
 		t.Fatalf("resetText = %q", got)
 	}
 }
+
+func TestCodexRatesUseDailyUnitsForLongWindows(t *testing.T) {
+	week := &CodexWindow{UsedPercent: 20, WindowSeconds: 7 * 24 * 3600, ResetsAt: time.Now().Unix() + 5*24*3600}
+	if got := codexRateText(week, 10.0/86400, true); got != "10.0%/d" {
+		t.Fatalf("weekly rate = %q, want %%/d", got)
+	}
+	five := &CodexWindow{UsedPercent: 20, WindowSeconds: 5 * 3600, ResetsAt: time.Now().Unix() + 3600}
+	if got := codexRateText(five, 10.0/3600, true); got != "10.0%/h" {
+		t.Fatalf("5h rate = %q, want %%/h", got)
+	}
+	if got := codexRateText(five, 1, false); got != "—" {
+		t.Fatalf("unknown rate = %q", got)
+	}
+	a := &App{}
+	// 20% over the 2 elapsed days of a week = 10%/d.
+	if got := a.codexAvgRate(week); got != "10.0%/d" {
+		t.Fatalf("weekly average = %q", got)
+	}
+}
