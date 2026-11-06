@@ -96,6 +96,10 @@ type App struct {
 	// has finished).
 	claudePulse, codexPulse spendPulse
 	pulsePainted            bool
+	// overlayUp tracks the spark window around the icon, and sideMark the pace
+	// colour each dial was last painted in — the sparks fly in that colour.
+	overlayUp bool
+	sideMark  [2][3]int
 
 	// runtime state
 	profile          *Profile
@@ -295,12 +299,15 @@ func (a *App) blinkLoop() {
 func (a *App) pulseLoop() {
 	for range time.Tick(time.Duration(pulseFrameSecs * float64(time.Second))) {
 		a.mu.Lock()
-		if a.pulseRunning(time.Now()) {
+		now := time.Now()
+		if a.pulseRunning(now) {
 			a.pulsePainted = true
 			a.renderIcon()
+			a.paintPulseOverlay(now)
 		} else if a.pulsePainted {
 			a.pulsePainted = false
 			a.renderIcon()
+			a.clearPulseOverlay()
 		}
 		a.mu.Unlock()
 	}
@@ -1686,13 +1693,14 @@ func (a *App) renderIcon() {
 	if !a.codexErrorOn {
 		xi.pulse, xk = withPulse(a.codexPulse, now, xk)
 	}
+	a.sideMark[0], a.sideMark[1] = ci.markColor, xi.markColor
 	a.setIcon(renderDialSVG([]dialRenderInput{ci, xi}), ck+"|"+xk)
 }
 
 // withPulse renders p's current frame and extends the icon cache key with it, so
 // every animation frame counts as a different icon.
 func withPulse(p spendPulse, now time.Time, key string) (pulseFrame, string) {
-	f := pulseFrameAt(p, now, pulseFX)
+	f := pulseIconFrame(p, now, pulseFX)
 	if !f.Active {
 		return f, key
 	}

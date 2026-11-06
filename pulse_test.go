@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -44,82 +45,88 @@ func TestSpendPulseMergesStepsFromTheSamePoll(t *testing.T) {
 	}
 }
 
-func TestPulseFrameFadesOutAndRespectsTheMode(t *testing.T) {
+func TestPulseFramesFadeOutAndRespectTheMode(t *testing.T) {
 	now := time.Now()
 	p := spendPulse{}.arm(now, pulseRefDelta)
-	at := func(mode pulseMode, secs float64) pulseFrame {
-		return pulseFrameAt(p, now.Add(time.Duration(secs*float64(time.Second))), mode)
+	const reach = 20.0
+	icon := func(mode pulseMode, secs float64) pulseFrame {
+		return pulseIconFrame(p, now.Add(time.Duration(secs*float64(time.Second))), mode)
 	}
-	if f := at(pulseOff, 0.2); f.Active {
+	over := func(mode pulseMode, secs float64) pulseFrame {
+		return pulseOverlayFrame(p, now.Add(time.Duration(secs*float64(time.Second))), mode, reach)
+	}
+	if icon(pulseOff, 0.2).Active || over(pulseOff, 0.2).Active {
 		t.Error("pulseOff should draw nothing")
 	}
-	if f := at(pulseGlow, 0.2); len(f.Sparks) != 0 {
-		t.Error("pulseGlow should not throw sparks")
+	if !icon(pulseGlow, 0.2).Active {
+		t.Error("pulseGlow should still flash the dial itself")
 	}
-	early, late := at(pulseSparks, 0.15), at(pulseSparks, 0.9)
-	if !early.Active || !late.Active {
-		t.Fatal("frames inside the burst should be active")
+	if over(pulseGlow, 0.2).Active {
+		t.Error("pulseGlow should not open the overlay")
 	}
-	if len(early.Sparks) == 0 {
-		t.Fatal("a full-strength burst should throw sparks")
-	}
-	if late.HaloAlpha >= early.HaloAlpha || late.Halo <= early.Halo {
-		t.Errorf("the halo should grow and fade: %+v then %+v", early, late)
-	}
+	early, late := icon(pulseSparks, 0.15), icon(pulseSparks, 0.9)
 	if late.MarkScale >= early.MarkScale || early.MarkScale <= 1 {
 		t.Errorf("the centre dot should swell then settle back: %.2f then %.2f",
 			early.MarkScale, late.MarkScale)
 	}
-	if f := at(pulseSparks, pulseDur+0.01); f.Active {
+	if late.HaloAlpha >= early.HaloAlpha {
+		t.Error("the in-icon flare should fade")
+	}
+	oEarly, oLate := over(pulseSparks, 0.15), over(pulseSparks, 0.9)
+	if len(oEarly.Sparks) == 0 {
+		t.Fatal("a full-strength burst should throw sparks")
+	}
+	if oLate.Halo <= oEarly.Halo || oLate.HaloAlpha >= oEarly.HaloAlpha {
+		t.Errorf("the shockwave should grow and fade: %+v then %+v", oEarly, oLate)
+	}
+	if icon(pulseSparks, pulseDur+0.01).Active || over(pulseSparks, pulseDur+0.01).Active {
 		t.Error("the frame after the burst should draw nothing")
 	}
 }
 
-// Sparks fly outward into the side padding, and must stay inside the unpadded
-// 18-unit height — the menu bar gives no vertical room to spare.
-func TestSparksFlyOutwardAndStayInsideTheIconBox(t *testing.T) {
+// The whole point of the overlay is that the burst leaves the icon: embers have
+// to get past its rim (9 dial units) without overshooting the window.
+func TestSparksFlyOutPastTheIcon(t *testing.T) {
 	now := time.Now()
 	p := spendPulse{}.arm(now, pulseRefDelta)
-	var maxX, prevNear float64
-	for _, secs := range []float64{0.1, 0.4, 0.8} {
-		f := pulseFrameAt(p, now.Add(time.Duration(secs*float64(time.Second))), pulseSparks)
+	const reach = 25.0
+	var far, prevNear float64
+	for _, secs := range []float64{0.1, 0.4, 0.9} {
+		f := pulseOverlayFrame(p, now.Add(time.Duration(secs*float64(time.Second))), pulseSparks, reach)
 		near := math.MaxFloat64
 		for _, s := range f.Sparks {
 			d := math.Hypot(s.X, s.Y)
 			if d < sparkRim-0.01 {
 				t.Errorf("spark at %.2f started inside the rim", d)
 			}
-			if math.Abs(s.Y)+s.R > 9 {
-				t.Errorf("spark at y=%.2f (r=%.2f) leaves the icon box", s.Y, s.R)
-			}
-			if math.Abs(s.X)+s.R > 9+sparkPad {
-				t.Errorf("spark at x=%.2f leaves the padded box", s.X)
+			if d > reach+0.01 {
+				t.Errorf("spark at %.2f flew past the overlay window", d)
 			}
 			near = math.Min(near, d)
-			maxX = math.Max(maxX, math.Abs(s.X))
+			far = math.Max(far, d)
 		}
 		if prevNear > 0 && near < prevNear {
 			t.Error("sparks should only travel outward")
 		}
 		prevNear = near
 	}
-	if maxX <= 9 {
-		t.Errorf("sparks should reach past the dial edge, got %.2f", maxX)
+	if far <= 9 {
+		t.Errorf("sparks should leave the icon, got %.2f", far)
 	}
 }
 
 // A burst must look identical on every frame rendered from the same seed, and
 // differ between bursts — the ember layout carries no state of its own.
 func TestSparkLayoutIsStablePerBurst(t *testing.T) {
-	a := pulseSparkle(42, 1, 0.5)
-	if got := pulseSparkle(42, 1, 0.5); len(got) != len(a) || got[0] != a[0] {
+	a := pulseSparkle(42, 1, 0.5, 20)
+	if got := pulseSparkle(42, 1, 0.5, 20); len(got) != len(a) || got[0] != a[0] {
 		t.Error("the same seed and progress should give the same sparks")
 	}
-	if got := pulseSparkle(43, 1, 0.5); len(got) == len(a) && got[0] == a[0] {
+	if got := pulseSparkle(43, 1, 0.5, 20); len(got) == len(a) && got[0] == a[0] {
 		t.Error("a different seed should give a different burst")
 	}
-	if weak, strong := pulseSparkle(42, 0.1, 0.5), a; len(weak) >= len(strong) {
-		t.Errorf("a small spend should throw fewer sparks: %d vs %d", len(weak), len(strong))
+	if weak := pulseSparkle(42, 0.1, 0.5, 20); len(weak) >= len(a) {
+		t.Errorf("a small spend should throw fewer sparks: %d vs %d", len(weak), len(a))
 	}
 }
 
@@ -212,16 +219,60 @@ func TestPulseFrameReachesTheSVG(t *testing.T) {
 	now := time.Now()
 	burst := spendPulse{}.arm(now, pulseRefDelta)
 	in := dialRenderInput{limits: blankLimits, markColor: dialGreen, hasMark: true,
-		pulse: pulseFrameAt(burst, now.Add(300*time.Millisecond), pulseSparks)}
+		pulse: pulseIconFrame(burst, now.Add(300*time.Millisecond), pulseSparks)}
 	svg := string(renderDialSVG([]dialRenderInput{in}))
 	if !strings.Contains(svg, `data-pulse="halo"`) {
-		t.Error("the halo should be drawn")
-	}
-	if !strings.Contains(svg, `data-pulse="spark"`) {
-		t.Error("the sparks should be drawn")
+		t.Error("the in-icon flare should be drawn")
 	}
 	quiet := string(renderDialSVG([]dialRenderInput{{limits: blankLimits, markColor: dialGreen, hasMark: true}}))
 	if strings.Contains(quiet, "data-pulse") {
 		t.Error("an idle dial should draw no pulse")
+	}
+}
+
+// The overlay canvas has to be the icon plus overlayPad on every side, with the
+// two dial centres landing where the real icon draws them, or the sparks fly
+// out of the wrong place.
+func TestPulseOverlayCanvasFramesTheIcon(t *testing.T) {
+	defer func(m pulseMode) { pulseFX = m }(pulseFX)
+	pulseFX = pulseSparks
+	a := newApp()
+	a.appliedIconHeight = 18 // one point per dial unit, so the maths is readable
+	now := time.Now()
+	if _, _, _, ok := a.pulseOverlaySVG(now); ok {
+		t.Error("an idle app should draw no overlay")
+	}
+	a.firePulseTest()
+	svg, w, h, ok := a.pulseOverlaySVG(now.Add(200 * time.Millisecond))
+	if !ok {
+		t.Fatal("a running burst should draw an overlay")
+	}
+	if w != dialViewWidth(2)+2*overlayPad || h != 18+2*overlayPad {
+		t.Errorf("overlay canvas %.1fx%.1f does not frame the icon", w, h)
+	}
+	if !strings.Contains(string(svg), fmt.Sprintf(`viewBox="0 0 %.2f %.2f"`, w, h)) {
+		t.Errorf("overlay viewBox missing: %s", svg)
+	}
+	pulseFX = pulseGlow
+	if _, _, _, ok := a.pulseOverlaySVG(now.Add(200 * time.Millisecond)); ok {
+		t.Error("the overlay belongs to the sparks mode alone")
+	}
+}
+
+// A side showing an error is blinking red; it has no spend to celebrate.
+func TestPulseOverlaySkipsErroringSides(t *testing.T) {
+	defer func(m pulseMode) { pulseFX = m }(pulseFX)
+	pulseFX = pulseSparks
+	a := newApp()
+	a.appliedIconHeight = 18
+	now := time.Now()
+	a.firePulseTest()
+	a.errorOn = true
+	if _, _, _, ok := a.pulseOverlaySVG(now.Add(100 * time.Millisecond)); ok {
+		t.Error("the erroring side should not spark")
+	}
+	a.codexErrorOn = false
+	if _, _, _, ok := a.pulseOverlaySVG(now.Add(pulseTestStagger + 100*time.Millisecond)); !ok {
+		t.Error("the healthy side should still spark")
 	}
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -94,27 +93,19 @@ func TestRenderDialProducesSVG(t *testing.T) {
 	if !strings.HasPrefix(s, `<svg `) {
 		t.Fatalf("not an SVG: %q", s[:min(len(s), 32)])
 	}
-	// The default mode throws sparks, so the box carries sparkPad on each side.
-	if want := fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 18+2*sparkPad); !strings.Contains(s, want) {
-		t.Errorf("single dial viewBox %s missing: %s", want, s)
+	if !strings.Contains(s, `viewBox="0 0 18.00 18"`) {
+		t.Errorf("single dial viewBox missing: %s", s)
 	}
 }
 
-// Sparks are the only thing that needs room around the dial: with them off the
-// icon must be exactly as wide as it always was.
-func TestPulseModeSetsTheCanvasPadding(t *testing.T) {
+// The sparks fly in a window around the icon, so no pulse setting may change
+// the icon's own box — the menu bar would shove its neighbours about.
+func TestPulseModeNeverResizesTheIcon(t *testing.T) {
 	defer func(m pulseMode) { pulseFX = m }(pulseFX)
-	for _, tc := range []struct {
-		mode pulseMode
-		want string
-	}{
-		{pulseOff, `viewBox="0 0 18.00 18"`},
-		{pulseGlow, `viewBox="0 0 18.00 18"`},
-		{pulseSparks, fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 18+2*sparkPad)},
-	} {
-		pulseFX = tc.mode
-		if s := string(renderDial(blankLimits, [3]int{1, 2, 3}, true)); !strings.Contains(s, tc.want) {
-			t.Errorf("mode %s: want %s, got %s", pulseModeString(), tc.want, s)
+	for _, m := range []pulseMode{pulseOff, pulseGlow, pulseSparks} {
+		pulseFX = m
+		if s := string(renderDial(blankLimits, [3]int{1, 2, 3}, true)); !strings.Contains(s, `viewBox="0 0 18.00 18"`) {
+			t.Errorf("mode %s resized the icon: %s", pulseModeString(), s)
 		}
 	}
 }
@@ -123,9 +114,8 @@ func TestRenderDualDialProducesWideSVG(t *testing.T) {
 	data := renderDualDial(blankLimits, [3]int{1, 2, 3}, true,
 		blankLimits, [3]int{4, 5, 6}, true)
 	s := string(data)
-	want := fmt.Sprintf(`viewBox="0 0 %.2f 18"`, 2*sparkPad+2*18+(2+sparkPad))
-	if !strings.Contains(s, want) {
-		t.Errorf("dual dial viewBox %s missing: %s", want, s)
+	if !strings.Contains(s, `viewBox="0 0 38.00 18"`) {
+		t.Errorf("dual dial viewBox missing: %s", s)
 	}
 }
 

@@ -74,13 +74,16 @@ dial has two concentric rings, split left/right:
   can't be projected yet (no rate measured or no reset time); a red ring means
   the balance is exhausted. No budget → no ring, the icon is as before.
 - **Spend pulse** — every time a provider's quota % ticks up, that dial plays a
-  short burst: the centre dot flashes and swells, a shockwave rolls out past the
-  rim and sparks fly off into the margin around the circle. Pick **Spend pulse**
-  in the dropdown: *off*, *pulse the dial* (dot and a flare, icon keeps its
-  width) or *pulse + sparks* (the default; the icon reserves a little room on
-  each side for the embers) — plus **Test it now**, which plays a burst on both
-  dials so you can see it without waiting for a poll to find spend. Only quota counters pulse — credits don't — and a
-  restart never replays spend from the previous run.
+  short burst: the centre dot flashes and swells, the rim flares, and a
+  shockwave rolls **out of the icon** throwing sparks across the menu bar and
+  the screen below it. The sparks are drawn in a borderless, click-through
+  window layered over the menu bar (the icon itself can't paint outside its own
+  rectangle), so nothing about the icon's size or position changes. Pick
+  **Spend pulse** in the dropdown: *off*, *pulse the dial* (inside the icon
+  only) or *pulse + sparks* (the default) — plus **Test it now**, which plays a
+  burst on both dials so you can see it without waiting for a poll to find
+  spend. Only quota counters pulse — credits don't — and a restart never
+  replays spend from the previous run.
 - On an error that side's dial goes all-grey with a **red blinking** dot —
   Claude and Codex each blink on their own.
 
@@ -300,6 +303,7 @@ A single Go program (SVG icon rendering, menu bar via a repo-local patched
 - `history.go` — per-series utilisation log and the burn-history charts.
 - `dial.go` — `renderDial`, the SVG icon drawn from the `SEGMENTS` table.
 - `pulse.go` — the spend-pulse animation: burst envelope, shockwave and sparks.
+- `overlay.go` — paints that burst in a window around the menu-bar icon.
 - `app.go` — `App`: polling loop, state, and rendering.
 - `menu.go` — menu-bar layout and the working-hours pickers.
 - `main.go` — thin entry point.

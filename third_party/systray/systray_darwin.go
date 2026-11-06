@@ -27,6 +27,25 @@ func SetIconHeight(h float64) {
 	C.setIconHeight(C.double(h))
 }
 
+// ShowSparkOverlay paints svg (or any image the system can decode) in a
+// borderless, click-through window of width x height points centred on the
+// menu-bar icon and layered above the menu bar — for animation that has to
+// leave the icon's own rectangle. Repeated calls just swap the image; call
+// HideSparkOverlay to take the window down. A no-op while the status item
+// itself is hidden.
+func ShowSparkOverlay(iconBytes []byte, width, height float64) {
+	if len(iconBytes) == 0 {
+		return
+	}
+	cstr := (*C.char)(unsafe.Pointer(&iconBytes[0]))
+	C.showSparkOverlay(cstr, (C.int)(len(iconBytes)), C.double(width), C.double(height))
+}
+
+// HideSparkOverlay takes the overlay window down.
+func HideSparkOverlay() {
+	C.hideSparkOverlay()
+}
+
 // SetIcon sets the icon of a menu item. Only works on macOS and Windows.
 // iconBytes should be the content of .ico/.jpg/.png
 func (item *MenuItem) SetIcon(iconBytes []byte) {

@@ -61,6 +61,10 @@ withParentMenuId: (int)theParentMenuId
   NSStatusItem *statusItem;
   NSMenu *menu;
   NSCondition* cond;
+  // Borderless click-through window centred on the status item, used to draw
+  // animation that has to leave the icon's own rectangle (see showSparkOverlay).
+  NSWindow *sparkWindow;
+  NSImageView *sparkView;
 }
 
 @synthesize window = _window;
@@ -101,6 +105,55 @@ withParentMenuId: (int)theParentMenuId
   }
 }
 
+
+// showSpark: args are @[image, width, height] in points. The window is centred
+// on the status item and sits just above the menu bar, so whatever the image
+// draws around the icon spills over the bar and the screen below it. It never
+// takes focus or swallows clicks.
+- (void)showSpark:(NSArray *)args {
+  NSImage *image = [args objectAtIndex:0];
+  CGFloat w = [[args objectAtIndex:1] doubleValue];
+  CGFloat h = [[args objectAtIndex:2] doubleValue];
+  NSWindow *host = statusItem.button.window;
+  if (host == nil || !host.isVisible || w <= 0 || h <= 0) {
+    [self hideSpark:nil]; // item hidden (notch overflow, Bartender, ...)
+    return;
+  }
+  NSRect f = host.frame;
+  NSRect r = NSMakeRect(NSMidX(f) - w / 2, NSMidY(f) - h / 2, w, h);
+  if (self->sparkWindow == nil) {
+    self->sparkWindow = [[NSWindow alloc] initWithContentRect:r
+                                                    styleMask:NSWindowStyleMaskBorderless
+                                                      backing:NSBackingStoreBuffered
+                                                        defer:NO];
+    [self->sparkWindow setOpaque:NO];
+    [self->sparkWindow setBackgroundColor:[NSColor clearColor]];
+    [self->sparkWindow setIgnoresMouseEvents:YES];
+    [self->sparkWindow setLevel:NSStatusWindowLevel + 1];
+    [self->sparkWindow setHidesOnDeactivate:NO];
+    [self->sparkWindow setCollectionBehavior:
+      NSWindowCollectionBehaviorCanJoinAllSpaces |
+      NSWindowCollectionBehaviorStationary |
+      NSWindowCollectionBehaviorFullScreenAuxiliary |
+      NSWindowCollectionBehaviorIgnoresCycle];
+    self->sparkView = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 0, w, h)];
+    [self->sparkView setImageScaling:NSImageScaleAxesIndependently];
+    [self->sparkWindow setContentView:self->sparkView];
+  }
+  [self->sparkWindow setFrame:r display:NO];
+  [self->sparkView setFrame:NSMakeRect(0, 0, w, h)];
+  [image setSize:NSMakeSize(w, h)];
+  self->sparkView.image = image;
+  if (!self->sparkWindow.isVisible) {
+    [self->sparkWindow orderFrontRegardless];
+  }
+}
+
+- (void)hideSpark:(id)ignored {
+  if (self->sparkWindow != nil && self->sparkWindow.isVisible) {
+    [self->sparkWindow orderOut:nil];
+  }
+}
 
 - (void)setTooltip:(NSString *)tooltip {
   statusItem.button.toolTip = tooltip;
@@ -266,6 +319,27 @@ void setIcon(const char* iconBytes, int length, bool template) {
     [image setSize:NSMakeSize(width, height)];
     image.template = template;
     runInMainThread(@selector(setIcon:), (id)image);
+  }
+}
+
+// showSparkOverlay draws image bytes in a width x height point window centred on
+// the menu-bar icon, above the menu bar. Call hideSparkOverlay when the
+// animation is over — the window stays up until then.
+void showSparkOverlay(const char* iconBytes, int length, double width, double height) {
+  @autoreleasepool {
+    NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    if (image == nil) {
+      return;
+    }
+    runInMainThread(@selector(showSpark:),
+                    (id)@[image, [NSNumber numberWithDouble:width], [NSNumber numberWithDouble:height]]);
+  }
+}
+
+void hideSparkOverlay(void) {
+  @autoreleasepool {
+    runInMainThread(@selector(hideSpark:), nil);
   }
 }
 

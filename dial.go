@@ -42,6 +42,7 @@ const (
 	halfShift      = 0.8
 	endGap         = 5.0
 	pxSize         = 44   // rendered pixel size; scaled to the menu bar by systray
+	dialGap        = 2.0  // gap between the two dials, in dial units
 	creditR        = 8.45 // thin outer credits ring radius
 	creditSW       = 0.6  // ... and stroke width
 )
@@ -217,9 +218,9 @@ func pulseLegendText() string {
 	case pulseOff:
 		return "off — the dial stays still as quota is spent"
 	case pulseGlow:
-		return "the centre dot flashes and a halo rolls out each time the quota % ticks up"
+		return "the centre dot flashes and the rim flares each time the quota % ticks up"
 	default:
-		return "the centre dot flashes, a halo rolls out and sparks fly off the rim each time the quota % ticks up"
+		return "the centre dot flashes and a shockwave throws sparks out past the icon, across the menu bar, each time the quota % ticks up"
 	}
 }
 
@@ -319,23 +320,25 @@ type dialRenderInput struct {
 	pulse pulseFrame
 }
 
+// dialViewWidth is the icon's width in dial units for n dials side by side.
+func dialViewWidth(n int) float64 {
+	if n < 1 {
+		return 18
+	}
+	return 18*float64(n) + dialGap*float64(n-1)
+}
+
 func renderDialSVG(inputs []dialRenderInput) []byte {
 	if len(inputs) == 0 {
 		inputs = []dialRenderInput{{limits: blankLimits}}
 	}
-	// pad reserves room around each dial for the spend sparks; the gap between
-	// two dials grows with it so neighbouring bursts don't collide. Both depend
-	// on the pulse mode only, so the icon keeps its width while one plays.
-	pad := pulseCanvasPad()
-	gap := 2.0 + pad
-	n := float64(len(inputs))
-	width := 2*pad + 18.0*n + gap*(n-1)
+	width := dialViewWidth(len(inputs))
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %.2f 18">`,
 		iround(float64(pxSize)*width/18), pxSize, width))
 	for i, input := range inputs {
-		renderDialGroup(&b, input, pad+float64(i)*(18+gap))
+		renderDialGroup(&b, input, float64(i)*(18+dialGap))
 	}
 	b.WriteString(`</svg>`)
 	return []byte(b.String())
@@ -644,24 +647,17 @@ func writeMark(b *strings.Builder, xoff float64, c [3]int, p pulseFrame) {
 		xoff+dialCX, dialCY, r, svgRGB(fill)))
 }
 
-// writePulse draws the spend burst around a dial centred at ox: the halo
-// rolling out past the quota ring, then the embers in the side padding. Both
-// take a lightened pace colour — white alone would vanish on a light menu bar.
+// writePulse draws the part of the spend burst that stays inside the icon: the
+// ring flaring at the edge of the box (the rest of the burst is the overlay's
+// job, see overlay.go). The colour is the lightened pace colour — white alone
+// would vanish on a light menu bar.
 func writePulse(b *strings.Builder, ox float64, c [3]int, p pulseFrame) {
 	if !p.Active {
 		return
 	}
 	glow := lerpColor(c, dialWhite, 0.15)
 	if p.HaloAlpha > 0.01 && p.Halo > 0 {
-		halo := tagAttr("pulse", "halo")
-		if p.HaloFan <= 0 {
-			writeCircleTagged(b, halo, ox, p.Halo, glow, p.HaloAlpha, p.HaloWidth)
-		} else {
-			for _, mid := range []float64{90, 270} { // the right and left sides
-				writeArcTagged(b, halo, ox, p.Halo, mid-p.HaloFan, mid+p.HaloFan,
-					glow, p.HaloAlpha, p.HaloWidth)
-			}
-		}
+		writeCircleTagged(b, tagAttr("pulse", "halo"), ox, p.Halo, glow, p.HaloAlpha, p.HaloWidth)
 	}
 	for _, s := range p.Sparks {
 		if s.Alpha <= 0.01 {

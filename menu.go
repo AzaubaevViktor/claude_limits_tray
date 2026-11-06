@@ -285,6 +285,7 @@ func (a *App) setPulseMode(m pulseMode) {
 		setCheck(a.pulseItems[i], o.mode == pulseFX)
 	}
 	setEnabled(a.pulseTest, pulseFX != pulseOff) // nothing to show with it off
+	a.clearPulseOverlay()                        // the sparks may have just been switched off
 	a.renderLegend()
 	a.iconKey = ""
 	a.renderIcon()
