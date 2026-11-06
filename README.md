@@ -133,7 +133,11 @@ Click it for everything as numbers, plus your account.
   as a faint stub, so outliers stay visible. The 7d row's width is a menu
   choice, **7d smoothing**: plain bars,
   30 min, 1 hour (default), 2 hours or 4 hours. The
-  top-right total is explicitly labelled **SPENT**. Each card also has
+  top-right total is explicitly labelled **SPENT** and counts from the **last
+  reset in view** (every observed reset is drawn as a thin vertical dashed
+  line on the plot), so the previous window's burn is never added to the
+  current one; with no reset in view it is the spend across the whole chart.
+  Each card also has
   a purple → green → yellow → red speedometer with
   its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
   charts. The needle reads the rolling **last 15 minutes** against the pace you

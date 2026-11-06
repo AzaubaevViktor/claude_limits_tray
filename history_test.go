@@ -753,3 +753,40 @@ func TestQuotaPaceCountsWorkingHoursOnly(t *testing.T) {
 		t.Fatalf("credits afford = %v,%v, want wall clock", got, ok)
 	}
 }
+
+func TestSpentCountsFromTheLastResetInView(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.Local).Unix()
+	// 30% burned, a reset 1800s ago, then 4% in the new window.
+	samples := []histSample{
+		{now - 3600, 60}, {now - 3000, 90}, {now - 2400, 90},
+		{now - 1800, 0}, {now - 1200, 4}, {now, 4},
+	}
+	panel := burnChartPanel{
+		Provider: "Claude", Label: "1h", Samples: samples, Known: true,
+		Intervals:  burnIntervals(samples, now, 3600),
+		WindowSecs: int64(fiveHourSecs), Start: now - 3600, Now: now,
+		UsedPct: 4, PeriodLeft: 3600, PeriodKnown: true, ResetAt: now + 3600,
+		Accent: claudeChartAccent,
+	}
+	if got := resetsWithin(samples, panel.Start, now); len(got) != 1 || got[0] != now-1800 {
+		t.Fatalf("resets in view = %v", got)
+	}
+	if got := totalSpent(panel.Intervals); !near(got, 34, 1e-9) {
+		t.Fatalf("whole horizon spent %v, want 34", got)
+	}
+	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, "SPENT 4.0%") {
+		t.Fatalf("SPENT should restart at the reset: %s", svg)
+	}
+	if got := countSubstr(svg, `data-reset-line="true"`); got != 1 {
+		t.Fatalf("want one reset line, got %d", got)
+	}
+	// Without a reset in view the total is the whole chart.
+	noReset := panel
+	noReset.Samples = samples[3:] // starts at the post-reset level, no drop
+	noReset.Intervals = burnIntervals(noReset.Samples, now, 3600)
+	svg = string(renderPairedBurnChart(noReset, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, "SPENT 4.0%") || strings.Contains(svg, `data-reset-line="true"`) {
+		t.Fatalf("no reset in view: %s", svg)
+	}
+}

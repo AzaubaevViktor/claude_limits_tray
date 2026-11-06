@@ -130,11 +130,32 @@ func burnIntervals(s []histSample, now, horizon int64) []burnInterval {
 
 // totalSpent is the quota consumed across the whole horizon.
 func totalSpent(intervals []burnInterval) float64 {
+	return spentSince(intervals, math.MinInt64)
+}
+
+// spentSince is the quota consumed by the runs that began at or after t. A
+// reset closes its run with zero spend and starts the next one at the sample
+// that revealed the drop, so t = that reset counts exactly the new window.
+func spentSince(intervals []burnInterval, t int64) float64 {
 	sum := 0.0
 	for _, interval := range intervals {
-		sum += interval.Spent
+		if interval.Start >= t {
+			sum += interval.Spent
+		}
 	}
 	return sum
+}
+
+// resetsWithin lists the observed resets (samples whose reading dropped below
+// the previous one) strictly inside (start, now], oldest first.
+func resetsWithin(s []histSample, start, now int64) []int64 {
+	var resets []int64
+	for i := 1; i < len(s); i++ {
+		if s[i].V < s[i-1].V && s[i].T > start && s[i].T <= now {
+			resets = append(resets, s[i].T)
+		}
+	}
+	return resets
 }
 
 type useRate struct {
@@ -694,11 +715,19 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		plotX, accent, svgTextEscape.Replace(title)))
+	// SPENT counts from the last reset in view (or the chart's start when no
+	// reset is visible), so the previous window's burn is not added to the
+	// current one; the reset itself is drawn as a vertical line.
+	resets := resetsWithin(panel.Samples, panel.Start, panel.Now)
+	since := panel.Start
+	if len(resets) > 0 {
+		since = resets[len(resets)-1]
+	}
 	total := "SPENT —"
 	if panel.Known && panel.Unit == "" {
-		total = fmt.Sprintf("SPENT %.1f%%", totalSpent(panel.Intervals))
+		total = fmt.Sprintf("SPENT %.1f%%", spentSince(panel.Intervals, since))
 	} else if panel.Known {
-		total = "SPENT " + fmtAmount(totalSpent(panel.Intervals), panel.Unit)
+		total = "SPENT " + fmtAmount(spentSince(panel.Intervals, since), panel.Unit)
 	}
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="12.5" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
@@ -762,6 +791,12 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		if panel.smooth() {
 			writeSmoothArea(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs)
 		}
+	}
+	for _, reset := range resets {
+		rx := xOf(reset)
+		b.WriteString(fmt.Sprintf(
+			`<line data-reset-line="true" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(235,235,240)" stroke-width="0.7" stroke-opacity="0.85" stroke-dasharray="1.2 0.8"/>`,
+			rx, plotTop, rx, plotBase))
 	}
 	if axisMax > 0 {
 		writeAffordableLine(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, accent)
