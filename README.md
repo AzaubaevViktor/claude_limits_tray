@@ -118,9 +118,34 @@ Click it for everything as numbers, plus your account.
   the **actual span it was measured over** (nominally ~15 min, but widening to the
   real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
   manual refresh never misreads as 0).
-- **Paired burn history** at the top of the menu — Claude is always the left
+- **Quota strip** at the very top of the menu — one row per real quota window
+  (Claude's 5h and 7d plus credits on the left, Codex's two windows plus
+  credits on the right). Each row spells out the **time to that window's
+  reset** in 13-point digits beside the wall-clock moment it lands, so the
+  countdown is readable without squinting, and repeats it once per window
+  rather than once per chart. Next to it sits a compact **speed bar** — the
+  old dial speedometer rolled flat, on the same 0–2× scale against the pace
+  you can still **afford before the reset** (quota left ÷ working time left):
+  purple under pace, green at exactly 1× (runs out precisely at the reset),
+  yellow at 1¼×, red at 1½× or more, with fixed **½× / 1× / 1½×** notches, an
+  accent pip below marking where the plain whole-window pace currently sits on
+  that scale (left of 1× you can go faster than normal, right of it even
+  normal is too fast), and a thin bar above comparing the last 5 minutes with
+  the last 15 — right means accelerating (green → yellow → red), left means
+  easing off (green → blue → purple). `LEFT` closes the row with the runway
+  read two ways: at the **15-minute rate** and at the **average since the
+  window opened**. A window with nothing measured, or with nothing finite to
+  pace against (an unlimited credit balance, or no reset), greys out instead
+  of reading zero. Credits keep the wall clock throughout: they only burn
+  while the plan quota is exhausted, so their row counts down to the reset
+  that brings plan quota back.
+- **Paired burn history** under the strip — Claude is always the left
   card and Codex the right card, with large high-resolution timelines and
-  separate totals/scales for the last hour, short window, and long window. Each
+  separate totals and scales for the last hour, the short window, the last
+  **24 hours**, and the long window. Neither provider exposes a daily quota, so
+  the 24h card is the long window seen over a day — the pace line it is read
+  against is still the weekly budget, which makes it answer "how much of the
+  week did today cost". Each
   independent scale has three speed labels on the right in `%/h` or `%/d`, plus
   start/midpoint/end time labels along the bottom. Both APIs report quota in
   whole percent, so every bar is one run between counter changes: a 1% step is
@@ -135,55 +160,28 @@ Click it for everything as numbers, plus your account.
   wait), holds flat outside working hours, drops with every run, starts over
   at each observed reset, and is clipped to the top of the plot just before a
   reset, where almost any speed is affordable. Bar and area colour compare each run's
-  speed with the pace affordable at that moment on the speedometer's scale,
+  speed with the pace affordable at that moment on the speed bar's scale,
   which follows the dial: purple when under pace, green at exactly 1× (runs
   out precisely at the reset, like the credits ring), yellow at 1¼×, red at
   1½× or more. The y axis is scaled from the flat whole-window pace (over
   the window's working hours) instead, so it stays put while the reference
   curve moves. If a window's reset is
-  unknown the line falls back to that flat pace. The 1h and 5h rows blur
-  those runs into a smooth area (a Gaussian of 1/60 of the horizon, so ~60s
-  and ~5min) drawn over the raw bars at low opacity. The blur never leaks
+  unknown the line falls back to that flat pace. The 1h, 5h and 24h rows blur
+  those runs into a smooth area (a Gaussian of 1/60 of the horizon, so ~60s,
+  ~5min and ~24min) drawn over the raw bars at low opacity. The blur never leaks
   past the window edges, so the area's integral equals the bars' integral and
   the SPENT total exactly, and any run faster than the blur pokes out above it
   as a faint stub, so outliers stay visible. The 7d row's width is a menu
   choice, **7d smoothing**: plain bars,
   30 min, 1 hour (default), 2 hours or 4 hours. The
-  top-right total is explicitly labelled **SPENT** and counts from the **last
-  reset in view** (every observed reset is drawn as a thin vertical dashed
+  headline figure in the card's top-right corner — set at 16 points, since it
+  is the one number the card exists for — is labelled **SPENT** and counts from
+  the **last reset in view** (every observed reset is drawn as a thin vertical dashed
   line on the plot), so the previous window's burn is never added to the
   current one; with no reset in view it is the spend across the whole chart.
-  Each card also has
-  a purple → green → yellow → red speedometer with
-  its speed label beside it: **%/hour** on sub-day charts and **%/day** on daily
-  charts. The needle reads the rolling **last 15 minutes** against the pace you
-  can still **afford before the reset** (quota left ÷ working time left) — the
-  same reference the dashed line and the bar colours use, at its current
-  value:
-  with lots of quota and a reset minutes away the needle relaxes even under
-  heavy use, while a thin remainder with a long wait pushes it into red at a
-  modest rate. Three fixed notches mark **½×**, **1×** (runs out exactly at
-  reset, the green peak) and **1½×** (where red begins) of that affordable
-  pace, and a small accent-coloured
-  pointer outside the arc shows where the plain whole-window pace currently
-  sits on that scale — left of 1× you can go faster than normal, right of it
-  even normal is too fast. If a quota window's reset time is unknown the
-  needle falls back to the whole-window pace; a credit card with nothing
-  finite to pace against (an unlimited balance, or no reset) rests the needle
-  and greys its label instead. Credits keep the wall clock throughout: they
-  only burn while the plan quota is exhausted, and the credits row shows the
-  wall-clock time to that reset. The quota-end ETA also uses the
-  15-minute rate (including how long ago the last increase was), not the
-  average since the window opened. Each card separately labels, in fixed distinct colours, the
-  **time to reset**, the quota runway at the **current 15-minute rate**, and the
-  runway at the **average rate since reset**; the average label also includes
-  that rate (`%/h` for 5-hour windows, `%/d` for weekly windows), including on
-  the Codex 5-hour card. A smaller concentric semicircular bar compares the last 5
-  minutes with the 15-minute rate: centre means unchanged, right means
-  accelerating (green → yellow → red), and left means slowing
-  (green → blue → purple). If polling data goes stale, the rate expires and the
-  card stops projecting an exhaustion time. A
-  weekly-only Codex limit is placed in the long-window row even when the API
+  Everything else a card used to carry — the reset countdown, the runways, the
+  measurement span and the speedometer — described the quota window rather than
+  this horizon, and now lives once on the strip. A weekly-only Codex limit is placed in the long-window row even when the API
   calls it `primary`; its real utilisation history is also shown as a 5-hour
   slice in the middle row instead of leaving that Codex card empty.
 - **Credits runway** for both providers — a `Credits:` row with the balance
@@ -194,11 +192,12 @@ Click it for everything as numbers, plus your account.
   enabled, otherwise from `extra_usage`; extra-usage amounts are read as minor
   units scaled by `decimal_places`. Codex credits are tracked as a running
   counter of balance drops, since its API only reports the balance.
-- A fourth **Credits 5h** chart row (Claude left, Codex right) in credit units:
+- A fifth **Credits 5h** chart row (Claude left, Codex right) in credit units:
   bars are credits spent per run between balance changes, the dashed line is
   the pace that would have spent the balance left at each moment exactly by
   the reset (only for the current period — an earlier period's budget is not
-  recorded), `AVG` is the last 24 h.
+  recorded), and the strip's average runway for credits is taken over the last
+  24 h.
 - **Per-model** weekly limits.
 - Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
   both usage windows, forecast, speed, credits, **available rate-limit
@@ -207,10 +206,15 @@ Click it for everything as numbers, plus your account.
   reads "—" until a `rate_limit_reset_credits` field appears in the response.
 - Shows the active Claude account and provides **Use current Claude login** to
   reload `Claude Code-credentials` immediately after switching accounts.
-- **Next reset at a glance** — a `⏱ Next reset: Codex 5h · in 1h 23m · 14:05`
-  row above the status names the soonest upcoming reset across both
-  providers, and each block title carries its own countdown
+- **Next reset at a glance** — the strip counts every window down, and each
+  block title carries its own countdown to the soonest of its windows
   (`Claude · Claude Max 20× · ↻ 3d 4h`). Both tick every second.
+- **A short top level** — the charts, the two provider blocks, **Settings**
+  (working hours, icon size, time ring, spend pulse, 7d smoothing, the dial
+  legend), **Status** (the last success/failure rows for both providers),
+  Refresh and Quit. Text rows are kept narrower than the chart images, and the
+  status line is elided, so the dropdown is as wide as the charts rather than
+  as wide as a sentence of explanation.
 - Polls in the background with a live "requesting…" indicator; on errors it
   keeps showing the **last good values for 10 minutes** before going grey.
   The bottom of the menu lists **separate last success / last failure** rows
@@ -305,6 +309,7 @@ A single Go program (SVG icon rendering, menu bar via a repo-local patched
 - `credits.go` — credit budgets (Claude extra usage / spend, Codex balance),
   their runway projection, and the credits menu text.
 - `history.go` — per-series utilisation log and the burn-history charts.
+- `strip.go` — the quota strip above them: reset countdowns and speed bars.
 - `dial.go` — `renderDial`, the SVG icon drawn from the `SEGMENTS` table.
 - `pulse.go` — the spend-pulse animation: burst envelope, shockwave and sparks.
 - `overlay.go` — paints that burst in a window around the menu-bar icon.

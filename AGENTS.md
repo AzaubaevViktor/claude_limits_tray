@@ -15,6 +15,7 @@ Claude usage limits. See `README.md` for what it does.
 
 - Files: `helpers.go` (pure time/format/backoff), `api.go` (`Client`),
   `forecast.go` (`Forecast` + `RateTracker`), `dial.go` (`renderDial`),
+  `history.go` (the burn charts), `strip.go` (the quota strip above them),
   `app.go` (`App`: poll loop, state, rendering), `menu.go` (menu layout), and a
   thin `main.go`. Keep the pure logic in `helpers`/`forecast` free of GUI deps
   so it stays unit-testable.
