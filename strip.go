@@ -20,8 +20,7 @@ const (
 	stripRowStep  = 18.0
 	stripBottom   = 8.0  // below the last row's baseline
 	stripTimeX    = 30.0 // countdown column, from the side's left edge
-	stripClockX   = 84.0 // wall-clock reset column
-	stripBarAt    = 0.48 // speed bar column, as a share of the side's width
+	stripBarAt    = 0.44 // speed bar column, as a share of the side's width
 )
 
 // stripHeight is the image height for the taller of the two sides.
@@ -77,8 +76,8 @@ func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64
 		anchor string
 	}{
 		{"RESETS IN", x + stripTimeX + 24, "start"},
-		{"SPEED VS AFFORDABLE PACE", x + width*stripBarAt, "start"},
-		{"LEFT: NOW · AVG", x + width - stripPad, "end"},
+		{"SPEED VS PACE", x + width*stripBarAt, "start"},
+		{"LEFT · AVG", x + width - stripPad, "end"},
 	} {
 		b.WriteString(fmt.Sprintf(
 			`<text x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" letter-spacing="0.2" fill="rgb(132,132,140)">%s</text>`,
@@ -106,14 +105,17 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 	b.WriteString(fmt.Sprintf(
 		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="rgb(236,236,241)">%s</text>`,
 		svgTextEscape.Replace(countdown), timeX, y+1, svgTextEscape.Replace(countdown)))
+	// The wall-clock moment trails the countdown, right-aligned against the
+	// speed bar: a long countdown ("5d 13h") only ever pairs with a weekday
+	// clock, a short one with a bare time, so the two never meet.
+	barX := x + width*stripBarAt
 	if clock := fmtResetClock(now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
 		b.WriteString(fmt.Sprintf(
-			`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="600" fill="rgb(140,140,148)">%s</text>`,
-			x+stripClockX, y+1, svgTextEscape.Replace(clock)))
+			`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" fill="rgb(140,140,148)">%s</text>`,
+			barX-5, y+1, svgTextEscape.Replace(clock)))
 	}
 
 	ratio, ratioKnown := stripSpeed(panel)
-	barX := x + width*stripBarAt
 	writeSpeedBar(b, panel, ratio, ratioKnown, barX, y-4)
 	speedText := "—"
 	color := dialGray
@@ -121,8 +123,8 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 		speedText, color = speedRatioText(ratio), burnColor(ratio)
 	}
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" fill="%s">%s</text>`,
-		barX+speedBarW+6, y, svgRGB(color), svgTextEscape.Replace(speedText)))
+		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8.5" font-weight="700" fill="%s">%s</text>`,
+		barX+speedBarW+5, y, svgRGB(color), svgTextEscape.Replace(speedText)))
 
 	// What is left, read two ways: at the rate of the last quarter hour, and at
 	// the average since the window opened. The first answers "if I keep going
@@ -165,7 +167,7 @@ func speedRatioText(ratio float64) string {
 }
 
 const (
-	speedBarW = 62.0
+	speedBarW = 54.0
 	speedBarH = 5.5
 )
 
