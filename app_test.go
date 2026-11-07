@@ -450,9 +450,6 @@ func TestNearestResetAcrossProviders(t *testing.T) {
 	if _, ok := nearestReset(past, now); ok {
 		t.Fatal("past resets must not count")
 	}
-	if got := resetText(now.Add(26*time.Hour+30*time.Minute), now); !strings.HasPrefix(got, "in 1d 2h · ") {
-		t.Fatalf("resetText = %q", got)
-	}
 }
 
 func TestCodexRatesUseDailyUnitsForLongWindows(t *testing.T) {

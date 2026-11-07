@@ -208,14 +208,13 @@ type App struct {
 	dynIconItem                                *systray.MenuItem
 	work                                       *systray.MenuItem
 	startItems, endItems                       []hourItem
-	status, nextReset                          *systray.MenuItem
+	status                                     *systray.MenuItem
 	claudeOk, claudeFail, codexOk, codexFail   *systray.MenuItem
 	// base block titles ("Claude · Max 20×"); the nearest-reset suffix is
 	// appended by refreshResetRows, which only touches systray when the
 	// composed text changes.
 	claudeTitle, codexTitle           string
 	claudeTitleShown, codexTitleShown string
-	nextResetShown                    string
 }
 
 func newApp() *App {
@@ -459,7 +458,7 @@ func (a *App) drain() {
 // lock so the tick loop keeps going; the outcome lands in the status row and
 // triggers an immediate poll.
 func (a *App) refreshClaudeTokenNow() {
-	a.status.SetTitle("⟳ refreshing Claude token…")
+	a.setStatus("⟳ refreshing Claude token…")
 	client := a.client
 	go func() {
 		err := client.ForceRefresh()
@@ -468,10 +467,10 @@ func (a *App) refreshClaudeTokenNow() {
 		if err != nil {
 			a.lastFail = time.Now()
 			a.lastFailMsg = describe(err)
-			a.status.SetTitle("⚠ " + a.lastFailMsg)
+			a.setStatus("⚠ " + a.lastFailMsg)
 			return
 		}
-		a.status.SetTitle("✓ Claude token refreshed")
+		a.setStatus("✓ Claude token refreshed")
 		a.saveState(true) // persist the rotated refresh token promptly
 		a.nextPoll = time.Time{}
 		a.nextAllowedEpoch = 0
@@ -485,7 +484,7 @@ func (a *App) useCurrentClaudeLogin() {
 	if err := a.client.UseCurrentAuth(); err != nil {
 		a.lastFail = time.Now()
 		a.lastFailMsg = describe(err)
-		a.status.SetTitle("⚠ " + a.lastFailMsg)
+		a.setStatus("⚠ " + a.lastFailMsg)
 		return
 	}
 
@@ -722,7 +721,7 @@ func (a *App) apply() {
 		a.renderClaudeCredits()
 		a.renderScoped(u.Limits)
 		a.renderHistory()
-		a.status.SetTitle(fmt.Sprintf("✓ week %.0f%% left · no 5h limit", 100-weekPct))
+		a.setStatus(fmt.Sprintf("✓ week %.0f%% left · no 5h limit", 100-weekPct))
 		return
 	}
 	a.setClaudeSessionRows(true)
@@ -762,7 +761,7 @@ func (a *App) apply() {
 	a.renderClaudeCredits()
 	a.renderScoped(u.Limits)
 	a.renderHistory()
-	a.status.SetTitle(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
+	a.setStatus(fmt.Sprintf("✓ sess %.0f%% left · week %.0f%% left",
 		100-sessPct, 100-weekPct))
 }
 
@@ -1905,7 +1904,7 @@ func (a *App) showError(msg string) {
 	a.errorOn = true
 	a.renderIcon()
 	systray.SetTitle("")
-	a.status.SetTitle("⚠ " + msg)
+	a.setStatus("⚠ " + msg)
 	for _, it := range []*systray.MenuItem{a.account, a.plan, a.session,
 		a.sessionReset, a.weekly, a.weeklyReset} {
 		it.SetTitle("—")
@@ -1933,11 +1932,6 @@ func nearestReset(cands []resetCandidate, now time.Time) (resetCandidate, bool) 
 		}
 	}
 	return best, found
-}
-
-// resetText renders "in 2d 3h · Fri 09:00" for a reset moment.
-func resetText(at time.Time, now time.Time) string {
-	return withClock("in "+fmtRemaining(at.Sub(now).Seconds(), true), at, true)
 }
 
 func (a *App) claudeResetCandidates() []resetCandidate {
@@ -1977,6 +1971,20 @@ func (a *App) codexResetCandidates() []resetCandidate {
 	return out
 }
 
+// menuTextMax is how many characters a top-level row may use. Past that it
+// widens the dropdown beyond the chart images, which are what its width is
+// meant to be for.
+const menuTextMax = 58
+
+// setStatus writes the one-line status, shortened to fit the menu. The full
+// message stays on the failure rows inside it.
+func (a *App) setStatus(text string) {
+	if a.status == nil {
+		return
+	}
+	a.status.SetTitle(elide(text, menuTextMax))
+}
+
 func (a *App) setClaudeTitle(s string) {
 	a.claudeTitle = s
 	a.refreshResetRows()
@@ -1987,9 +1995,9 @@ func (a *App) setCodexTitle(s string) {
 	a.refreshResetRows()
 }
 
-// refreshResetRows keeps the "next reset" row and the block-title suffixes
-// ("Claude · Max 20× · ↻ 2d 3h") current. Called every tick; it only pushes
-// a title to systray when the text actually changed.
+// refreshResetRows keeps the block-title suffixes ("Claude · Max 20× · ↻ 2d
+// 3h") current. Called every tick; it only pushes a title to systray when the
+// text actually changed.
 func (a *App) refreshResetRows() {
 	now := time.Now()
 	claude := a.claudeResetCandidates()
@@ -2012,16 +2020,6 @@ func (a *App) refreshResetRows() {
 			a.codexParent.SetTitle(t)
 		}
 	}
-	if a.nextReset != nil {
-		text := "⏱ Next reset: —"
-		if c, ok := nearestReset(append(claude, codex...), now); ok {
-			text = fmt.Sprintf("⏱ Next reset: %s %s · %s", c.provider, c.window, resetText(c.at, now))
-		}
-		if text != a.nextResetShown {
-			a.nextResetShown = text
-			a.nextReset.SetTitle(text)
-		}
-	}
 }
 
 func (a *App) updateStatus() {
@@ -2032,7 +2030,7 @@ func (a *App) updateStatus() {
 	a.codexOk.SetTitle("Codex ✓ last success: " + agoOf(a.lastCodexOk))
 	a.codexFail.SetTitle("Codex ✗ last failure: " + failText(a.lastCodexFail, a.lastCodexFailMsg))
 	if a.inflight {
-		a.status.SetTitle(fmt.Sprintf("⟳ requesting %s… %.0fs", a.reqSource,
+		a.setStatus(fmt.Sprintf("⟳ requesting %s… %.0fs", a.reqSource,
 			time.Since(a.reqStart).Seconds()))
 		return
 	}
@@ -2045,13 +2043,13 @@ func (a *App) updateStatus() {
 			a.cached = false
 			a.showError("No fresh data — " + orElse(a.lastFailMsg, "error"))
 		} else {
-			a.status.SetTitle(fmt.Sprintf("⚠ %s — showing cached (%ds)",
+			a.setStatus(fmt.Sprintf("⚠ %s — showing cached (%ds)",
 				a.lastFailMsg, int(cacheTTL-age)))
 		}
 	} else if a.errorOn {
 		left := time.Until(a.nextPoll).Seconds()
 		if left > 0 {
-			a.status.SetTitle(fmt.Sprintf("⚠ backing off — retry in %ds", int(left)+1))
+			a.setStatus(fmt.Sprintf("⚠ backing off — retry in %ds", int(left)+1))
 		}
 	}
 }

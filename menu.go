@@ -82,14 +82,16 @@ func (a *App) buildMenu() {
 		a.codexScoped = append(a.codexScoped, it)
 	}
 
-	a.legendParent = systray.AddMenuItem("Legend (the dial)", "")
-	for _, row := range legendRows() {
-		it := a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "")
-		it.Disable()
-		a.legendItems = append(a.legendItems, it)
-	}
+	systray.AddSeparator()
 
-	a.timeFillParent = systray.AddMenuItem("Time ring: "+timeFillString(), "")
+	// Everything that is a setting rather than a reading lives under one
+	// parent: the dropdown is as tall as its top level, and these are opened
+	// once in a while, not read at a glance.
+	settings := systray.AddMenuItem("Settings", "")
+	a.buildWorkMenu(settings)
+	a.buildIconSizeMenu(settings)
+
+	a.timeFillParent = settings.AddSubMenuItem("Time ring: "+timeFillString(), "")
 	a.timeFillRemaining = a.timeFillParent.AddSubMenuItemCheckbox(
 		"Fill = time left", "", timeFill == fillRemaining)
 	a.timeFillElapsed = a.timeFillParent.AddSubMenuItemCheckbox(
@@ -97,7 +99,7 @@ func (a *App) buildMenu() {
 	a.onClick(a.timeFillRemaining, func() { a.setTimeFill(fillRemaining) })
 	a.onClick(a.timeFillElapsed, func() { a.setTimeFill(fillElapsed) })
 
-	a.pulseParent = systray.AddMenuItem("Spend pulse: "+pulseModeString(), "")
+	a.pulseParent = settings.AddSubMenuItem("Spend pulse: "+pulseModeString(), "")
 	for _, o := range pulseModeOrder {
 		mode := o.mode
 		it := a.pulseParent.AddSubMenuItemCheckbox(o.label, "", mode == pulseFX)
@@ -118,7 +120,7 @@ func (a *App) buildMenu() {
 	setEnabled(a.pulseTest, pulseFX != pulseOff)
 	a.onClick(a.pulseTest, func() { a.firePulseTest() })
 
-	a.weekSmoothParent = systray.AddMenuItem("7d smoothing: "+weekSmoothLabel(a.weekSmooth), "")
+	a.weekSmoothParent = settings.AddSubMenuItem("7d smoothing: "+weekSmoothLabel(a.weekSmooth), "")
 	for _, o := range weekSmoothOptions {
 		key := o.key
 		it := a.weekSmoothParent.AddSubMenuItemCheckbox(o.label, "", key == a.weekSmooth)
@@ -126,18 +128,20 @@ func (a *App) buildMenu() {
 		a.onClick(it, func() { a.setWeekSmooth(key) })
 	}
 
-	a.buildIconSizeMenu()
+	a.legendParent = settings.AddSubMenuItem("Dial legend", "")
+	for _, row := range legendRows() {
+		it := a.legendParent.AddSubMenuItem(row[0]+":  "+row[1], "")
+		it.Disable()
+		a.legendItems = append(a.legendItems, it)
+	}
+
 	systray.AddSeparator()
 
-	a.buildWorkMenu()
-	systray.AddSeparator()
-
-	a.nextReset = systray.AddMenuItem("⏱ Next reset: —", "")
 	a.status = systray.AddMenuItem("Status", "")
-	a.claudeOk = systray.AddMenuItem("Claude ✓ last success: —", "")
-	a.claudeFail = systray.AddMenuItem("Claude ✗ last failure: —", "")
-	a.codexOk = systray.AddMenuItem("Codex ✓ last success: —", "")
-	a.codexFail = systray.AddMenuItem("Codex ✗ last failure: —", "")
+	a.claudeOk = a.status.AddSubMenuItem("Claude ✓ last success: —", "")
+	a.claudeFail = a.status.AddSubMenuItem("Claude ✗ last failure: —", "")
+	a.codexOk = a.status.AddSubMenuItem("Codex ✓ last success: —", "")
+	a.codexFail = a.status.AddSubMenuItem("Codex ✗ last failure: —", "")
 	refresh := systray.AddMenuItem("Refresh now", "")
 	quit := systray.AddMenuItem("Quit", "")
 
@@ -148,7 +152,7 @@ func (a *App) buildMenu() {
 		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway, a.claudeResets,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
 		a.histHour, a.histSession, a.histDay, a.histWeek, a.histCredits,
-		a.nextReset, a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
+		a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,
 		a.codexSpeed, a.codexSpeedLeft, a.codexSpeedAvg, a.codexSpeedAvgLeft,
@@ -173,8 +177,8 @@ func (a *App) buildMenu() {
 	}()
 }
 
-func (a *App) buildIconSizeMenu() {
-	a.iconSizeParent = systray.AddMenuItem("Icon size", "")
+func (a *App) buildIconSizeMenu(parent *systray.MenuItem) {
+	a.iconSizeParent = parent.AddSubMenuItem("Icon size", "")
 	a.dynIconItem = a.iconSizeParent.AddSubMenuItemCheckbox(
 		fmt.Sprintf("Grow while burning (%d→%d pt)", int(dynIconMin), int(dynIconMax)), "", !a.dynIconOff)
 	a.onClick(a.dynIconItem, func() { a.setDynIcon(a.dynIconOff) })
@@ -231,8 +235,8 @@ func (a *App) setDynIcon(on bool) {
 	a.saveState(true)
 }
 
-func (a *App) buildWorkMenu() {
-	a.work = systray.AddMenuItem("Working hours", "")
+func (a *App) buildWorkMenu(parent *systray.MenuItem) {
+	a.work = parent.AddSubMenuItem("Working hours", "")
 	startMenu := a.work.AddSubMenuItem("Start", "")
 	endMenu := a.work.AddSubMenuItem("End", "")
 	for m := 0; m < 24*60; m += 30 {

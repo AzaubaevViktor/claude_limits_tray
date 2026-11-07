@@ -288,3 +288,13 @@ func fmtRate(v float64, ok bool) string {
 	}
 	return fmt.Sprintf("%.1f", v)
 }
+
+// elide shortens a line to at most n characters, marking the cut with an
+// ellipsis so it reads as truncated rather than as the whole message.
+func elide(s string, n int) string {
+	r := []rune(s)
+	if n < 1 || len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}

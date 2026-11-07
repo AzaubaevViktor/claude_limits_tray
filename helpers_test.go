@@ -219,3 +219,19 @@ func TestBackoff(t *testing.T) {
 	}
 	approx(t, hi, 125, 1e-6, "jitter 0.25")
 }
+
+func TestElideKeepsShortLinesAndMarksCuts(t *testing.T) {
+	if got := elide("short", 10); got != "short" {
+		t.Fatalf("elide kept %q", got)
+	}
+	if got := elide("abcdefghij", 10); got != "abcdefghij" {
+		t.Fatalf("an exactly-fitting line must not be cut: %q", got)
+	}
+	if got := elide("abcdefghijk", 10); got != "abcdefghi…" {
+		t.Fatalf("elide = %q", got)
+	}
+	// Runes, not bytes: a line of multi-byte characters keeps its count.
+	if got := elide("дальше некуда", 6); got != "дальш…" {
+		t.Fatalf("elide on runes = %q", got)
+	}
+}
