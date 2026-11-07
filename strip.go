@@ -1,0 +1,251 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"strings"
+	"time"
+)
+
+// The quota strip sits above the burn charts and carries the two readings the
+// cards used to bury in 5-point type: when each window resets, and how fast it
+// is being spent. One row per real quota window — the charts below show the
+// same window over several horizons, so repeating the countdown on every card
+// only made it smaller.
+
+const (
+	stripPad      = 8.0
+	stripHeadBase = 11.0 // provider-name baseline
+	stripRowBase  = 28.0 // first row's text baseline
+	stripRowStep  = 18.0
+	stripBottom   = 8.0  // below the last row's baseline
+	stripTimeX    = 30.0 // countdown column, from the side's left edge
+	stripClockX   = 84.0 // wall-clock reset column
+	stripBarAt    = 0.48 // speed bar column, as a share of the side's width
+)
+
+// stripHeight is the image height for the taller of the two sides.
+func stripHeight(rows int) float64 {
+	if rows < 1 {
+		rows = 1
+	}
+	return stripRowBase + stripRowStep*float64(rows-1) + stripBottom
+}
+
+// stripRow is one quota window on the strip.
+type stripRow struct {
+	Label string // "5H", "7D", "CREDITS"
+	Panel burnChartPanel
+}
+
+// stripSide is one provider's column.
+type stripSide struct {
+	Provider string
+	Accent   [3]int
+	Rows     []stripRow
+}
+
+// renderQuotaStrip draws both providers' windows side by side, and reports the
+// image height it chose for the row count.
+func renderQuotaStrip(left, right stripSide, now time.Time) ([]byte, float64) {
+	const gap = 8.0
+	sideW := (pairedChartWidth - gap) / 2
+	h := stripHeight(max(len(left.Rows), len(right.Rows)))
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
+		pairedChartWidth, h, pairedChartWidth, h))
+	b.WriteString(chartGradientDefs)
+	writeStripSide(&b, left, 0, sideW, h, now)
+	writeStripSide(&b, right, sideW+gap, sideW, h, now)
+	b.WriteString(`</svg>`)
+	return []byte(b.String()), h
+}
+
+func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64, now time.Time) {
+	accent := svgRGB(side.Accent)
+	b.WriteString(fmt.Sprintf(
+		`<rect x="%.2f" y="0.5" width="%.2f" height="%.2f" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
+		x+0.35, width-0.7, height-1, accent))
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
+		x+stripPad, stripHeadBase, accent, svgTextEscape.Replace(strings.ToUpper(side.Provider))))
+	// Column captions, parked over the fields they name.
+	for _, cap := range []struct {
+		text   string
+		x      float64
+		anchor string
+	}{
+		{"RESETS IN", x + stripTimeX + 24, "start"},
+		{"SPEED VS AFFORDABLE PACE", x + width*stripBarAt, "start"},
+		{"LEFT", x + width - stripPad, "end"},
+	} {
+		b.WriteString(fmt.Sprintf(
+			`<text x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" letter-spacing="0.2" fill="rgb(132,132,140)">%s</text>`,
+			cap.x, stripHeadBase, cap.anchor, cap.text))
+	}
+	for i, row := range side.Rows {
+		writeStripRow(b, row, x, width, stripRowBase+stripRowStep*float64(i), now)
+	}
+}
+
+// writeStripRow lays one window out in fixed columns: what it is, how long is
+// left of it, how fast it is going, and how long that rate would last.
+func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now time.Time) {
+	panel := row.Panel
+	b.WriteString(fmt.Sprintf(
+		`<text data-strip-row="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="rgb(150,150,158)">%s</text>`,
+		svgTextEscape.Replace(row.Label), x+stripPad, y, svgTextEscape.Replace(row.Label)))
+
+	left, resetKnown := panel.paceLeft()
+	if panel.Unit == "" {
+		left, resetKnown = float64(panel.ResetAt-panel.Now), panel.ResetAt > panel.Now
+	}
+	countdown := fmtRemaining(left, resetKnown)
+	timeX := x + stripTimeX
+	b.WriteString(fmt.Sprintf(
+		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="rgb(236,236,241)">%s</text>`,
+		svgTextEscape.Replace(countdown), timeX, y+1, svgTextEscape.Replace(countdown)))
+	if clock := fmtResetClock(now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
+		b.WriteString(fmt.Sprintf(
+			`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="600" fill="rgb(140,140,148)">%s</text>`,
+			x+stripClockX, y+1, svgTextEscape.Replace(clock)))
+	}
+
+	ratio, ratioKnown := stripSpeed(panel)
+	barX := x + width*stripBarAt
+	writeSpeedBar(b, panel, ratio, ratioKnown, barX, y-4)
+	speedText := "—"
+	color := dialGray
+	if ratioKnown {
+		speedText, color = speedRatioText(ratio), burnColor(ratio)
+	}
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" fill="%s">%s</text>`,
+		barX+speedBarW+6, y, svgRGB(color), svgTextEscape.Replace(speedText)))
+
+	runway := strings.TrimSuffix(budgetRunwayText(panel.remaining(), panel.RecentRate, panel.RateKnown), " left")
+	b.WriteString(fmt.Sprintf(
+		`<text data-strip-runway="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="%s">%s</text>`,
+		svgTextEscape.Replace(runway), x+width-stripPad, y, svgRGB(currentRunwayColor), svgTextEscape.Replace(runway)))
+}
+
+// stripSpeed is the panel's burn ratio and whether there is anything real
+// behind it — an unmeasured rate or a window with no pace to measure against
+// leaves the bar grey rather than parked at zero.
+func stripSpeed(panel burnChartPanel) (float64, bool) {
+	if !panel.RateKnown {
+		return 0, false
+	}
+	if _, ok := panel.affordableAt(panel.Now); !ok {
+		return 0, false
+	}
+	return panelBurnRatio(panel), true
+}
+
+// speedRatioText keeps the multiplier short: two significant figures below 10x,
+// and no decimals once the reading is off the scale anyway.
+func speedRatioText(ratio float64) string {
+	if ratio >= 10 {
+		return fmt.Sprintf("%.0f×", math.Min(ratio, 99))
+	}
+	return fmt.Sprintf("%.1f×", ratio)
+}
+
+const (
+	speedBarW = 62.0
+	speedBarH = 5.5
+)
+
+// writeSpeedBar is the flattened speedometer: the same 0–2x affordable-pace
+// scale, with the measured ratio as a marker, the plain whole-window pace as an
+// accent pip below, and the 5m-vs-15m trend as a thin bar above. x,y is the
+// track's left edge and vertical centre.
+func writeSpeedBar(b *strings.Builder, panel burnChartPanel, ratio float64, known bool, x, y float64) {
+	top := y - speedBarH/2
+	b.WriteString(fmt.Sprintf(
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="rgb(72,72,78)"/>`,
+		x, top, speedBarW, speedBarH, speedBarH/2))
+	b.WriteString(fmt.Sprintf(
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="url(#burn-speed)" opacity="0.95"/>`,
+		x, top, speedBarW, speedBarH, speedBarH/2))
+	posOf := func(r float64) float64 { return x + speedBarW*clamp(r/2, 0, 1) }
+	for _, tick := range speedTicks {
+		b.WriteString(fmt.Sprintf(
+			`<line data-speed-tick="%.1f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(20,20,22)" stroke-width="0.7" stroke-opacity="0.9"/>`,
+			tick, posOf(tick), top, posOf(tick), top+speedBarH))
+	}
+	writeStripPaceMark(b, panel, posOf, top+speedBarH)
+	writeStripTrend(b, panel, x, top-3.4)
+	if !known {
+		return
+	}
+	mx := posOf(ratio)
+	b.WriteString(fmt.Sprintf(
+		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(20,20,22)" stroke-width="3.2" stroke-linecap="round"/>`,
+		mx, top-1.4, mx, top+speedBarH+1.4))
+	b.WriteString(fmt.Sprintf(
+		`<line data-speed-needle="true" data-speed-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.7" stroke-linecap="round"/>`,
+		ratio, mx, top-1.4, mx, top+speedBarH+1.4, svgRGB(burnColor(ratio))))
+}
+
+// writeStripPaceMark pips where the plain whole-window pace sits on the
+// affordable scale: left of the 1x tick means the budget left allows more than
+// nominal use, right of it means even nominal use is now too fast.
+func writeStripPaceMark(b *strings.Builder, panel burnChartPanel, posOf func(float64) float64, barBottom float64) {
+	if panel.Unit != "" {
+		return // credits have no nominal whole-window pace
+	}
+	left, known := panel.paceLeft()
+	ratio, ok := nominalPaceRatio(panel.UsedPct, left, panel.paceWindowSecs(), known)
+	if !ok {
+		return
+	}
+	px := posOf(ratio)
+	b.WriteString(fmt.Sprintf(
+		`<line data-pace-mark="true" data-pace-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.3" stroke-linecap="round" stroke-opacity="0.95"/>`,
+		ratio, px, barBottom+1.1, px, barBottom+3.2, svgRGB(panel.Accent)))
+}
+
+// writeStripTrend is the 5m-against-15m reading: a thin track whose centre is
+// "unchanged", filled rightwards while the burn accelerates and leftwards as it
+// eases off.
+func writeStripTrend(b *strings.Builder, panel burnChartPanel, x, cy float64) {
+	const h = 2.0
+	b.WriteString(fmt.Sprintf(
+		`<rect data-trend-bar="true" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="url(#burn-trend)" opacity="0.35"/>`,
+		x, cy-h/2, speedBarW, h, h/2))
+	if !panel.TrendKnown {
+		return
+	}
+	trend := clamp(panel.Trend, -1, 1)
+	from, to := math.Min(0, trend), math.Max(0, trend)
+	if math.Abs(trend) < 0.04 {
+		from, to = -0.04, 0.04
+	}
+	x0 := x + speedBarW*(from+1)/2
+	x1 := x + speedBarW*(to+1)/2
+	b.WriteString(fmt.Sprintf(
+		`<rect data-trend-value="true" data-trend="%.3f" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="%s"/>`,
+		trend, x0, cy-h/2, math.Max(0.8, x1-x0), h, h/2, svgRGB(trendColor(trend))))
+}
+
+// textWidth estimates how wide a string renders at a font size, so a label can
+// be parked just past a number whose width isn't known until it is formatted.
+// Digits in the system font are tabular; the rest is an average.
+func textWidth(s string, size float64) float64 {
+	w := 0.0
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			w += 0.56
+		case r == '.' || r == ':' || r == ' ' || r == '·':
+			w += 0.3
+		case r == '%' || r == 'W' || r == 'M':
+			w += 0.85
+		default:
+			w += 0.58
+		}
+	}
+	return w * size
+}

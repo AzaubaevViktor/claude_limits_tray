@@ -347,6 +347,10 @@ const (
 	pairedChartHeight = 104.0
 )
 
+// chartGradientDefs are the two scales shared by every menu image: the burn
+// speed ramp (idle → affordable → too fast) and the acceleration ramp.
+const chartGradientDefs = `<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="62.5%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`
+
 var claudeChartAccent = [3]int{217, 119, 87}
 var codexChartAccent = [3]int{16, 163, 127}
 var periodRunwayColor = [3]int{100, 210, 255}
@@ -668,7 +672,7 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
-	b.WriteString(`<defs><linearGradient id="burn-speed" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="62.5%" stop-color="rgb(255,204,0)"/><stop offset="75%" stop-color="rgb(255,69,58)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient><linearGradient id="burn-trend" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgb(191,64,255)"/><stop offset="25%" stop-color="rgb(10,132,255)"/><stop offset="50%" stop-color="rgb(48,209,88)"/><stop offset="75%" stop-color="rgb(255,204,0)"/><stop offset="100%" stop-color="rgb(255,69,58)"/></linearGradient></defs>`)
+	b.WriteString(chartGradientDefs)
 	left.WorkStart, left.WorkEnd = ws, we
 	right.WorkStart, right.WorkEnd = ws, we
 	writeBurnPanel(&b, left, 0, panelW, ws, we)

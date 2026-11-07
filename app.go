@@ -174,7 +174,7 @@ type App struct {
 	claudeResets                               *systray.MenuItem
 	burn, burnSession, burnWeekly              *systray.MenuItem
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
-	histHeader                                 *systray.MenuItem
+	histStrip                                  *systray.MenuItem
 	histHour, histSession, histWeek            *systray.MenuItem
 	histCredits                                *systray.MenuItem
 	scopedParent                               *systray.MenuItem
@@ -1448,6 +1448,64 @@ func chartGrid(horizon int64, targetLines int) int64 {
 	return max(int64(60), horizon/int64(targetLines))
 }
 
+// stripPanel builds a strip row's panel. The strip draws no bars, so the
+// history slice it carries is only wide enough for the recent-rate readings;
+// the full-length Samples still back the affordable pace.
+func (a *App) stripPanel(provider, label string, window historyWindow, now int64, accent [3]int) burnChartPanel {
+	return makeBurnPanel(provider, label, window, int64(rateWindow), int64(rateWindow), now, accent)
+}
+
+// claudeStripSide lists Claude's real quota windows, newest reset first in the
+// order the API exposes them: the 5h session, the weekly pool, then credits if
+// the account has any.
+func (a *App) claudeStripSide(now int64) stripSide {
+	short, long := a.claudeHistoryWindows()
+	side := stripSide{Provider: "Claude", Accent: claudeChartAccent}
+	if short.present {
+		side.Rows = append(side.Rows, stripRow{
+			strings.ToUpper(windowChartLabel(short, "5h")),
+			a.stripPanel("Claude", "5h", short, now, claudeChartAccent)})
+	}
+	if long.present {
+		side.Rows = append(side.Rows, stripRow{
+			strings.ToUpper(windowChartLabel(long, "7d")),
+			a.stripPanel("Claude", "7d", long, now, claudeChartAccent)})
+	}
+	if b := claudeCredits(a.lastUsage); b.Known {
+		reset := int64(0)
+		if secs, ok := a.claudeCreditHorizon(); ok {
+			reset = now + int64(secs)
+		}
+		side.Rows = append(side.Rows, stripRow{"CR",
+			makeCreditPanel("Claude", a.history[seriesClaudeCredits], b, reset, now, claudeChartAccent)})
+	}
+	return side
+}
+
+func (a *App) codexStripSide(now int64) stripSide {
+	short, long := a.codexHistoryWindows()
+	side := stripSide{Provider: "Codex", Accent: codexChartAccent}
+	if short.present {
+		side.Rows = append(side.Rows, stripRow{
+			strings.ToUpper(windowChartLabel(short, "5h")),
+			a.stripPanel("Codex", "short", short, now, codexChartAccent)})
+	}
+	if long.present {
+		side.Rows = append(side.Rows, stripRow{
+			strings.ToUpper(windowChartLabel(long, "7d")),
+			a.stripPanel("Codex", "long", long, now, codexChartAccent)})
+	}
+	if b := codexCredits(a.lastCodex); b.Known {
+		reset := int64(0)
+		if secs, ok := a.codexCreditHorizon(); ok {
+			reset = now + int64(secs)
+		}
+		side.Rows = append(side.Rows, stripRow{"CR",
+			makeCreditPanel("Codex", a.history[seriesCodexCredits], b, reset, now, codexChartAccent)})
+	}
+	return side
+}
+
 func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPanel) {
 	if it == nil {
 		return
@@ -1464,6 +1522,11 @@ func (a *App) renderHistory() {
 		return
 	}
 	now := time.Now().Unix()
+	if a.histStrip != nil {
+		svg, h := renderQuotaStrip(a.claudeStripSide(now), a.codexStripSide(now), time.Unix(now, 0))
+		a.histStrip.SetTitle("")
+		a.histStrip.SetIconSize(svg, pairedChartWidth, h)
+	}
 	claudeShort, claudeLong := a.claudeHistoryWindows()
 	claudeFocus := claudeShort
 	if !claudeFocus.present {
