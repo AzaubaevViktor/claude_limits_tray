@@ -17,6 +17,7 @@ func (a *App) buildMenu() {
 	a.histStrip.Disable()
 	a.histHour = systray.AddMenuItem("", "")
 	a.histSession = systray.AddMenuItem("", "")
+	a.histDay = systray.AddMenuItem("", "")
 	a.histWeek = systray.AddMenuItem("", "")
 	a.histCredits = systray.AddMenuItem("", "")
 	systray.AddSeparator()
@@ -146,7 +147,7 @@ func (a *App) buildMenu() {
 		a.account, a.plan, a.session, a.sessionReset, a.weekly, a.weeklyReset,
 		a.weeklyBlocks, a.weeklyBlocksBasis, a.claudeCredits, a.claudeCreditsRunway, a.claudeResets,
 		a.burnSession, a.burnWeekly, a.speed, a.speedLeft, a.speedAvg, a.speedAvgLeft,
-		a.histHour, a.histSession, a.histWeek, a.histCredits,
+		a.histHour, a.histSession, a.histDay, a.histWeek, a.histCredits,
 		a.nextReset, a.status, a.claudeOk, a.claudeFail, a.codexOk, a.codexFail,
 		a.codexAccount, a.codexPlan, a.codexPrimary, a.codexPrimaryReset, a.codexSecondary,
 		a.codexSecondaryReset, a.codexBurnPrimary, a.codexBurnSecondary,

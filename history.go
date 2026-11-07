@@ -831,11 +831,18 @@ func axisUnit(horizonSecs int64) string {
 	return "h"
 }
 
+// chartTimeText labels the time axis at the resolution the span calls for: a
+// clock inside a day, a weekday and clock while the span still crosses only a
+// few midnights, and a date once it covers more.
 func chartTimeText(t time.Time, horizonSecs int64) string {
-	if horizonSecs >= 24*60*60 {
+	switch {
+	case horizonSecs < int64(daySecs):
+		return t.Format("15:04")
+	case horizonSecs <= 3*int64(daySecs):
+		return t.Format("Mon 15:04")
+	default:
 		return t.Format("Jan 02")
 	}
-	return t.Format("15:04")
 }
 
 // panelBurnRatio is the speedometer reading: the last measured rate against the

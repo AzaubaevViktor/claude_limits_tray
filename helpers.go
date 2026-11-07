@@ -9,6 +9,7 @@ import (
 
 const (
 	fiveHourSecs = 5 * 3600.0
+	daySecs      = 24 * 3600.0
 	weekSecs     = 7 * 24 * 3600.0
 )
 

@@ -176,6 +176,7 @@ type App struct {
 	speed, speedLeft, speedAvg, speedAvgLeft   *systray.MenuItem
 	histStrip                                  *systray.MenuItem
 	histHour, histSession, histWeek            *systray.MenuItem
+	histDay                                    *systray.MenuItem
 	histCredits                                *systray.MenuItem
 	scopedParent                               *systray.MenuItem
 	scoped                                     []*systray.MenuItem
@@ -1548,6 +1549,14 @@ func (a *App) renderHistory() {
 			claudeMiddleHorizon, chartGrid(claudeMiddleHorizon, 20), now, claudeChartAccent), float64(claudeMiddleHorizon)/smoothSigmaDiv),
 		smoothed(makeBurnPanel("Codex", codexMiddleLabel, codexMiddle,
 			codexMiddleHorizon, chartGrid(codexMiddleHorizon, 20), now, codexChartAccent), float64(codexMiddleHorizon)/smoothSigmaDiv))
+	// The day card is the weekly pool seen over the last 24 hours: neither
+	// provider exposes a daily quota, so the pace line it is read against is
+	// the weekly budget — what a day of it is worth.
+	a.setPairedHistoryRow(a.histDay,
+		smoothed(makeBurnPanel("Claude", "24h", claudeLong, int64(daySecs),
+			chartGrid(int64(daySecs), 24), now, claudeChartAccent), daySecs/smoothSigmaDiv),
+		smoothed(makeBurnPanel("Codex", "24h", codexLong, int64(daySecs),
+			chartGrid(int64(daySecs), 24), now, codexChartAccent), daySecs/smoothSigmaDiv))
 	longHorizon := int64(weekSecs)
 	if codexLong.secs > 0 {
 		longHorizon = codexLong.secs

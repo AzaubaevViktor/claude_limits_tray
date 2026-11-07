@@ -730,3 +730,34 @@ func TestSpentCountsFromTheLastResetInView(t *testing.T) {
 		t.Fatalf("no reset in view: %s", svg)
 	}
 }
+
+// The day card is a 24h window onto the weekly pool, so it must keep the
+// weekly affordable pace as its reference rather than inventing a daily quota.
+func TestDayCardPacesAgainstTheWeeklyWindow(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.Local).Unix()
+	week := historyWindow{
+		samples: []histSample{{T: now - int64(daySecs), V: 10}, {T: now, V: 16}},
+		secs:    int64(weekSecs), present: true, used: 16, resetAt: now + 3*int64(daySecs),
+	}
+	day := makeBurnPanel("Claude", "24h", week, int64(daySecs), chartGrid(int64(daySecs), 24), now, claudeChartAccent)
+	full := makeBurnPanel("Claude", "7d", week, int64(weekSecs), chartGrid(int64(weekSecs), 28), now, claudeChartAccent)
+	day.WorkStart, day.WorkEnd = 9*60, 18*60
+	full.WorkStart, full.WorkEnd = 9*60, 18*60
+	if day.WindowSecs != int64(weekSecs) {
+		t.Fatalf("day card window = %d, want the weekly one", day.WindowSecs)
+	}
+	if !near(day.sustainableRate(), full.sustainableRate(), 1e-15) {
+		t.Fatalf("day pace %v should match the weekly pace %v", day.sustainableRate(), full.sustainableRate())
+	}
+	if got := day.Now - day.Start; got != int64(daySecs) {
+		t.Fatalf("day card spans %ds, want a day", got)
+	}
+	svg := string(renderPairedBurnChart(day, burnChartPanel{}, 9*60, 18*60))
+	if !strings.Contains(svg, "CLAUDE 24H") {
+		t.Fatalf("the card should name its horizon: %.200s", svg)
+	}
+	// A day crosses a midnight, so bare clock labels would repeat ambiguously.
+	if !strings.Contains(svg, time.Unix(now, 0).Format("Mon 15:04")) {
+		t.Fatalf("day labels should carry the weekday: %s", svg)
+	}
+}
