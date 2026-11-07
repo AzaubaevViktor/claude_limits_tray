@@ -295,25 +295,6 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if !strings.Contains(svg, "CLAUDE 5H") || !strings.Contains(svg, "CODEX 7D") {
 		t.Fatal("both provider labels should be embedded in their own panels")
 	}
-	for _, kind := range []string{"period", "current", "average"} {
-		if got := countSubstr(svg, `data-runway-kind="`+kind+`"`); got != 2 {
-			t.Fatalf("want one %s runway per provider, got %d", kind, got)
-		}
-	}
-	if !strings.Contains(svg, "RESET 7H") || !strings.Contains(svg, "CURRENT 6H") ||
-		!strings.Contains(svg, "AVG 12H · 5.0%/h") ||
-		!strings.Contains(svg, "RESET 7D") || !strings.Contains(svg, "CURRENT 1D") ||
-		!strings.Contains(svg, "AVG 8D · 10.0%/d") {
-		t.Fatal("reset, current-rate, and average-rate runway labels should remain separate")
-	}
-	if !strings.Contains(svg, svgRGB(periodRunwayColor)) ||
-		!strings.Contains(svg, svgRGB(currentRunwayColor)) ||
-		!strings.Contains(svg, svgRGB(averageRunwayColor)) {
-		t.Fatal("the three runway meanings should have distinct fixed colors")
-	}
-	if !strings.Contains(svg, svgRGB(claudeChartAccent)) || !strings.Contains(svg, svgRGB(codexChartAccent)) {
-		t.Fatal("provider panels should retain distinct accents")
-	}
 	if got := countSubstr(svg, `stroke-dasharray="2 1.5"`); got != 2 {
 		t.Fatalf("want one sustainable-pace line per provider, got %d", got)
 	}
@@ -327,35 +308,14 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if !strings.Contains(svg, `data-burn-ratio="0.150"`) || !strings.Contains(svg, `data-burn-ratio="10.080"`) {
 		t.Fatalf("bars should carry their provider-specific speed ratio: %s", svg)
 	}
-	if got := countSubstr(svg, `stroke="url(#burn-speed)"`); got != 2 {
-		t.Fatalf("want one speedometer per provider, got %d", got)
+	if !strings.Contains(svg, svgRGB(claudeChartAccent)) || !strings.Contains(svg, svgRGB(codexChartAccent)) {
+		t.Fatal("provider panels should retain distinct accents")
 	}
-	// Claude: 60% left over the 6 working hours to a 19:00 reset affords
-	// 10%/h; the 10%/h reading is exactly 1x. Codex: 80% left over the 63
-	// working hours of a week affords 1.27%/h; 3.33%/h is 2.625x.
-	if !strings.Contains(svg, `data-speed-ratio="1.000"`) || !strings.Contains(svg, `data-speed-ratio="2.625"`) {
-		t.Fatalf("needles should measure against the affordable pace to reset: %s", svg)
-	}
-	for _, tick := range []string{"0.5", "1.0", "1.5"} {
-		if got := countSubstr(svg, `data-speed-tick="`+tick+`"`); got != 2 {
-			t.Fatalf("want a %sx threshold tick per provider, got %d", tick, got)
-		}
-	}
-	// Nominal pace (100%/window) on the affordable scale: Claude 20%/h vs 8.57%/h
-	// affordable = 2.333x; Codex 14.3%/d vs 11.4%/d = 1.25x.
-	// Nominal pace on the affordable scale: Claude 100% over 1.875 working
-	// hours vs 60% over 6 is 5.33x; Codex 100% vs 80% over the same 63h is 1.25x.
-	if !strings.Contains(svg, `data-pace-ratio="5.333"`) || !strings.Contains(svg, `data-pace-ratio="1.250"`) {
-		t.Fatalf("nominal pace marks should sit on the affordable scale: %s", svg)
-	}
-	if got := countSubstr(svg, `data-trend-bar="true"`); got != 2 {
-		t.Fatalf("want one semicircular trend bar per provider, got %d", got)
-	}
-	if got := countSubstr(svg, `data-trend-value="true"`); got != 2 {
-		t.Fatalf("want one trend value arc per provider, got %d", got)
-	}
-	if !strings.Contains(svg, `data-trend="0.500"`) || !strings.Contains(svg, `data-trend="-0.500"`) {
-		t.Fatal("trend bars should independently show acceleration and deceleration")
+	// Reset countdowns and speedometers live on the strip now; a card carries
+	// its history and the one headline number.
+	if strings.Contains(svg, "RESET ") || strings.Contains(svg, "CURRENT ") ||
+		strings.Contains(svg, `data-speed-needle`) {
+		t.Fatalf("the card should no longer repeat the strip's readings: %s", svg)
 	}
 	if got := countSubstr(svg, `data-axis-label="true"`); got != 6 {
 		t.Fatalf("want three numeric y-axis labels per provider, got %d", got)
@@ -366,13 +326,11 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if !strings.Contains(svg, "0.00%/h") || !strings.Contains(svg, "0.00%/d") {
 		t.Fatal("y-axis labels should state quota consumption speed")
 	}
-	if !strings.Contains(svg, "SPENT 10.0%") || !strings.Contains(svg, "SPENT 5.0%") {
-		t.Fatal("top-right totals should be explicitly labelled as spent quota")
+	if !strings.Contains(svg, `data-spent="10.0%"`) || !strings.Contains(svg, `data-spent="5.0%"`) {
+		t.Fatal("each card should headline what it spent since its last reset")
 	}
-	if !strings.Contains(svg, "10.0%/H") || !strings.Contains(svg, "80.0%/D") ||
-		!strings.Contains(svg, "MEASURED OVER 15M · LAST USE 5M AGO") ||
-		!strings.Contains(svg, "CURRENT EMPTY 6H00M") {
-		t.Fatal("scale-specific speed, measurement span, and quota-end forecast should be embedded in the panel")
+	if got := countSubstr(svg, `font-size="16"`); got != 2 {
+		t.Fatalf("want the spent figure set large on both cards, got %d", got)
 	}
 }
 
@@ -389,24 +347,8 @@ func TestMakeBurnPanelShowsCodexFiveHourAverage(t *testing.T) {
 	if !panel.AverageKnown || !near(panel.AverageRate, 15.0/3600, 1e-12) {
 		t.Fatalf("5h average = %v known=%v, want 15%%/h", panel.AverageRate, panel.AverageKnown)
 	}
-	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
-	if !strings.Contains(svg, "AVG 4⅔H · 15.0%/h") {
-		t.Fatalf("Codex 5h average should be explicit in chart: %s", svg)
-	}
-}
-
-func TestRunwayStatsDoNotHideIdleCurrentRate(t *testing.T) {
-	panel := burnChartPanel{
-		WindowSecs: int64(fiveHourSecs), UsedPct: 20,
-		RecentRate: 0, RateKnown: true,
-		AverageRate: 10.0 / 3600, AverageKnown: true,
-		PeriodLeft: 2 * 3600, PeriodKnown: true,
-	}
-	var b strings.Builder
-	writeRunwayStats(&b, panel, 0, 220, 10)
-	stats := b.String()
-	if !strings.Contains(stats, "CURRENT ∞") || !strings.Contains(stats, "AVG 8H · 10.0%/h") {
-		t.Fatalf("idle current and finite average must remain distinct: %s", stats)
+	if got := budgetRunwayText(panel.remaining(), panel.AverageRate, panel.AverageKnown); got != "4⅔H left" {
+		t.Fatalf("70%% left at 15%%/h should last 4⅔h, got %q", got)
 	}
 }
 
@@ -700,15 +642,12 @@ func TestUnlimitedCreditsDoNotPegTheNeedle(t *testing.T) {
 	if got := panelBurnRatio(panel); got != 0 {
 		t.Fatalf("unlimited credits should read 0 on the speedometer, got %v", got)
 	}
-	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
-	if !strings.Contains(svg, `data-speed-ratio="0.000"`) {
-		t.Fatalf("needle should rest, not peg red: %s", svg)
+	strip, _ := renderQuotaStrip(stripSide{Provider: "Codex", Rows: []stripRow{{"CR", panel}}}, stripSide{}, time.Unix(now, 0))
+	if strings.Contains(string(strip), `data-speed-needle`) {
+		t.Fatalf("with no reference pace the bar has nothing to mark: %s", strip)
 	}
-	if !strings.Contains(svg, `fill="`+svgRGB(dialGray)+`">180.0 CR/H`) {
-		t.Fatalf("the rate label should stay grey with no reference pace: %s", svg)
-	}
-	if !strings.Contains(svg, "CURRENT EMPTY —") {
-		t.Fatalf("an unlimited balance has no exhaustion time: %s", svg)
+	if !strings.Contains(string(strip), `fill="`+svgRGB(dialGray)+`">—`) {
+		t.Fatalf("the speed should read as unknown, not as zero: %s", strip)
 	}
 	empty := panel
 	empty.PeriodKnown, empty.PeriodLeft, empty.Remaining = true, 3600, 0
@@ -776,7 +715,7 @@ func TestSpentCountsFromTheLastResetInView(t *testing.T) {
 		t.Fatalf("whole horizon spent %v, want 34", got)
 	}
 	svg := string(renderPairedBurnChart(panel, burnChartPanel{}, 9*60, 18*60))
-	if !strings.Contains(svg, "SPENT 4.0%") {
+	if !strings.Contains(svg, `data-spent="4.0%"`) {
 		t.Fatalf("SPENT should restart at the reset: %s", svg)
 	}
 	if got := countSubstr(svg, `data-reset-line="true"`); got != 1 {
@@ -787,7 +726,7 @@ func TestSpentCountsFromTheLastResetInView(t *testing.T) {
 	noReset.Samples = samples[3:] // starts at the post-reset level, no drop
 	noReset.Intervals = burnIntervals(noReset.Samples, now, 3600)
 	svg = string(renderPairedBurnChart(noReset, burnChartPanel{}, 9*60, 18*60))
-	if !strings.Contains(svg, "SPENT 4.0%") || strings.Contains(svg, `data-reset-line="true"`) {
+	if !strings.Contains(svg, `data-spent="4.0%"`) || strings.Contains(svg, `data-reset-line="true"`) {
 		t.Fatalf("no reset in view: %s", svg)
 	}
 }

@@ -134,20 +134,6 @@ func nominalPaceRatio(usedPct, remainingSecs, windowSecs float64, resetKnown boo
 	return affordableBurnRatio(100/windowSecs, usedPct, remainingSecs, windowSecs, true), true
 }
 
-// projectedBudgetEnd returns when a remaining budget (quota % or credits)
-// reaches zero if the most recently measured rate holds. A zero/unknown rate
-// has no finite projection.
-func projectedBudgetEnd(remaining, ratePerSec float64, now time.Time) (time.Time, bool) {
-	if remaining <= 0 {
-		return now, true
-	}
-	if ratePerSec <= 1e-9 {
-		return time.Time{}, false
-	}
-	secs := remaining / ratePerSec
-	return now.Add(time.Duration(secs * float64(time.Second))), true
-}
-
 // quotaDurationText formats a compact duration in thirds of an hour/day. The
 // chart uses it for both the wall-clock reset countdown and quota runway, so
 // those values remain directly comparable without pretending they mean the
@@ -195,58 +181,6 @@ func budgetRunwayText(remaining, ratePerSec float64, known bool) string {
 		return "∞ left"
 	}
 	return quotaDurationText(remaining/ratePerSec, true) + " left"
-}
-
-// recentRateText follows the chart's time scale: hourly for sub-day charts and
-// daily for day-scale charts.
-func recentRateText(ratePerSec, chartSpanSecs float64, known bool) string {
-	if !known {
-		return "—"
-	}
-	unitSecs, unit := 3600.0, "h"
-	if chartSpanSecs >= 24*60*60 {
-		unitSecs, unit = 24*60*60, "d"
-	}
-	return fmt.Sprintf("%.1f%%/%s", ratePerSec*unitSecs, unit)
-}
-
-// recentMeasurementText says how wide the actual measurement interval was.
-// Last-use age answers a separate question: a two-minute sample may itself
-// have happened five minutes ago.
-func recentMeasurementText(ratePerSec, measuredSpan float64, usedAt, now time.Time) string {
-	if usedAt.IsZero() {
-		return "measured —"
-	}
-	age := math.Max(0, now.Sub(usedAt).Seconds())
-	if ratePerSec <= 1e-9 {
-		return fmt.Sprintf("idle · last use %s ago", fmtSpan(age))
-	}
-	return fmt.Sprintf("measured over %s · last use %s ago", spanLabel(measuredSpan), fmtSpan(age))
-}
-
-// budgetEndText formats the finite exhaustion time of a remaining budget from
-// the latest rate. If it lands after a known reset, the useful answer is that
-// the current budget lasts to reset rather than a misleading time in the next
-// window.
-func budgetEndText(remaining, ratePerSec float64, resetAt, now time.Time) string {
-	end, ok := projectedBudgetEnd(remaining, ratePerSec, now)
-	if !ok {
-		return "empty —"
-	}
-	if !resetAt.IsZero() && !end.Before(resetAt) {
-		return "lasts to reset"
-	}
-	if !end.After(now) {
-		return "empty now"
-	}
-	clock := end.Format("15:04")
-	if !sameDay(end, now) {
-		clock = end.Format("Mon 15:04")
-		if end.Sub(now) >= 6*24*time.Hour {
-			clock = end.Format("Jan 2 15:04")
-		}
-	}
-	return fmt.Sprintf("empty %s · %s", fmtRemaining(end.Sub(now).Seconds(), true), clock)
 }
 
 // Forecast projects the recent consumption rate forward to a window's reset.

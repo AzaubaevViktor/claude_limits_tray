@@ -78,7 +78,7 @@ func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64
 	}{
 		{"RESETS IN", x + stripTimeX + 24, "start"},
 		{"SPEED VS AFFORDABLE PACE", x + width*stripBarAt, "start"},
-		{"LEFT", x + width - stripPad, "end"},
+		{"LEFT: NOW · AVG", x + width - stripPad, "end"},
 	} {
 		b.WriteString(fmt.Sprintf(
 			`<text x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" letter-spacing="0.2" fill="rgb(132,132,140)">%s</text>`,
@@ -124,10 +124,22 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" fill="%s">%s</text>`,
 		barX+speedBarW+6, y, svgRGB(color), svgTextEscape.Replace(speedText)))
 
+	// What is left, read two ways: at the rate of the last quarter hour, and at
+	// the average since the window opened. The first answers "if I keep going
+	// like this", the second "if the rest of the window looks like the start".
 	runway := strings.TrimSuffix(budgetRunwayText(panel.remaining(), panel.RecentRate, panel.RateKnown), " left")
+	average := strings.TrimSuffix(budgetRunwayText(panel.remaining(), panel.AverageRate, panel.AverageKnown), " left")
+	avgX := x + width - stripPad
+	b.WriteString(fmt.Sprintf(
+		`<text data-strip-avg="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="%s">%s</text>`,
+		svgTextEscape.Replace(average), avgX, y, svgRGB(averageRunwayColor), svgTextEscape.Replace(average)))
+	nowX := avgX - textWidth(average, 8) - 4
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="600" fill="rgb(120,120,128)">·</text>`,
+		nowX, y))
 	b.WriteString(fmt.Sprintf(
 		`<text data-strip-runway="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="%s">%s</text>`,
-		svgTextEscape.Replace(runway), x+width-stripPad, y, svgRGB(currentRunwayColor), svgTextEscape.Replace(runway)))
+		svgTextEscape.Replace(runway), nowX-4, y, svgRGB(currentRunwayColor), svgTextEscape.Replace(runway)))
 }
 
 // stripSpeed is the panel's burn ratio and whether there is anything real
@@ -230,21 +242,22 @@ func writeStripTrend(b *strings.Builder, panel burnChartPanel, x, cy float64) {
 		trend, x0, cy-h/2, math.Max(0.8, x1-x0), h, h/2, svgRGB(trendColor(trend))))
 }
 
-// textWidth estimates how wide a string renders at a font size, so a label can
-// be parked just past a number whose width isn't known until it is formatted.
-// Digits in the system font are tabular; the rest is an average.
+// textWidth estimates how wide a bold string renders at a font size, so a label
+// can be parked just past a number whose width isn't known until it is
+// formatted. Digits in the system font are tabular; the rest is an average,
+// rounded up a little so a label lands beside its number rather than on it.
 func textWidth(s string, size float64) float64 {
 	w := 0.0
 	for _, r := range s {
 		switch {
 		case r >= '0' && r <= '9':
-			w += 0.56
+			w += 0.60
 		case r == '.' || r == ':' || r == ' ' || r == '·':
-			w += 0.3
+			w += 0.32
 		case r == '%' || r == 'W' || r == 'M':
-			w += 0.85
+			w += 0.92
 		default:
-			w += 0.58
+			w += 0.62
 		}
 	}
 	return w * size

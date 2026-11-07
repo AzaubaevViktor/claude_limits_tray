@@ -62,20 +62,11 @@ func TestWorstQuotaPaceIgnoresUnknown(t *testing.T) {
 	}
 }
 
-func TestRecentBurnProjectionUsesLatestRate(t *testing.T) {
+func TestRecentBurnRatioUsesLatestRate(t *testing.T) {
 	const window = 7 * 24 * 60 * 60
 	rate := 20.0 / (6 * 60 * 60) // latest use: 20% in six hours
 	if got := recentBurnRatio(rate, window); !near(got, 5.6, 1e-9) {
 		t.Fatalf("recent burn ratio = %v, want 5.6x sustainable", got)
-	}
-
-	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	end, ok := projectedBudgetEnd(80, rate, now)
-	if !ok {
-		t.Fatal("positive recent rate should have a finite quota end")
-	}
-	if want := now.Add(24 * time.Hour); !end.Equal(want) {
-		t.Fatalf("quota end = %v, want %v", end, want)
 	}
 }
 
@@ -109,45 +100,6 @@ func TestQuotaDurationText(t *testing.T) {
 	}
 	if got := quotaDurationText(0, false); got != "—" {
 		t.Fatalf("unknown duration = %q, want dash", got)
-	}
-}
-
-func TestRecentRateAndQuotaEndText(t *testing.T) {
-	now := time.Date(2026, 9, 7, 20, 0, 0, 0, time.Local)
-	if got := recentRateText(10.0/3600, 5*60*60, true); got != "10.0%/h" {
-		t.Fatalf("hourly rate text = %q", got)
-	}
-	if got := recentRateText(10.0/86400, 7*24*60*60, true); got != "10.0%/d" {
-		t.Fatalf("daily rate text = %q", got)
-	}
-	if got := recentRateText(0, 5*60*60, false); got != "—" {
-		t.Fatalf("missing rate text = %q", got)
-	}
-	if got := recentRateText(0, 5*60*60, true); got != "0.0%/h" {
-		t.Fatalf("known idle rate text = %q", got)
-	}
-	if got := recentMeasurementText(10.0/3600, 2*60, now.Add(-5*time.Minute), now); got != "measured over 2m · last use 5m ago" {
-		t.Fatalf("measurement text = %q", got)
-	}
-	if got := recentMeasurementText(0, 0, time.Time{}, now); got != "measured —" {
-		t.Fatalf("missing measurement text = %q", got)
-	}
-	if got := recentMeasurementText(0, 0, now.Add(-2*time.Hour), now); got != "idle · last use 2h00m ago" {
-		t.Fatalf("stale use text = %q", got)
-	}
-
-	rate := 40.0 / (4 * 60 * 60) // 10%/h; 20% left -> empty in two hours
-	if got := budgetEndText(20, rate, now.Add(3*time.Hour), now); got != "empty 2h00m · 22:00" {
-		t.Fatalf("finite end text = %q", got)
-	}
-	if got := budgetEndText(20, rate, now.Add(time.Hour), now); got != "lasts to reset" {
-		t.Fatalf("reset-safe text = %q", got)
-	}
-	if got := budgetEndText(20, 0, now.Add(time.Hour), now); got != "empty —" {
-		t.Fatalf("idle end text = %q", got)
-	}
-	if got := budgetEndText(0, rate, now.Add(time.Hour), now); got != "empty now" {
-		t.Fatalf("spent quota text = %q", got)
 	}
 }
 

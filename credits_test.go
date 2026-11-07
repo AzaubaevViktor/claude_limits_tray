@@ -327,13 +327,17 @@ func TestMakeCreditPanelUsesCreditUnits(t *testing.T) {
 		t.Fatalf("sustainable %v ratio %v", panel.sustainableRate(), panelBurnRatio(panel))
 	}
 	svg := string(renderPairedBurnChart(panel, makeCreditPanel("Claude", nil, creditBudget{}, 0, now, claudeChartAccent), 9*60, 18*60))
-	for _, want := range []string{"CODEX CREDITS 5H", "SPENT 100.0 cr", "200.0 CR/H", "CURRENT 1D", "RESET 1D", "CLAUDE CREDITS 5H", "SPENT —"} {
+	for _, want := range []string{"CODEX CREDITS 5H", `data-spent="100.0 cr"`, "CLAUDE CREDITS 5H", `data-spent="—"`} {
 		if !strings.Contains(svg, want) {
 			t.Fatalf("credits chart should contain %q:\n%s", want, svg)
 		}
 	}
-	if strings.Contains(svg, `data-pace-mark="true"`) {
-		t.Fatal("credit cards have no nominal whole-window pace mark")
+	strip, _ := renderQuotaStrip(stripSide{Provider: "Codex", Rows: []stripRow{{"CR", panel}}}, stripSide{}, time.Unix(now, 0))
+	if !strings.Contains(string(strip), `data-speed-ratio="1.000"`) {
+		t.Fatalf("the strip should read credits at 1x their affordable pace: %s", strip)
+	}
+	if strings.Contains(string(strip), `data-pace-mark="true"`) {
+		t.Fatal("credit rows have no nominal whole-window pace mark")
 	}
 	if got := countSubstr(svg, `data-burn-bar="true"`); got != 2 {
 		t.Fatalf("want one bar per interval, got %d", got)

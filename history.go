@@ -344,7 +344,7 @@ const (
 	// wide the dropdown gets: macOS sizes the menu to its widest item, so the
 	// text rows are kept shorter than this and the charts span the full width.
 	pairedChartWidth  = 520.0
-	pairedChartHeight = 104.0
+	pairedChartHeight = 72.0
 )
 
 // chartGradientDefs are the two scales shared by every menu image: the burn
@@ -353,7 +353,6 @@ const chartGradientDefs = `<defs><linearGradient id="burn-speed" x1="0" y1="0" x
 
 var claudeChartAccent = [3]int{217, 119, 87}
 var codexChartAccent = [3]int{16, 163, 127}
-var periodRunwayColor = [3]int{100, 210, 255}
 var currentRunwayColor = [3]int{255, 159, 10}
 var averageRunwayColor = [3]int{191, 64, 255}
 
@@ -459,22 +458,6 @@ func (p burnChartPanel) amount(v float64) string {
 		return axisPctText(v)
 	}
 	return fmtAmount(v, p.Unit)
-}
-
-// rateText renders a per-second rate per hour or per day following the chart's
-// time scale, in the panel's units.
-func (p burnChartPanel) rateText(ratePerSec, chartSpanSecs float64, known bool) string {
-	if p.Unit == "" {
-		return recentRateText(ratePerSec, chartSpanSecs, known)
-	}
-	if !known {
-		return "—"
-	}
-	unitSecs, unit := 3600.0, "h"
-	if chartSpanSecs >= 24*60*60 {
-		unitSecs, unit = 24*60*60, "d"
-	}
-	return fmtAmount(ratePerSec*unitSecs, p.Unit) + "/" + unit
 }
 
 // sustainableRate is the flat reference pace the y axis is scaled from (and
@@ -684,8 +667,8 @@ func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, ws, we int) {
 	const (
 		panelTop   = 0.5
-		plotTop    = 18.0
-		plotBase   = 49.0
+		plotTop    = 24.0
+		plotBase   = 58.0
 		pad        = 8.0
 		axisGutter = 27.0
 	)
@@ -716,29 +699,33 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		}
 	}
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="102.5" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
-		x+0.35, panelTop, width-0.7, accent))
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
+		x+0.35, panelTop, width-0.7, pairedChartHeight-2*panelTop, accent))
 	title := fmt.Sprintf("%s %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label))
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="12.5" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
+		`<text x="%.2f" y="15" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		plotX, accent, svgTextEscape.Replace(title)))
 	// SPENT counts from the last reset in view (or the chart's start when no
 	// reset is visible), so the previous window's burn is not added to the
-	// current one; the reset itself is drawn as a vertical line.
+	// current one; the reset itself is drawn as a vertical line. It is the one
+	// number the card exists for, so it is set big enough to read at a glance.
 	resets := resetsWithin(panel.Samples, panel.Start, panel.Now)
 	since := panel.Start
 	if len(resets) > 0 {
 		since = resets[len(resets)-1]
 	}
-	total := "SPENT —"
+	total := "—"
 	if panel.Known && panel.Unit == "" {
-		total = fmt.Sprintf("SPENT %.1f%%", spentSince(panel.Intervals, since))
+		total = fmt.Sprintf("%.1f%%", spentSince(panel.Intervals, since))
 	} else if panel.Known {
-		total = "SPENT " + fmtAmount(spentSince(panel.Intervals, since), panel.Unit)
+		total = fmtAmount(spentSince(panel.Intervals, since), panel.Unit)
 	}
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="12.5" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="650" fill="rgb(225,225,230)">%s</text>`,
-		x+width-pad, svgTextEscape.Replace(total)))
+		`<text data-spent="%s" x="%.2f" y="17" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" fill="rgb(236,236,241)">%s</text>`,
+		svgTextEscape.Replace(total), x+width-pad, svgTextEscape.Replace(total)))
+	b.WriteString(fmt.Sprintf(
+		`<text x="%.2f" y="15" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="600" letter-spacing="0.2" fill="rgb(140,140,148)">SPENT</text>`,
+		x+width-pad-textWidth(total, 16)-4))
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="rgb(48,48,52)"/>`,
 		plotX, plotTop, plotW, plotBase-plotTop))
@@ -821,57 +808,8 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	} {
 		t := panel.Start + int64(float64(horizon)*mark.fraction)
 		b.WriteString(fmt.Sprintf(
-			`<text data-time-label="true" x="%.2f" y="57" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
+			`<text data-time-label="true" x="%.2f" y="66" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
 			plotX+plotW*mark.fraction, mark.anchor, chartTimeText(time.Unix(t, 0), horizon)))
-	}
-	writeRunwayStats(b, panel, plotX, x+width-pad, 69)
-
-	measurementText, endText := "measured —", "current empty —"
-	if panel.WindowSecs > 0 {
-		usedAt := time.Unix(panel.LastUseAt, 0)
-		if panel.LastUseAt <= 0 {
-			usedAt = time.Time{}
-		}
-		measurementText = recentMeasurementText(panel.RecentRate, panel.RateSpan, usedAt, time.Unix(panel.Now, 0))
-		resetAt := time.Unix(panel.ResetAt, 0)
-		if panel.ResetAt <= 0 {
-			resetAt = time.Time{}
-		}
-		// A credit card with no balance and no reset is unlimited: there is
-		// nothing to run out of.
-		hasBudget := panel.Unit == "" || panel.Remaining > 0 || panel.PeriodKnown
-		if panel.RateKnown && panel.RecentRate <= 1e-9 {
-			endText = "current lasts to reset"
-		} else if panel.RateKnown && hasBudget {
-			endText = "current " + budgetEndText(panel.remaining(), panel.RecentRate, resetAt, time.Unix(panel.Now, 0))
-		}
-	}
-	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="85" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="550" fill="rgb(180,180,186)">%s</text>`,
-		plotX, svgTextEscape.Replace(strings.ToUpper(measurementText))))
-	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="98" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="7" font-weight="600" fill="%s">%s</text>`,
-		plotX, svgRGB(currentRunwayColor), svgTextEscape.Replace(strings.ToUpper(endText))))
-	writeBurnSpeedometer(b, panel, x+width-20, 98)
-}
-
-func writeRunwayStats(b *strings.Builder, panel burnChartPanel, left, right, y float64) {
-	current := budgetRunwayText(panel.remaining(), panel.RecentRate, panel.RateKnown)
-	average := budgetRunwayText(panel.remaining(), panel.AverageRate, panel.AverageKnown)
-	averageRate := panel.rateText(panel.AverageRate, float64(panel.WindowSecs), panel.AverageKnown)
-	stats := []struct {
-		kind, anchor, text string
-		x                  float64
-		color              [3]int
-	}{
-		{"period", "start", "RESET " + quotaDurationText(panel.PeriodLeft, panel.PeriodKnown), left, periodRunwayColor},
-		{"current", "middle", "CURRENT " + strings.TrimSuffix(current, " left"), (left + right) / 2, currentRunwayColor},
-		{"average", "end", "AVG " + strings.TrimSuffix(average, " left") + " · " + averageRate, right, averageRunwayColor},
-	}
-	for _, stat := range stats {
-		b.WriteString(fmt.Sprintf(
-			`<text data-runway-kind="%s" x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.8" font-weight="700" fill="%s">%s</text>`,
-			stat.kind, stat.x, y, stat.anchor, svgRGB(stat.color), svgTextEscape.Replace(stat.text)))
 	}
 }
 
@@ -918,104 +856,6 @@ func panelBurnRatio(panel burnChartPanel) float64 {
 // arc: ½x (half pace), 1x (exactly lasting to the reset — where green peaks)
 // and 1½x (where red begins), on the burnColor scale.
 var speedTicks = []float64{0.5, 1, 1.5}
-
-// speedAngle maps a burn ratio to the semicircle: 0 on the left, 2x+ on the right.
-func speedAngle(ratio float64) float64 {
-	return math.Pi * (1 - clamp(ratio/2, 0, 1))
-}
-
-func writeBurnSpeedometer(b *strings.Builder, panel burnChartPanel, cx, cy float64) {
-	const r = 15.0
-	ratio := panelBurnRatio(panel)
-	needle := dialGray
-	if _, ok := panel.affordableAt(panel.Now); ok && panel.RateKnown {
-		needle = burnColor(ratio)
-	}
-	chartSpan := float64(panel.Now - panel.Start)
-	b.WriteString(fmt.Sprintf(
-		`<text data-speed-label="true" x="%.2f" y="%.2f" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="700" fill="%s">%s</text>`,
-		cx, cy-r-5.5, svgRGB(needle), svgTextEscape.Replace(strings.ToUpper(panel.rateText(panel.RecentRate, chartSpan, panel.RateKnown)))))
-	b.WriteString(fmt.Sprintf(
-		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="rgb(75,75,80)" stroke-width="4" stroke-linecap="round"/>`,
-		cx-r, cy, r, r, cx+r, cy))
-	b.WriteString(fmt.Sprintf(
-		`<path d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-speed)" stroke-width="2.8" stroke-linecap="round" opacity="0.95"/>`,
-		cx-r, cy, r, r, cx+r, cy))
-	writeSpeedTicks(b, cx, cy, r)
-	writeNominalPaceMark(b, panel, cx, cy, r)
-	writeBurnTrendBar(b, panel, cx, cy, r-6)
-	angle := speedAngle(ratio)
-	nx := cx + math.Cos(angle)*(r-3)
-	ny := cy - math.Sin(angle)*(r-3)
-	b.WriteString(fmt.Sprintf(
-		`<line data-speed-needle="true" data-speed-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.5" stroke-linecap="round"/>`,
-		ratio, cx, cy, nx, ny, svgRGB(needle)))
-	b.WriteString(fmt.Sprintf(`<circle cx="%.2f" cy="%.2f" r="2.1" fill="%s"/>`, cx, cy, svgRGB(needle)))
-}
-
-// writeSpeedTicks notches the speedometer arc at each speedTicks threshold, so
-// the needle can be read against "half of what I can afford", "exactly lasting
-// to reset" and "burning 1½x too fast" rather than against colour alone.
-func writeSpeedTicks(b *strings.Builder, cx, cy, r float64) {
-	in, out := r-2.6, r+2.6
-	for _, ratio := range speedTicks {
-		angle := speedAngle(ratio)
-		c, s := math.Cos(angle), math.Sin(angle)
-		b.WriteString(fmt.Sprintf(
-			`<line data-speed-tick="%.1f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(20,20,22)" stroke-width="0.7" stroke-opacity="0.9"/>`,
-			ratio, cx+in*c, cy-in*s, cx+out*c, cy-out*s))
-	}
-}
-
-// writeNominalPaceMark draws a small pointer outside the arc where the plain
-// whole-window pace (100% over the window) sits on the affordable scale. Left
-// of the 1x tick means the remaining budget allows faster-than-normal use;
-// right of it means even the normal pace is now too fast. It moves as quota and
-// time drain, while the ticks stay put.
-func writeNominalPaceMark(b *strings.Builder, panel burnChartPanel, cx, cy, r float64) {
-	if panel.Unit != "" {
-		return // credits have no nominal whole-window pace
-	}
-	left, known := panel.paceLeft()
-	ratio, ok := nominalPaceRatio(panel.UsedPct, left, panel.paceWindowSecs(), known)
-	if !ok {
-		return
-	}
-	angle := speedAngle(ratio)
-	c, s := math.Cos(angle), math.Sin(angle)
-	in, out := r+2.3, r+4.2
-	b.WriteString(fmt.Sprintf(
-		`<line data-pace-mark="true" data-pace-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.3" stroke-linecap="round" stroke-opacity="0.95"/>`,
-		ratio, cx+in*c, cy-in*s, cx+out*c, cy-out*s, svgRGB(panel.Accent)))
-}
-
-// writeBurnTrendBar draws a smaller concentric semicircular bar beneath the
-// speedometer needle. It compares 5m with 15m: centre is unchanged, right is
-// accelerating, and left is decelerating. The value is an arc, never a second
-// needle, so the two readings remain visually distinct.
-func writeBurnTrendBar(b *strings.Builder, panel burnChartPanel, cx, cy, r float64) {
-	b.WriteString(fmt.Sprintf(
-		`<path data-trend-bar="true" d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="url(#burn-trend)" stroke-width="2.2" stroke-linecap="round" opacity="0.35"/>`,
-		cx-r, cy, r, r, cx+r, cy))
-	if !panel.TrendKnown {
-		return
-	}
-	trend := clamp(panel.Trend, -1, 1)
-	from, to := math.Min(0, trend), math.Max(0, trend)
-	if math.Abs(trend) < 0.04 {
-		from, to = -0.04, 0.04
-	}
-	x0, y0 := trendPoint(cx, cy, r, from)
-	x1, y1 := trendPoint(cx, cy, r, to)
-	b.WriteString(fmt.Sprintf(
-		`<path data-trend-value="true" data-trend="%.3f" d="M%.2f,%.2f A%.2f,%.2f 0 0 1 %.2f,%.2f" fill="none" stroke="%s" stroke-width="3.4" stroke-linecap="round"/>`,
-		trend, x0, y0, r, r, x1, y1, svgRGB(trendColor(trend))))
-}
-
-func trendPoint(cx, cy, r, position float64) (float64, float64) {
-	angle := math.Pi * (1 - clamp((position+1)/2, 0, 1))
-	return cx + math.Cos(angle)*r, cy - math.Sin(angle)*r
-}
 
 // writeSmoothArea draws the blurred burn curve as a filled area whose colour
 // follows the same speed scale as the bars, via a horizontal gradient with
