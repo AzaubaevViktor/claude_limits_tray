@@ -340,7 +340,10 @@ func trendColor(trend float64) [3]int {
 }
 
 const (
-	pairedChartWidth  = 480.0
+	// pairedChartWidth is what every menu image is drawn at. It also sets how
+	// wide the dropdown gets: macOS sizes the menu to its widest item, so the
+	// text rows are kept shorter than this and the charts span the full width.
+	pairedChartWidth  = 520.0
 	pairedChartHeight = 104.0
 )
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -288,7 +289,7 @@ func TestRenderPairedBurnChartKeepsProvidersSeparate(t *testing.T) {
 	if err := xml.Unmarshal([]byte(svg), &root); err != nil {
 		t.Fatalf("paired chart is not valid SVG: %v", err)
 	}
-	if !strings.Contains(svg, `width="480" height="104"`) {
+	if !strings.Contains(svg, fmt.Sprintf(`width="%.0f" height="%.0f"`, pairedChartWidth, pairedChartHeight)) {
 		t.Fatalf("paired dimensions missing: %.100s", svg)
 	}
 	if !strings.Contains(svg, "CLAUDE 5H") || !strings.Contains(svg, "CODEX 7D") {
