@@ -67,8 +67,10 @@ const (
 	fragmentCone = 72.0
 
 	// sparkReachRef is the reach a plain spark burst has, in dial units; sizes
-	// are scaled up from there as the throw gets longer.
+	// are scaled up from there as the throw gets longer — a dot that reads
+	// nicely beside the icon is an invisible speck a third of a screen away.
 	sparkReachRef = 95.0
+	sparkFatMax   = 3.4 // ceiling on that scaling
 
 	// Every particle drags its own short trail of ghosts — only visible while
 	// it is actually moving, since a ghost on top of its particle is just a
@@ -235,7 +237,9 @@ func pulseSparkle(seed int64, mag, t, reach float64) []spark {
 	n := sparkMin + iround(float64(sparkMax-sparkMin)*mag)
 	// The further the burst is thrown, the fatter its particles have to be:
 	// across half a screen a one-point dot is nothing to look at.
-	fat := clamp(math.Sqrt(reach/sparkReachRef), 1, 2.5)
+	fat := clamp(reach/sparkReachRef, 1, sparkFatMax)
+	// Keep the fattest dot inside the window rather than clipped by its edge.
+	reach = math.Max(9, reach-1.3*fat*shellFatten)
 	out := make([]spark, 0, 4*n)
 	for i := 0; i < n; i++ {
 		p := particle{id: i + 1, size: (0.7 + 0.6*pulseRand(seed, i, 2)) * fat}
@@ -320,7 +324,10 @@ func emberAt(seed int64, p particle, at, reach float64) (x, y float64) {
 	}
 	age := clamp((at-p.born)/math.Max(leg-p.born, 1e-6), 0, 1)
 	room := math.Max(0, reach*(1-fallShare)-wobbleAmp-math.Hypot(p.x, p.y))
-	if p.gen < len(pulseStages) {
+	if _, splits := emberSplitAt(seed, p); splits {
+		// Spend only part of the room left, so the generation this one throws
+		// still has somewhere to go. An ember that never bursts has the whole
+		// burst to itself and may use the lot.
 		room *= pulseStages[p.gen].reachShare
 	}
 	d := room * emberEase(age, emberDrag(seed, p.id)) * speed
@@ -361,7 +368,7 @@ func emberSplitAt(seed int64, p particle) (float64, bool) {
 // emberFade lights a particle as it appears and lets it linger, going out only
 // near the end of the burst.
 func emberFade(t, born float64) float64 {
-	return clamp((t-born)/0.06, 0, 1) * math.Pow(clamp(1-t, 0, 1), 0.8)
+	return clamp((t-born)/0.06, 0, 1) * math.Pow(clamp(1-t, 0, 1), 0.55)
 }
 
 // emberFall is how far the whole burst has sagged by t — fireworks drop.
