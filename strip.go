@@ -64,8 +64,8 @@ func renderQuotaStrip(left, right stripSide, now time.Time) ([]byte, float64) {
 func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64, now time.Time) {
 	accent := svgRGB(side.Accent)
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="0.5" width="%.2f" height="%.2f" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
-		x+0.35, width-0.7, height-1, accent))
+		`<rect x="%.2f" y="0.5" width="%.2f" height="%.2f" rx="7" fill="%s" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
+		x+0.35, width-0.7, height-1, svgRGB(chartPalette.Panel), accent))
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
 		x+stripPad, stripHeadBase, accent, svgTextEscape.Replace(strings.ToUpper(side.Provider))))
@@ -80,8 +80,8 @@ func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64
 		{"LEFT · AVG", x + width - stripPad, "end"},
 	} {
 		b.WriteString(fmt.Sprintf(
-			`<text x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" letter-spacing="0.2" fill="rgb(132,132,140)">%s</text>`,
-			cap.x, stripHeadBase, cap.anchor, cap.text))
+			`<text x="%.2f" y="%.2f" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" letter-spacing="0.2" fill="%s">%s</text>`,
+			cap.x, stripHeadBase, cap.anchor, svgRGB(chartPalette.Caption), cap.text))
 	}
 	for i, row := range side.Rows {
 		writeStripRow(b, row, x, width, stripRowBase+stripRowStep*float64(i), now)
@@ -93,8 +93,8 @@ func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64
 func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now time.Time) {
 	panel := row.Panel
 	b.WriteString(fmt.Sprintf(
-		`<text data-strip-row="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="rgb(150,150,158)">%s</text>`,
-		svgTextEscape.Replace(row.Label), x+stripPad, y, svgTextEscape.Replace(row.Label)))
+		`<text data-strip-row="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="%s">%s</text>`,
+		svgTextEscape.Replace(row.Label), x+stripPad, y, svgRGB(chartPalette.Label), svgTextEscape.Replace(row.Label)))
 
 	left, resetKnown := panel.paceLeft()
 	if panel.Unit == "" {
@@ -103,16 +103,16 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 	countdown := fmtRemaining(left, resetKnown)
 	timeX := x + stripTimeX
 	b.WriteString(fmt.Sprintf(
-		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="rgb(236,236,241)">%s</text>`,
-		svgTextEscape.Replace(countdown), timeX, y+1, svgTextEscape.Replace(countdown)))
+		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="%s">%s</text>`,
+		svgTextEscape.Replace(countdown), timeX, y+1, svgRGB(chartPalette.Text), svgTextEscape.Replace(countdown)))
 	// The wall-clock moment trails the countdown, right-aligned against the
 	// speed bar: a long countdown ("5d 13h") only ever pairs with a weekday
 	// clock, a short one with a bare time, so the two never meet.
 	barX := x + width*stripBarAt
 	if clock := fmtResetClock(now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
 		b.WriteString(fmt.Sprintf(
-			`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" fill="rgb(140,140,148)">%s</text>`,
-			barX-5, y+1, svgTextEscape.Replace(clock)))
+			`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" fill="%s">%s</text>`,
+			barX-5, y+1, svgRGB(chartPalette.Dim), svgTextEscape.Replace(clock)))
 	}
 
 	ratio, ratioKnown := stripSpeed(panel)
@@ -137,8 +137,8 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 		svgTextEscape.Replace(average), avgX, y, svgRGB(averageRunwayColor), svgTextEscape.Replace(average)))
 	nowX := avgX - textWidth(average, 8) - 4
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="600" fill="rgb(120,120,128)">·</text>`,
-		nowX, y))
+		`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="600" fill="%s">·</text>`,
+		nowX, y, svgRGB(chartPalette.Faint)))
 	b.WriteString(fmt.Sprintf(
 		`<text data-strip-runway="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="%s">%s</text>`,
 		svgTextEscape.Replace(runway), nowX-4, y, svgRGB(currentRunwayColor), svgTextEscape.Replace(runway)))
@@ -178,8 +178,8 @@ const (
 func writeSpeedBar(b *strings.Builder, panel burnChartPanel, ratio float64, known bool, x, y float64) {
 	top := y - speedBarH/2
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="rgb(72,72,78)"/>`,
-		x, top, speedBarW, speedBarH, speedBarH/2))
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="%s"/>`,
+		x, top, speedBarW, speedBarH, speedBarH/2, svgRGB(chartPalette.Track)))
 	b.WriteString(fmt.Sprintf(
 		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="url(#burn-speed)" opacity="0.95"/>`,
 		x, top, speedBarW, speedBarH, speedBarH/2))

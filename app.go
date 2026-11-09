@@ -242,6 +242,7 @@ func defaultStatePath() string {
 // --- lifecycle --------------------------------------------------------------
 
 func (a *App) onReady() {
+	refreshChartTheme()
 	systray.SetTitle("…")
 	systray.SetTooltip("Claude and Codex limits")
 	a.screenHeight = systray.MainScreenHeight()
@@ -275,6 +276,11 @@ func (a *App) tickLoop() {
 		a.drain()
 		if !a.inflight {
 			a.startDueRequest()
+		}
+		// Light/dark can flip under us (the user, or the system at sunset), and
+		// the images already on screen keep their old palette until redrawn.
+		if refreshChartTheme() {
+			a.renderHistory()
 		}
 		a.updateStatus()
 		a.mu.Unlock()

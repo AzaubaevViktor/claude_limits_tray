@@ -11,6 +11,7 @@ void setIconHeight(double h);
 void showSparkOverlay(const char* iconBytes, int length, double width, double height);
 void hideSparkOverlay(void);
 double mainScreenHeight(void);
+bool isDarkMode(void);
 void setMenuItemIcon(const char* iconBytes, int length, int menuId, bool template);
 void setMenuItemIconSize(const char* iconBytes, int length, int menuId, double width, double height, bool template);
 void setTitle(char* title);

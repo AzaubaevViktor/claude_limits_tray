@@ -403,7 +403,7 @@ func renderPctBar(pct float64, label string) []byte {
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
 		W, H, W, H))
 	b.WriteString(fmt.Sprintf(
-		`<rect x="0.5" y="2.5" width="%.2f" height="13" rx="2.5" fill="rgb(120,120,120)" fill-opacity="0.25"/>`,
+		`<rect x="0.5" y="2.5" width="%.2f" height="13" rx="2.5" fill="`+svgRGB(chartPalette.Faint)+`" fill-opacity="0.25"/>`,
 		W-1))
 	if fillW > 0.5 {
 		b.WriteString(fmt.Sprintf(
@@ -813,8 +813,8 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		}
 	}
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="7" fill="rgb(28,28,30)" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
-		x+0.35, panelTop, width-0.7, pairedChartHeight-2*panelTop, accent))
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="7" fill="%s" stroke="%s" stroke-width="0.8" stroke-opacity="0.48"/>`,
+		x+0.35, panelTop, width-0.7, pairedChartHeight-2*panelTop, svgRGB(chartPalette.Panel), accent))
 	title := fmt.Sprintf("%s %s", strings.ToUpper(panel.Provider), strings.ToUpper(panel.Label))
 	b.WriteString(fmt.Sprintf(
 		`<text x="%.2f" y="15" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="0.2" fill="%s">%s</text>`,
@@ -835,13 +835,13 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 		total = fmtAmount(spentSince(panel.Intervals, since), panel.Unit)
 	}
 	b.WriteString(fmt.Sprintf(
-		`<text data-spent="%s" x="%.2f" y="17" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" fill="rgb(236,236,241)">%s</text>`,
+		`<text data-spent="%s" x="%.2f" y="17" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" fill="`+svgRGB(chartPalette.Text)+`">%s</text>`,
 		svgTextEscape.Replace(total), x+width-pad, svgTextEscape.Replace(total)))
 	b.WriteString(fmt.Sprintf(
-		`<text x="%.2f" y="15" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="600" letter-spacing="0.2" fill="rgb(140,140,148)">SPENT</text>`,
+		`<text x="%.2f" y="15" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6.5" font-weight="600" letter-spacing="0.2" fill="`+svgRGB(chartPalette.Dim)+`">SPENT</text>`,
 		x+width-pad-textWidth(total, 16)-4))
 	b.WriteString(fmt.Sprintf(
-		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="rgb(48,48,52)"/>`,
+		`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="2" fill="`+svgRGB(chartPalette.Plot)+`"/>`,
 		plotX, plotTop, plotW, plotBase-plotTop))
 
 	xOf := func(t int64) float64 {
@@ -850,8 +850,8 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	for _, nb := range nightBands(panel.Start, panel.Now, ws, we) {
 		x0, x1 := xOf(nb[0]), xOf(nb[1])
 		b.WriteString(fmt.Sprintf(
-			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="black" fill-opacity="0.24"/>`,
-			x0, plotTop, x1-x0, plotBase-plotTop))
+			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="black" fill-opacity="%.2f"/>`,
+			x0, plotTop, x1-x0, plotBase-plotTop, chartPalette.Night))
 	}
 
 	n := 1
@@ -865,7 +865,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	for i := 1; i < n; i++ {
 		gx := plotX + float64(i)*gridW
 		b.WriteString(fmt.Sprintf(
-			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(150,150,155)" stroke-width="0.35" stroke-opacity="0.22"/>`,
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="`+svgRGB(chartPalette.Grid)+`" stroke-width="0.35" stroke-opacity="0.22"/>`,
 			gx, plotTop+1, gx, plotBase))
 	}
 
@@ -874,10 +874,10 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	for _, fraction := range []float64{1, 0.5, 0} {
 		y := plotTop + (1-fraction)*(plotBase-plotTop)
 		b.WriteString(fmt.Sprintf(
-			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.35" stroke-opacity="0.30"/>`,
+			`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="`+svgRGB(chartPalette.Axis)+`" stroke-width="0.35" stroke-opacity="0.30"/>`,
 			plotX, y, plotX+plotW, y))
 		b.WriteString(fmt.Sprintf(
-			`<text data-axis-label="true" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
+			`<text data-axis-label="true" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="`+svgRGB(chartPalette.AxisTxt)+`">%s</text>`,
 			axisX, y+2, panel.amount(axisMax*fraction)+"/"+axisUnit(horizon)))
 	}
 	usableH := plotBase - plotTop - 2
@@ -903,14 +903,14 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	for _, reset := range resets {
 		rx := xOf(reset)
 		b.WriteString(fmt.Sprintf(
-			`<line data-reset-line="true" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(235,235,240)" stroke-width="0.7" stroke-opacity="0.85" stroke-dasharray="1.2 0.8"/>`,
+			`<line data-reset-line="true" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="`+svgRGB(chartPalette.Text)+`" stroke-width="0.7" stroke-opacity="0.85" stroke-dasharray="1.2 0.8"/>`,
 			rx, plotTop, rx, plotBase))
 	}
 	if axisMax > 0 {
 		writeAffordableLine(b, panel, plotX, plotW, plotTop, plotBase, usableH, axisMax, unitSecs, accent)
 	}
 	b.WriteString(fmt.Sprintf(
-		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(185,185,190)" stroke-width="0.45" stroke-opacity="0.5"/>`,
+		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="`+svgRGB(chartPalette.Axis)+`" stroke-width="0.45" stroke-opacity="0.5"/>`,
 		plotX, plotBase, plotX+plotW, plotBase))
 	for _, mark := range []struct {
 		fraction float64
@@ -922,7 +922,7 @@ func writeBurnPanel(b *strings.Builder, panel burnChartPanel, x, width float64, 
 	} {
 		t := panel.Start + int64(float64(horizon)*mark.fraction)
 		b.WriteString(fmt.Sprintf(
-			`<text data-time-label="true" x="%.2f" y="66" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="rgb(165,165,172)">%s</text>`,
+			`<text data-time-label="true" x="%.2f" y="66" text-anchor="%s" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="5.5" font-weight="550" fill="`+svgRGB(chartPalette.AxisTxt)+`">%s</text>`,
 			plotX+plotW*mark.fraction, mark.anchor, chartTimeText(time.Unix(t, 0), horizon)))
 	}
 }

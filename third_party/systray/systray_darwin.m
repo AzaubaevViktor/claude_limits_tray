@@ -355,6 +355,19 @@ double mainScreenHeight(void) {
   return h;
 }
 
+// isDarkMode reports whether the system is drawing its menus dark, so callers
+// can hand us images in a matching palette. Read from the user defaults rather
+// than NSApp.effectiveAppearance: this is called from a background goroutine on
+// every render, and NSUserDefaults is thread-safe while AppKit's appearance
+// objects must be touched on the main thread.
+bool isDarkMode(void) {
+  @autoreleasepool {
+    NSString *style = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleInterfaceStyle"];
+    return style != nil &&
+           [style rangeOfString:@"dark" options:NSCaseInsensitiveSearch].location != NSNotFound;
+  }
+}
+
 void hideSparkOverlay(void) {
   @autoreleasepool {
     runInMainThread(@selector(hideSpark:), nil);

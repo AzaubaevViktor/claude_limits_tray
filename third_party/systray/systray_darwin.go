@@ -52,6 +52,12 @@ func MainScreenHeight() float64 {
 	return float64(C.mainScreenHeight())
 }
 
+// IsDarkMode reports whether the system appearance is dark, so menu images can
+// be drawn to match the dropdown they sit in.
+func IsDarkMode() bool {
+	return bool(C.isDarkMode())
+}
+
 // SetIcon sets the icon of a menu item. Only works on macOS and Windows.
 // iconBytes should be the content of .ico/.jpg/.png
 func (item *MenuItem) SetIcon(iconBytes []byte) {
