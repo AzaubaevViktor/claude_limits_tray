@@ -1282,9 +1282,8 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 	if grid <= 0 {
 		grid = horizon
 	}
-	fifteenMin := windowUseRate(series.samples, now, int64(rateWindow))
-	fiveMin := windowUseRate(series.samples, now, 5*60)
-	trend, trendKnown := rateTrend(fiveMin, fifteenMin)
+	recent := runUseRate(series.samples, now)
+	trend, trendKnown := rateTrend(recent, recentRunRates(series.samples, trendRuns))
 	periodLeft := float64(series.resetAt - now)
 	periodKnown := series.resetAt > now
 	averageRate, averageKnown := avgRate(series.used, periodLeft, float64(series.secs), 1, periodKnown)
@@ -1295,10 +1294,10 @@ func makeBurnPanel(provider, label string, series historyWindow, horizon, grid, 
 		Start: now - horizon, Now: now,
 		Known:  series.present && len(series.samples) >= 2,
 		Accent: accent, UsedPct: series.used,
-		RecentRate: fifteenMin.Rate, RateKnown: fifteenMin.OK,
+		RecentRate: recent.Rate, RateKnown: recent.OK,
 		AverageRate: averageRate, AverageKnown: averageKnown,
-		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: fifteenMin.Span,
-		LastUseAt: fifteenMin.At, Trend: trend, TrendKnown: trendKnown, ResetAt: series.resetAt,
+		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: recent.Span,
+		LastUseAt: recent.At, Trend: trend, TrendKnown: trendKnown, ResetAt: series.resetAt,
 		Samples: series.samples,
 	}
 }
@@ -1608,10 +1607,10 @@ func codexLongestWindow(u *CodexUsage) *CodexWindow {
 	}
 }
 
-// creditRate is the rolling recent credit burn (display units per second) for
-// a credit series — the same 15-minute window the quota "Last 15m" uses.
+// creditRate is the recent credit burn (display units per second) for a credit
+// series, measured from the last balance change like every other speed here.
 func (a *App) creditRate(series string) useRate {
-	return windowUseRate(a.history[series], time.Now().Unix(), int64(rateWindow))
+	return runUseRate(a.history[series], time.Now().Unix())
 }
 
 func (a *App) claudeCreditState() (creditBudget, creditProjection, useRate) {
@@ -1701,10 +1700,9 @@ func setDetailRow(it *systray.MenuItem, text string) {
 // AVG is the rate over the last 24h.
 func makeCreditPanel(provider string, samples []histSample, b creditBudget, resetAt, now int64, accent [3]int) burnChartPanel {
 	horizon := int64(fiveHourSecs)
-	fifteen := windowUseRate(samples, now, int64(rateWindow))
-	five := windowUseRate(samples, now, 5*60)
+	recent := runUseRate(samples, now)
 	day := windowUseRate(samples, now, 24*60*60)
-	trend, trendKnown := rateTrend(five, fifteen)
+	trend, trendKnown := rateTrend(recent, recentRunRates(samples, trendRuns))
 	periodLeft := float64(resetAt - now)
 	periodKnown := resetAt > now
 	remaining := 0.0
@@ -1724,10 +1722,10 @@ func makeCreditPanel(provider string, samples []histSample, b creditBudget, rese
 		Start: now - horizon, Now: now,
 		Known:  b.Known && len(samples) >= 2,
 		Accent: accent, Unit: unit, Remaining: remaining,
-		RecentRate: fifteen.Rate, RateKnown: fifteen.OK,
+		RecentRate: recent.Rate, RateKnown: recent.OK,
 		AverageRate: day.Rate, AverageKnown: day.OK,
-		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: fifteen.Span,
-		LastUseAt: fifteen.At, Trend: trend, TrendKnown: trendKnown, ResetAt: resetAt,
+		PeriodLeft: periodLeft, PeriodKnown: periodKnown, RateSpan: recent.Span,
+		LastUseAt: recent.At, Trend: trend, TrendKnown: trendKnown, ResetAt: resetAt,
 		Samples: samples,
 	}
 }

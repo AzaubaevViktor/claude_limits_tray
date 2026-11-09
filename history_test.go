@@ -195,24 +195,93 @@ func TestWindowUseRateDoesNotCrossReset(t *testing.T) {
 	}
 }
 
-func TestRateTrendComparesFiveMinutesWithFifteen(t *testing.T) {
+// runUseRate must agree with what the chart draws: the headline speed is the
+// height of the last bar at the moment the step appeared.
+func TestRunUseRateMatchesLastChartBar(t *testing.T) {
 	s := []histSample{
 		{T: 0, V: 0},
-		{T: 300, V: 1},
-		{T: 600, V: 3},
-		{T: 900, V: 6},
+		{T: 300, V: 1}, // step revealed here: run 0..300
+		{T: 600, V: 1},
+		{T: 900, V: 2}, // step revealed here: run 300..900
 	}
-	fifteen := windowUseRate(s, 900, 15*60)
-	five := windowUseRate(s, 900, 5*60)
-	trend, ok := rateTrend(five, fifteen)
-	if !ok || !near(fifteen.Rate, 6.0/900, 1e-12) || !near(five.Rate, 3.0/300, 1e-12) {
-		t.Fatalf("rates = five %+v, fifteen %+v", five, fifteen)
+	got := runUseRate(s, 900)
+	if !got.OK || got.At != 900 || got.Span != 600 || !near(got.Rate, 1.0/600, 1e-12) {
+		t.Fatalf("run rate = %+v", got)
 	}
-	if !near(trend, 1.0/3, 1e-12) {
-		t.Fatalf("trend = %v, want 1/3 acceleration", trend)
+	intervals := burnIntervals(s, 900, 900)
+	last := intervals[len(intervals)-1]
+	if !near(got.Rate, last.Rate, 1e-12) {
+		t.Fatalf("headline %v disagrees with last bar %v", got.Rate, last.Rate)
 	}
-	if stable, ok := rateTrend(fifteen, fifteen); !ok || stable != 0 {
-		t.Fatalf("equal rates should sit at centre, got %v ok=%v", stable, ok)
+}
+
+// The old fixed window quantised a whole-percent counter into "no step" and
+// "one step" readings; measuring from the last change does not.
+func TestRunUseRateDecaysWhileIdleInsteadOfFlickering(t *testing.T) {
+	s := []histSample{{T: 0, V: 0}, {T: 300, V: 1}, {T: 900, V: 2}}
+	for _, step := range []struct {
+		now  int64
+		want float64
+	}{
+		{900, 1.0 / 600},  // at the step: the chart's bar
+		{1200, 1.0 / 900}, // idle: the same step spread wider
+		{1500, 1.0 / 1200},
+	} {
+		got := runUseRate(append(s, histSample{T: step.now, V: 2}), step.now)
+		if !got.OK || !near(got.Rate, step.want, 1e-12) {
+			t.Fatalf("at %d: rate = %+v, want %v", step.now, got, step.want)
+		}
+	}
+}
+
+func TestRunUseRateReportsZeroBeforeAnyStepAndUnknownWhenStale(t *testing.T) {
+	s := []histSample{{T: 100, V: 90}, {T: 220, V: 95}, {T: 340, V: 0}, {T: 460, V: 0}}
+	if got := runUseRate(s, 460); !got.OK || got.Rate != 0 || got.At != 0 {
+		t.Fatalf("a fresh window with no step yet is a known zero: %+v", got)
+	}
+	s = append(s, histSample{T: 580, V: 1})
+	if got := runUseRate(s, 580); !got.OK || got.At != 580 || !near(got.Rate, 1.0/240, 1e-12) {
+		t.Fatalf("post-reset step must measure from the reset: %+v", got)
+	}
+	if got := runUseRate(s, 580+lastUseFreshSecs+1); got.OK || got.At != 580 {
+		t.Fatalf("stale polling should retain only the timestamp: %+v", got)
+	}
+}
+
+func TestRecentRunRatesListsTheLastBars(t *testing.T) {
+	s := []histSample{
+		{T: 0, V: 0},
+		{T: 200, V: 1},  // run 0..200   → 1/200
+		{T: 600, V: 2},  // run 200..600 → 1/400
+		{T: 1200, V: 3}, // run 600..1200 → 1/600
+	}
+	got := recentRunRates(s, trendRuns)
+	want := []float64{1.0 / 600, 1.0 / 400, 1.0 / 200}
+	if len(got) != len(want) {
+		t.Fatalf("run rates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if !near(got[i], want[i], 1e-12) {
+			t.Fatalf("run rates = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRateTrendComparesCurrentSpeedWithRecentRuns(t *testing.T) {
+	runs := []float64{1.0 / 600, 1.0 / 400, 1.0 / 200}
+	mean := (runs[0] + runs[1] + runs[2]) / 3
+	if trend, ok := rateTrend(useRate{Rate: mean, OK: true}, runs); !ok || trend != 0 {
+		t.Fatalf("a speed equal to the recent average sits at centre: %v ok=%v", trend, ok)
+	}
+	trend, ok := rateTrend(useRate{Rate: 2 * mean, OK: true}, runs)
+	if !ok || !near(trend, 0.5, 1e-12) {
+		t.Fatalf("double the recent average = %v, want 0.5 acceleration", trend)
+	}
+	if trend, ok := rateTrend(useRate{Rate: 0, OK: true}, runs); !ok || trend != -1 {
+		t.Fatalf("a stopped burn should peg deceleration: %v ok=%v", trend, ok)
+	}
+	if _, ok := rateTrend(useRate{Rate: mean, OK: true}, nil); ok {
+		t.Fatalf("no runs yet means no trend")
 	}
 }
 

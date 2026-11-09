@@ -165,6 +165,115 @@ type useRate struct {
 	OK   bool
 }
 
+// resetFloor is the index of the sample that revealed the latest window reset,
+// or 0 when none is recorded: nothing before it belongs to the current window.
+func resetFloor(samples []histSample) int {
+	for i := len(samples) - 1; i >= 1; i-- {
+		if samples[i].V < samples[i-1].V {
+			return i
+		}
+	}
+	return 0
+}
+
+// changeIndices lists the samples in the current window that revealed a step,
+// newest first, stopping once limit of them are found. Each index is the end
+// of one run; the next index (or the window floor) is where that run started.
+func changeIndices(samples []histSample, floor, limit int) []int {
+	changes := make([]int, 0, limit)
+	for i := len(samples) - 1; i > floor && len(changes) < limit; i-- {
+		if samples[i].V > samples[i-1].V {
+			changes = append(changes, i)
+		}
+	}
+	return changes
+}
+
+// runRate is the speed of the run that ends at the sample change: the step it
+// revealed, divided by the time from the previous change (or the window floor)
+// up to end. This is exactly the height of the chart's bar for that run (see
+// burnIntervals) when end is the revealing sample itself.
+func runRate(samples []histSample, start, change int, end int64) (float64, float64, bool) {
+	dt := float64(end - samples[start].T)
+	if dt < rateMinDt {
+		return 0, 0, false
+	}
+	return math.Max(0, samples[change].V-samples[start].V) / dt, dt, true
+}
+
+// runUseRate is the speed of the counter's latest change, measured from the
+// change before it rather than over a fixed window.
+//
+// Both providers report quota in whole percent, so a 15-minute window can only
+// ever contain zero, one or two steps: on a weekly counter burning a true
+// ~1.3%/h that reads as a 0× / 5.6× / 11× flicker, which is why the headline
+// disagreed with the chart's steady ~1.7× bars. A step divided by the time it
+// really took has no such quantisation.
+//
+// While nothing is spent the same step keeps spreading over a growing span, so
+// the reading decays smoothly towards zero instead of dropping off a cliff the
+// moment the window slides past the step. At the instant a step appears the
+// result equals the chart's last bar.
+func runUseRate(samples []histSample, now int64) useRate {
+	if len(samples) < 2 {
+		return useRate{}
+	}
+	floor := resetFloor(samples)
+	changes := changeIndices(samples, floor, 2)
+	lastUseAt := int64(0)
+	if len(changes) > 0 {
+		lastUseAt = samples[changes[0]].T
+	}
+	// Polling has stopped (sleep, a failure streak, a grown backoff interval):
+	// the counter may have moved unseen, so there is no speed to report.
+	if now-samples[len(samples)-1].T > lastUseFreshSecs {
+		return useRate{At: lastUseAt}
+	}
+	if len(changes) == 0 {
+		// Nothing spent in this window yet: a real zero rather than an unknown,
+		// as long as the window has been watched long enough to say so.
+		dt := float64(now - samples[floor].T)
+		if dt < rateMinDt {
+			return useRate{}
+		}
+		return useRate{Span: dt, OK: true}
+	}
+	start := floor
+	if len(changes) > 1 {
+		start = changes[1]
+	}
+	rate, dt, ok := runRate(samples, start, changes[0], now)
+	if !ok {
+		return useRate{At: lastUseAt}
+	}
+	return useRate{Rate: rate, Span: dt, At: lastUseAt, OK: true}
+}
+
+// recentRunRates are the speeds of the last completed runs in the current
+// window, newest first (at most limit of them) — the heights of the chart's
+// most recent bars, which is what the current speed is compared against.
+func recentRunRates(samples []histSample, limit int) []float64 {
+	if len(samples) < 2 || limit <= 0 {
+		return nil
+	}
+	floor := resetFloor(samples)
+	changes := changeIndices(samples, floor, limit+1)
+	rates := make([]float64, 0, limit)
+	for k, change := range changes {
+		if len(rates) == limit {
+			break
+		}
+		start := floor
+		if k+1 < len(changes) {
+			start = changes[k+1]
+		}
+		if rate, _, ok := runRate(samples, start, change, samples[change].T); ok {
+			rates = append(rates, rate)
+		}
+	}
+	return rates
+}
+
 // windowUseRate measures the utilisation change over the most recent sampling
 // window. Flat polls remain in the interval, so this is a real rolling rate
 // rather than the rate of only the last positive burst. Samples before the most
@@ -174,13 +283,7 @@ func windowUseRate(samples []histSample, now, windowSecs int64) useRate {
 	if len(samples) < 2 {
 		return useRate{}
 	}
-	floor := 0
-	for i := len(samples) - 1; i >= 1; i-- {
-		if samples[i].V < samples[i-1].V {
-			floor = i
-			break
-		}
-	}
+	floor := resetFloor(samples)
 	end := len(samples) - 1
 	lastUseAt := int64(0)
 	for i := end; i > floor; i-- {
@@ -212,18 +315,29 @@ func windowUseRate(samples []histSample, now, windowSecs int64) useRate {
 	}
 }
 
-// rateTrend compares the immediate five-minute speed with the primary
-// fifteen-minute speed. The symmetric result maps -1..1 to the left/right
-// halves of the trend bar; zero means the rates are equal.
-func rateTrend(fast, slow useRate) (float64, bool) {
-	if !fast.OK || !slow.OK {
+// trendRuns is how many recent runs the acceleration is averaged over.
+const trendRuns = 3
+
+// rateTrend compares the current speed with the average of the last few runs.
+// The symmetric result maps -1..1 to the left/right halves of the trend bar;
+// zero means "same as lately". It used to pit a five-minute window against a
+// fifteen-minute one, but on a counter reported in whole percent the short
+// window is almost always empty, so the bar flapped between the extremes
+// instead of describing the burn. Real runs carry a real comparison.
+func rateTrend(current useRate, runs []float64) (float64, bool) {
+	if !current.OK || len(runs) == 0 {
 		return 0, false
 	}
-	scale := math.Max(fast.Rate, slow.Rate)
+	mean := 0.0
+	for _, r := range runs {
+		mean += r
+	}
+	mean /= float64(len(runs))
+	scale := math.Max(current.Rate, mean)
 	if scale <= 1e-9 {
 		return 0, true
 	}
-	return clamp((fast.Rate-slow.Rate)/scale, -1, 1), true
+	return clamp((current.Rate-mean)/scale, -1, 1), true
 }
 
 // inWorkWindow reports whether local minute-of-day min falls in the working
