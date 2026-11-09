@@ -151,10 +151,7 @@ func stripSpeed(panel burnChartPanel) (float64, bool) {
 	if !panel.RateKnown {
 		return 0, false
 	}
-	if _, ok := panel.affordableAt(panel.Now); !ok {
-		return 0, false
-	}
-	return panelBurnRatio(panel), true
+	return panelRateRatio(panel, panel.RecentRate)
 }
 
 // speedRatioText keeps the multiplier short: two significant figures below 10x,
@@ -172,9 +169,10 @@ const (
 )
 
 // writeSpeedBar is the flattened speedometer: the same 0–2x affordable-pace
-// scale, with the measured ratio as a marker, the plain whole-window pace as an
-// accent pip below, and the 5m-vs-15m trend as a thin bar above. x,y is the
-// track's left edge and vertical centre.
+// scale, with the current speed as a marker, the average since the window
+// opened as a hollow ring behind it, the plain whole-window pace as an accent
+// pip below, and the acceleration as a thin bar above. x,y is the track's left
+// edge and vertical centre.
 func writeSpeedBar(b *strings.Builder, panel burnChartPanel, ratio float64, known bool, x, y float64) {
 	top := y - speedBarH/2
 	b.WriteString(fmt.Sprintf(
@@ -190,6 +188,7 @@ func writeSpeedBar(b *strings.Builder, panel burnChartPanel, ratio float64, know
 			tick, posOf(tick), top, posOf(tick), top+speedBarH))
 	}
 	writeStripPaceMark(b, panel, posOf, top+speedBarH)
+	writeStripAvgMark(b, panel, posOf, y)
 	writeStripTrend(b, panel, x, top-3.4)
 	if !known {
 		return
@@ -201,6 +200,30 @@ func writeSpeedBar(b *strings.Builder, panel burnChartPanel, ratio float64, know
 	b.WriteString(fmt.Sprintf(
 		`<line data-speed-needle="true" data-speed-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.7" stroke-linecap="round"/>`,
 		ratio, mx, top-1.4, mx, top+speedBarH+1.4, svgRGB(burnColor(ratio))))
+}
+
+// writeStripAvgMark rings where the average since the window opened sits on
+// the same scale, so the needle can be read against how the window has
+// actually been spent so far: a needle right of the ring means this run is
+// faster than the window's own average, left of it means the window is
+// recovering. It is drawn in the colour the AVG runway text uses.
+func writeStripAvgMark(b *strings.Builder, panel burnChartPanel, posOf func(float64) float64, cy float64) {
+	if !panel.AverageKnown || panel.AverageRate <= 0 {
+		return
+	}
+	ratio, ok := panelRateRatio(panel, panel.AverageRate)
+	if !ok {
+		return
+	}
+	px, top := posOf(ratio), cy-speedBarH/2
+	// Inside the track's own height, so it reads as a second tick rather than
+	// competing with the needle, which overhangs it.
+	b.WriteString(fmt.Sprintf(
+		`<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="rgb(20,20,22)" stroke-width="2.4" stroke-opacity="0.85"/>`,
+		px, top, px, top+speedBarH))
+	b.WriteString(fmt.Sprintf(
+		`<line data-avg-mark="true" data-avg-ratio="%.3f" x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="1.1"/>`,
+		ratio, px, top, px, top+speedBarH, svgRGB(averageRunwayColor)))
 }
 
 // writeStripPaceMark pips where the plain whole-window pace sits on the

@@ -966,11 +966,27 @@ func chartTimeText(t time.Time, horizonSecs int64) string {
 // A credit card with nothing finite to pace against (unlimited, or no reset)
 // reads 0 rather than pegging the needle.
 func panelBurnRatio(panel burnChartPanel) float64 {
+	return panelRatioOf(panel, panel.RecentRate)
+}
+
+// panelRatioOf is that reading for any rate the card carries, so the needle
+// and the average ring land on one scale.
+func panelRatioOf(panel burnChartPanel, rate float64) float64 {
 	if panel.Unit != "" {
-		return panel.ratioAt(panel.RecentRate, panel.Now)
+		return panel.ratioAt(rate, panel.Now)
 	}
 	left, known := panel.paceLeft()
-	return affordableBurnRatio(panel.RecentRate, panel.UsedPct, left, panel.paceWindowSecs(), known)
+	return affordableBurnRatio(rate, panel.UsedPct, left, panel.paceWindowSecs(), known)
+}
+
+// panelRateRatio is panelRatioOf with the "is there anything to pace against"
+// question answered too: ok is false for a card with no finite reference, so
+// the strip can leave its marks off rather than park them at zero.
+func panelRateRatio(panel burnChartPanel, rate float64) (float64, bool) {
+	if _, ok := panel.affordableAt(panel.Now); !ok {
+		return 0, false
+	}
+	return panelRatioOf(panel, rate), true
 }
 
 // speedTicks are the fixed affordable-pace thresholds notched on the speedometer
