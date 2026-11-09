@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Task 7+11: the reference burn (5%/h over the 5-hour window) maxes the level,
 // and an equally aggressive burn on any other window scores the same.
@@ -56,8 +59,12 @@ func TestTargetIconHeightModes(t *testing.T) {
 	// A weekly-only burn (session idle) still grows the icon: "active at AT
 	// LEAST ONE window", each scored on its own scale.
 	a.lastUsage = &Usage{}
-	a.sessRate = 0
-	a.weekRate = 25.0 / weekSecs // projects to the reference on the weekly window
+	// one weekly step, measured over a minute: 25% per weekly window, which
+	// projects to the reference. The session series stays empty (idle).
+	now := time.Now().Unix()
+	a.history = map[string][]histSample{
+		seriesClaudeWeekly: {{T: now - 60, V: 0}, {T: now, V: 25.0 / weekSecs * 60}},
+	}
 	if got := a.targetIconHeight(); !near(got, dynIconMax, 1e-9) {
 		t.Fatalf("weekly-only burn want max %v, got %v", dynIconMax, got)
 	}

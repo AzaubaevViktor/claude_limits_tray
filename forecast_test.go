@@ -170,43 +170,6 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestRateTracker(t *testing.T) {
-	rt := &RateTracker{}
-	if _, _, ok := rt.Update(1000, 10, 2); ok {
-		t.Error("first sample should be not-ok")
-	}
-	if _, _, ok := rt.Update(1005, 11, 2); ok {
-		t.Error("dt<10 should be not-ok")
-	}
-	sess, week, ok := rt.Update(1020, 30, 2)
-	if !ok {
-		t.Fatal("should be ok after 20s")
-	}
-	approx(t, sess, 1.0, 1e-3, "sess rate")
-	approx(t, week, 0.0, 1e-3, "week rate")
-
-	// A poll gap longer than the 15-minute window must still yield a rate,
-	// measured over the actual gap — not read 0 because only the newest sample
-	// falls inside the window.
-	rtGap := &RateTracker{}
-	rtGap.Update(0, 10, 5)
-	sess, week, ok = rtGap.Update(1200, 40, 11) // 1200s > rateWindow (900s)
-	if !ok {
-		t.Fatal("a poll gap longer than the window should still yield a rate")
-	}
-	approx(t, sess, 30.0/1200, 1e-6, "sess rate over the real gap")
-	approx(t, week, 6.0/1200, 1e-6, "week rate over the real gap")
-
-	rt2 := &RateTracker{}
-	rt2.Update(1000, 80, 50)
-	if _, _, ok := rt2.Update(1020, 5, 50); ok { // a drop resets
-		t.Error("drop should reset and be not-ok")
-	}
-	if len(rt2.history) != 1 {
-		t.Errorf("history should be 1 after reset, got %d", len(rt2.history))
-	}
-}
-
 func TestWeeklyCalibratorCumulativeBasis(t *testing.T) {
 	var c WeeklyCalibrator
 	if _, ok := c.BlockPct(); ok {

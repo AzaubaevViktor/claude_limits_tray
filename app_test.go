@@ -128,21 +128,19 @@ func TestClaudeDialCentreMatchesWorstOuterPace(t *testing.T) {
 	}
 }
 
-// After a restart the rate history is empty, so a naive tracker needs two fresh
-// polls before "Last 15m" can leave zero. Seeding from the last persisted sample
-// lets the very first poll measure a rate.
-func TestSeedRatesEnablesFirstPollRate(t *testing.T) {
+// After a restart the persisted history is itself the seed: the first render
+// measures a speed against it instead of waiting for two fresh polls.
+func TestRateMeasuredFromPersistedHistory(t *testing.T) {
 	a := newApp()
-	a.lastOk = time.Unix(1000, 0)
-	a.lastUsage = &Usage{FiveHour: Window{Utilization: 40}, SevenDay: Window{Utilization: 20}}
-	a.seedRates()
-
-	s, w, ok := a.rates.Update(1300, 46, 21) // one poll, 300s after the seed
-	if !ok {
-		t.Fatal("seeded tracker should compute a rate on the first poll")
+	now := time.Now().Unix()
+	a.history = map[string][]histSample{
+		seriesClaudeWeekly: {{T: now - 600, V: 20}, {T: now - 300, V: 21}},
 	}
-	approx(t, s, 6.0/300, 1e-6, "sess rate from seed")
-	approx(t, w, 1.0/300, 1e-6, "week rate from seed")
+	got := a.seriesRate(seriesClaudeWeekly)
+	if !got.OK {
+		t.Fatal("persisted history should yield a rate without a fresh poll")
+	}
+	approx(t, got.Rate, 1.0/600, 1e-6, "week rate from persisted history")
 }
 
 // Task 9: no synthetic default — nothing is shown until a real spend is measured.

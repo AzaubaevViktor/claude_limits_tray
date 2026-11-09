@@ -43,15 +43,15 @@ func dynamicIconHeight(level float64) float64 {
 func (a *App) burnLevel() float64 {
 	level := 0.0
 	if a.lastUsage != nil {
-		level = math.Max(level, windowBurnLevel(a.sessRate, fiveHourSecs))
-		level = math.Max(level, windowBurnLevel(a.weekRate, weekSecs))
+		level = math.Max(level, windowBurnLevel(a.seriesRate(seriesClaudeSession).Rate, fiveHourSecs))
+		level = math.Max(level, windowBurnLevel(a.seriesRate(seriesClaudeWeekly).Rate, weekSecs))
 	}
 	if a.lastCodex != nil {
 		if p := a.lastCodex.primary(); p != nil {
-			level = math.Max(level, windowBurnLevel(a.codexPrimaryRate, float64(p.WindowSeconds)))
+			level = math.Max(level, windowBurnLevel(a.seriesRate(seriesCodexPrimary).Rate, float64(p.WindowSeconds)))
 		}
 		if s := a.lastCodex.secondary(); s != nil {
-			level = math.Max(level, windowBurnLevel(a.codexSecondRate, float64(s.WindowSeconds)))
+			level = math.Max(level, windowBurnLevel(a.seriesRate(seriesCodexSecondary).Rate, float64(s.WindowSeconds)))
 		}
 	}
 	return level

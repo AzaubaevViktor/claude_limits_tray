@@ -78,8 +78,6 @@ type App struct {
 	mu     sync.Mutex
 	client *Client
 	codex  *CodexClient
-	rates  *RateTracker
-	cRates *RateTracker
 	calib  *WeeklyCalibrator // learns weekly-% per 5-hour session, for dial blocks
 	// per-model calibrators, keyed by model display name (the "Weekly by model"
 	// rows): each learns weekly-% per session for its own scoped weekly limit.
@@ -148,9 +146,6 @@ type App struct {
 	workEnd      int
 	lastUsageRaw []byte
 	lastUsage    *Usage
-	sessRate     float64
-	weekRate     float64
-	rateSpan     float64 // seconds the recent Claude rate was measured over
 
 	lastCodexRaw     []byte
 	lastCodex        *CodexUsage
@@ -158,9 +153,6 @@ type App struct {
 	lastCodexFail    time.Time
 	lastCodexFailMsg string
 	codexFailCount   int
-	codexPrimaryRate float64
-	codexSecondRate  float64
-	codexRateSpan    float64 // seconds the recent Codex rate was measured over
 
 	statePath string
 
@@ -221,8 +213,6 @@ func newApp() *App {
 	a := &App{
 		client:       &Client{},
 		codex:        &CodexClient{},
-		rates:        &RateTracker{},
-		cRates:       &RateTracker{},
 		calib:        &WeeklyCalibrator{},
 		calibByModel: map[string]*WeeklyCalibrator{},
 		history:      map[string][]histSample{},
@@ -494,9 +484,6 @@ func (a *App) useCurrentClaudeLogin() {
 	a.lastUsage = nil
 	a.lastOk = time.Time{}
 	a.lastFailMsg = ""
-	a.sessRate = 0
-	a.weekRate = 0
-	a.rates = &RateTracker{}
 	a.calib = &WeeklyCalibrator{}
 	a.calibByModel = map[string]*WeeklyCalibrator{}
 	delete(a.history, seriesClaudeSession)
@@ -542,10 +529,6 @@ func (a *App) noteCodex(r pollResult) {
 	a.scheduleCodexNext(basePollSecs)
 	a.codexErrorOn = false
 	if primary, secondary, ok := codexPercents(r.codexUsage); ok {
-		if p, s, ok := a.cRates.Update(nowSecs(), primary, secondary); ok {
-			a.codexPrimaryRate, a.codexSecondRate = p, s
-			a.codexRateSpan = a.cRates.Span()
-		}
 		a.recordHistory(seriesCodexPrimary, primary)
 		a.recordHistory(seriesCodexSecondary, secondary)
 	}
@@ -568,9 +551,6 @@ func (a *App) useCurrentCodexLogin() {
 	a.lastCodex = nil
 	a.lastCodexOk = time.Time{}
 	a.lastCodexFailMsg = ""
-	a.codexPrimaryRate = 0
-	a.codexSecondRate = 0
-	a.cRates = &RateTracker{}
 	delete(a.history, seriesCodexPrimary)
 	delete(a.history, seriesCodexSecondary)
 	delete(a.history, seriesCodexCredits)
@@ -597,11 +577,6 @@ func (a *App) onSuccess(r pollResult) {
 	}
 	a.scheduleNext(a.pollInterval)
 
-	if s, w, ok := a.rates.Update(nowSecs(), r.usage.FiveHour.Utilization,
-		r.usage.SevenDay.Utilization); ok {
-		a.sessRate, a.weekRate = s, w
-		a.rateSpan = a.rates.Span()
-	}
 	if r.usage.HasSession() {
 		// Session-based bookkeeping is meaningless on a weekly-only account.
 		a.calib.Observe(r.usage.FiveHour.Utilization, r.usage.SevenDay.Utilization)
@@ -698,8 +673,10 @@ func (a *App) apply() {
 	now := time.Now()
 	sessWork, sw := workingSecondsUntil(u.FiveHour.ResetsAt, a.workStart, a.workEnd, now)
 	weekWork, ww := workingSecondsUntil(u.SevenDay.ResetsAt, a.workStart, a.workEnd, now)
-	sessFcRate := forecastRate(a.sessRate, sessPct, sessLeft, fiveHourSecs, sessKnown)
-	weekFcRate := forecastRate(a.weekRate, weekPct, weekLeft, weekSecs, weekKnown)
+	sessUse := a.seriesRate(seriesClaudeSession)
+	weekUse := a.seriesRate(seriesClaudeWeekly)
+	sessFcRate := forecastRate(sessUse.Rate, sessPct, sessLeft, fiveHourSecs, sessKnown)
+	weekFcRate := forecastRate(weekUse.Rate, weekPct, weekLeft, weekSecs, weekKnown)
 	sessFc := projectForecast(sessPct, sessFcRate, sessWork, sw)
 	weekFc := projectForecast(weekPct, weekFcRate, weekWork, ww)
 	worst := sessFc
@@ -713,7 +690,8 @@ func (a *App) apply() {
 
 	weekReset, weekResetOk := parseISO(u.SevenDay.ResetsAt)
 	if !u.HasSession() {
-		a.renderClaudeWeeklyOnly(weekPct, weekLeft, weekKnown, weekWork, ww, weekFc, sinceWeekRate(weekPct, weekLeft, weekKnown))
+		a.renderClaudeWeeklyOnly(weekPct, weekLeft, weekKnown, weekWork, ww, weekFc,
+			weekUse, sinceWeekRate(weekPct, weekLeft, weekKnown))
 		a.weekly.SetTitle(fmt.Sprintf("📅 Weekly:  %.0f%% left", 100-weekPct))
 		a.weekly.SetIcon(renderPctBar(weekPct, fmt.Sprintf("Weekly %.0f%%", weekPct)))
 		a.weeklyReset.SetTitle("      resets in " +
@@ -744,11 +722,11 @@ func (a *App) apply() {
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
 	sinceSess, _ := avgRate(sessPct, sessLeft, fiveHourSecs, 1, sessKnown)
 	sinceWeek, _ := avgRate(weekPct, weekLeft, weekSecs, 1, weekKnown)
-	a.speed.SetTitle(fmt.Sprintf("⚡ Last %s:  sess %.1f%%/h · week %.1f%%/d",
-		spanLabel(a.rateSpan), a.sessRate*3600, a.weekRate*86400))
+	a.speed.SetTitle(fmt.Sprintf("⚡ Latest run:  sess %s · week %s",
+		useRateText(sessUse, 3600, "h"), useRateText(weekUse, 86400, "d")))
 	a.speedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  sess %s · week %s",
-		spareText(sessPct, a.sessRate, sessWork, sw),
-		spareText(weekPct, a.weekRate, weekWork, ww)))
+		spareText(sessPct, sessUse.Rate, sessWork, sw),
+		spareText(weekPct, weekUse.Rate, weekWork, ww)))
 	a.speedAvg.SetTitle(fmt.Sprintf("⚡ Since reset:  sess %s%%/h · week %s%%/d",
 		fmtRate(avgSessH, asOk), fmtRate(avgWeekD, awOk)))
 	a.speedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  sess %s · week %s",
@@ -793,11 +771,11 @@ func (a *App) setClaudeSessionRows(show bool) {
 // response carries no 5-hour window: session rows are hidden and the speed,
 // spare and forecast lines speak only about the weekly limit.
 func (a *App) renderClaudeWeeklyOnly(weekPct, weekLeft float64, weekKnown bool,
-	weekWork float64, ww bool, weekFc Forecast, sinceWeek float64) {
+	weekWork float64, ww bool, weekFc Forecast, weekUse useRate, sinceWeek float64) {
 	a.setClaudeSessionRows(false)
 	avgWeekD, awOk := avgRate(weekPct, weekLeft, weekSecs, 86400, weekKnown)
-	a.speed.SetTitle(fmt.Sprintf("⚡ Last %s:  week %.1f%%/d", spanLabel(a.rateSpan), a.weekRate*86400))
-	a.speedLeft.SetTitle("      ↳ spare at reset:  week " + spareText(weekPct, a.weekRate, weekWork, ww))
+	a.speed.SetTitle("⚡ Latest run:  week " + useRateText(weekUse, 86400, "d"))
+	a.speedLeft.SetTitle("      ↳ spare at reset:  week " + spareText(weekPct, weekUse.Rate, weekWork, ww))
 	a.speedAvg.SetTitle("⚡ Since reset:  week " + fmtRate(avgWeekD, awOk) + "%/d")
 	a.speedAvgLeft.SetTitle("      ↳ spare at reset:  week " + spareText(weekPct, sinceWeek, weekWork, ww))
 	a.burn.SetTitle("Forecast @ rate · " + weekFc.Category)
@@ -826,8 +804,10 @@ func (a *App) renderCodex() {
 	a.renderCodexWindow(a.codexPrimary, a.codexPrimaryReset, "Primary", primary)
 	a.renderCodexWindow(a.codexSecondary, a.codexSecondaryReset, "Secondary", secondary)
 
-	primaryFc := a.codexForecast(primary, a.codexPrimaryRate)
-	secondaryFc := a.codexForecast(secondary, a.codexSecondRate)
+	primaryUse := a.seriesRate(seriesCodexPrimary)
+	secondaryUse := a.seriesRate(seriesCodexSecondary)
+	primaryFc := a.codexForecast(primary, primaryUse.Rate)
+	secondaryFc := a.codexForecast(secondary, secondaryUse.Rate)
 	worst := primaryFc
 	if secondaryFc.Pos() > worst.Pos() {
 		worst = secondaryFc
@@ -836,10 +816,10 @@ func (a *App) renderCodex() {
 	a.codexBurnPrimary.SetTitle("Primary:  " + primaryFc.Text())
 	a.codexBurnSecondary.SetTitle("Secondary:  " + secondaryFc.Text())
 
-	a.codexSpeed.SetTitle(fmt.Sprintf("Last %s:  primary %s · secondary %s",
-		spanLabel(a.codexRateSpan), codexRateText(primary, a.codexPrimaryRate, true), codexRateText(secondary, a.codexSecondRate, true)))
+	a.codexSpeed.SetTitle(fmt.Sprintf("Latest run:  primary %s · secondary %s",
+		codexUseRateText(primary, primaryUse), codexUseRateText(secondary, secondaryUse)))
 	a.codexSpeedLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
-		a.codexSpare(primary, a.codexPrimaryRate), a.codexSpare(secondary, a.codexSecondRate)))
+		a.codexSpare(primary, primaryUse.Rate), a.codexSpare(secondary, secondaryUse.Rate)))
 	a.codexSpeedAvg.SetTitle(fmt.Sprintf("Since reset:  primary %s · secondary %s",
 		a.codexAvgRate(primary), a.codexAvgRate(secondary)))
 	a.codexSpeedAvgLeft.SetTitle(fmt.Sprintf("      ↳ spare at reset:  primary %s · secondary %s",
@@ -1607,6 +1587,32 @@ func codexLongestWindow(u *CodexUsage) *CodexWindow {
 	}
 }
 
+// seriesRate is the recent speed of a recorded counter, measured the way the
+// charts measure it: from the last change (see runUseRate). Every speed in the
+// app — the menu rows, the forecasts, the cards and the strip — comes through
+// here, so they cannot disagree with each other or with the bars.
+func (a *App) seriesRate(series string) useRate {
+	return runUseRate(a.history[series], time.Now().Unix())
+}
+
+// useRateText is a measured speed with the span it was measured over, e.g.
+// "4.2%/h (47m)", or "—" when nothing is measurable yet. Each counter steps at
+// its own moments, so each carries its own span instead of the single window
+// label these rows used to share.
+func useRateText(r useRate, perSecs float64, unit string) string {
+	if !r.OK {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f%%/%s (%s)", r.Rate*perSecs, unit, fmtSpan(r.Span))
+}
+
+// codexUseRateText is useRateText in the Codex window's own unit (%/d for a
+// weekly window, %/h for a shorter one).
+func codexUseRateText(w *CodexWindow, r useRate) string {
+	secs, unit := codexRateUnit(w)
+	return useRateText(r, secs, unit)
+}
+
 // creditRate is the recent credit burn (display units per second) for a credit
 // series, measured from the last balance change like every other speed here.
 func (a *App) creditRate(series string) useRate {
@@ -2066,22 +2072,18 @@ type persistState struct {
 	IconHeight   float64  `json:"icon_height"`
 	DynIconOff   bool     `json:"dyn_icon_off"` // absent => false => auto-size on
 	WeekSmooth   string   `json:"week_smooth"`  // weekSmoothOptions key; absent/unknown => default
-	SessRate     float64  `json:"sess_rate"`
-	WeekRate     float64  `json:"week_rate"`
-	CalibDs      float64  `json:"calib_ds"` // retained session-spend sample (%)
-	CalibDw      float64  `json:"calib_dw"` // matching weekly spend (%)
+	CalibDs      float64  `json:"calib_ds"`     // retained session-spend sample (%)
+	CalibDw      float64  `json:"calib_dw"`     // matching weekly spend (%)
 	CalibAt      float64  `json:"calib_at,omitempty"`
 	// per-model retained samples, keyed by model display name
-	CalibModels      map[string]calibSample  `json:"calib_models,omitempty"`
-	CodexPrimaryRate float64                 `json:"codex_primary_rate"`
-	CodexSecondRate  float64                 `json:"codex_secondary_rate"`
-	CodexRefresh     string                  `json:"codex_refresh_token"`
-	CodexAccount     string                  `json:"codex_account"`
-	ClaudeRefresh    string                  `json:"claude_refresh_token"`
-	Usage            json.RawMessage         `json:"usage"`
-	Profile          json.RawMessage         `json:"profile"`
-	CodexUsage       json.RawMessage         `json:"codex_usage"`
-	History          map[string][]histSample `json:"history,omitempty"`
+	CalibModels   map[string]calibSample  `json:"calib_models,omitempty"`
+	CodexRefresh  string                  `json:"codex_refresh_token"`
+	CodexAccount  string                  `json:"codex_account"`
+	ClaudeRefresh string                  `json:"claude_refresh_token"`
+	Usage         json.RawMessage         `json:"usage"`
+	Profile       json.RawMessage         `json:"profile"`
+	CodexUsage    json.RawMessage         `json:"codex_usage"`
+	History       map[string][]histSample `json:"history,omitempty"`
 }
 
 // calibSample is one persisted calibration sample and its observation time.
@@ -2128,7 +2130,6 @@ func (a *App) loadState() {
 	if s.PollInterval >= basePollSecs && s.PollInterval <= maxPollSecs {
 		a.pollInterval = s.PollInterval
 	}
-	a.sessRate, a.weekRate = s.SessRate, s.WeekRate
 	calibFallbackAt := time.Now()
 	if !a.lastOk.IsZero() {
 		calibFallbackAt = a.lastOk
@@ -2147,7 +2148,6 @@ func (a *App) loadState() {
 		c.RestoreAt(cs.Ds, cs.Dw, at)
 		a.calibByModel[name] = c
 	}
-	a.codexPrimaryRate, a.codexSecondRate = s.CodexPrimaryRate, s.CodexSecondRate
 	a.codex.LoadRefresh(s.CodexRefresh)
 	a.codex.LoadAccount(s.CodexAccount)
 	a.client.LoadRefresh(s.ClaudeRefresh)
@@ -2174,28 +2174,6 @@ func (a *App) loadState() {
 			}
 		}
 	}
-	a.seedRates()
-}
-
-// seedRates primes the rate trackers with the last persisted sample, timestamped
-// at the last successful poll, so the FIRST poll after a restart measures a rate
-// straight away instead of needing two fresh polls before "Last 15m" leaves zero.
-// (Claude and Codex are fetched in one poll cycle, so lastOk stands in for the
-// Codex sample time too.) A window that reset during downtime self-corrects:
-// RateTracker.Update drops the seed when the new utilisation comes in lower.
-func (a *App) seedRates() {
-	if a.lastOk.IsZero() {
-		return
-	}
-	t := float64(a.lastOk.Unix())
-	if a.lastUsage != nil {
-		a.rates.Update(t, a.lastUsage.FiveHour.Utilization, a.lastUsage.SevenDay.Utilization)
-	}
-	if a.lastCodex != nil {
-		if p, s, ok := codexPercents(a.lastCodex); ok {
-			a.cRates.Update(t, p, s)
-		}
-	}
 }
 
 func (a *App) saveState(force bool) {
@@ -2214,30 +2192,26 @@ func (a *App) saveState(force bool) {
 		}
 	}
 	s := persistState{
-		NextAllowed:      a.nextAllowedEpoch,
-		PollInterval:     a.pollInterval,
-		WorkStart:        fmtHHMM(a.workStart),
-		WorkEnd:          fmtHHMM(a.workEnd),
-		TimeFill:         timeFillString(),
-		SpendPulse:       pulseModeString(),
-		FireworkSize:     a.fireworkSize,
-		IconHeight:       a.iconHeight,
-		DynIconOff:       a.dynIconOff,
-		WeekSmooth:       a.weekSmooth,
-		SessRate:         a.sessRate,
-		WeekRate:         a.weekRate,
-		CalibDs:          calibDs,
-		CalibDw:          calibDw,
-		CalibAt:          a.calib.SnapshotAt(),
-		CalibModels:      calibModels,
-		CodexPrimaryRate: a.codexPrimaryRate,
-		CodexSecondRate:  a.codexSecondRate,
-		CodexRefresh:     a.codex.RefreshToken(),
-		CodexAccount:     a.codex.AccountLabel(),
-		ClaudeRefresh:    a.client.RefreshToken(),
-		Usage:            json.RawMessage(a.lastUsageRaw),
-		CodexUsage:       json.RawMessage(a.lastCodexRaw),
-		History:          a.history,
+		NextAllowed:   a.nextAllowedEpoch,
+		PollInterval:  a.pollInterval,
+		WorkStart:     fmtHHMM(a.workStart),
+		WorkEnd:       fmtHHMM(a.workEnd),
+		TimeFill:      timeFillString(),
+		SpendPulse:    pulseModeString(),
+		FireworkSize:  a.fireworkSize,
+		IconHeight:    a.iconHeight,
+		DynIconOff:    a.dynIconOff,
+		WeekSmooth:    a.weekSmooth,
+		CalibDs:       calibDs,
+		CalibDw:       calibDw,
+		CalibAt:       a.calib.SnapshotAt(),
+		CalibModels:   calibModels,
+		CodexRefresh:  a.codex.RefreshToken(),
+		CodexAccount:  a.codex.AccountLabel(),
+		ClaudeRefresh: a.client.RefreshToken(),
+		Usage:         json.RawMessage(a.lastUsageRaw),
+		CodexUsage:    json.RawMessage(a.lastCodexRaw),
+		History:       a.history,
 	}
 	if !a.lastOk.IsZero() {
 		v := float64(a.lastOk.Unix())

@@ -294,7 +294,7 @@ func (c *WeeklyCalibrator) ObserveAt(now time.Time, sess, week float64) {
 	// wrapping 100→0 never dips below it and the reset goes unnoticed — leaving the
 	// baseline pinned while Δweek accrues across many sessions and Δsession only
 	// tracks the current position, hugely inflating the ratio. Compare to the last
-	// reading (as RateTracker does) so each session reset re-anchors the baseline.
+	// reading, so each session reset re-anchors the baseline.
 	reset := !c.haveBase || sess < c.lastSess-1 || week < c.lastWeek-1
 	c.lastSess, c.lastWeek, c.haveLast = sess, week, true
 	if reset {
@@ -379,59 +379,11 @@ func (c *WeeklyCalibrator) RestoreAt(ds, dw float64, at time.Time) {
 	}
 }
 
-// RateTracker derives a consumption rate over the last WINDOW seconds.
-type rateSample struct{ t, sess, week float64 }
-
-type RateTracker struct {
-	history []rateSample
-	lastDt  float64 // span (s) the most recent successful rate was measured over
-}
-
-// Span is how many seconds the last computed rate was measured over — the real
-// window behind the "Last …" label, which can exceed rateWindow when polls are
-// sparse. 0 until a rate has been computed.
-func (r *RateTracker) Span() float64 { return r.lastDt }
-
+// rateMinDt is the shortest span a measured speed may be based on, and
+// rateWindow the window the rolling averages (the credit card's AVG line) are
+// taken over. The live speeds are no longer window-based: they measure from
+// the last counter change instead (see runUseRate).
 const (
 	rateWindow = 15 * 60.0
 	rateMinDt  = 10.0
-	rateMaxLen = 64
 )
-
-// Update returns (sessRate, weekRate, ok). ok is false until there is enough
-// history (>= rateMinDt seconds) — callers keep the previous rate meanwhile.
-func (r *RateTracker) Update(now, sess, week float64) (float64, float64, bool) {
-	if n := len(r.history); n > 0 {
-		last := r.history[n-1]
-		if sess < last.sess-1 || week < last.week-1 {
-			r.history = r.history[:0] // a window reset; restart the measurement
-		}
-	}
-	r.history = append(r.history, rateSample{now, sess, week})
-	if len(r.history) > rateMaxLen {
-		r.history = r.history[len(r.history)-rateMaxLen:]
-	}
-	// Base the rate on the oldest sample still inside the window, so a burst is
-	// smoothed over ~15 min. But when the poll gap is itself longer than the
-	// window (slow/manual refresh, or a grown backoff interval), that leaves only
-	// the just-added sample in range — measuring over dt=0 would wrongly read 0.
-	// Fall back to the previous sample so we always span at least the last gap.
-	cutoff := now - rateWindow
-	n := len(r.history)
-	base := r.history[n-1]
-	if n >= 2 {
-		base = r.history[n-2]
-		for _, s := range r.history[:n-1] {
-			if s.t >= cutoff {
-				base = s
-				break
-			}
-		}
-	}
-	dt := now - base.t
-	if dt < rateMinDt {
-		return 0, 0, false
-	}
-	r.lastDt = dt
-	return math.Max(0, (sess-base.sess)/dt), math.Max(0, (week-base.week)/dt), true
-}
