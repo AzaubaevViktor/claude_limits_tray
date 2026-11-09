@@ -457,7 +457,10 @@ const (
 	// pairedChartWidth is what every menu image is drawn at. It also sets how
 	// wide the dropdown gets: macOS sizes the menu to its widest item, so the
 	// text rows are kept shorter than this and the charts span the full width.
-	pairedChartWidth  = 520.0
+	// Not quite the full width, in fact — a menu holding any submenu reserves a
+	// trailing column for the arrows plus the item's own inset (~50pt measured),
+	// and an image cannot be drawn into it. The images carry the rest.
+	pairedChartWidth  = 570.0
 	pairedChartHeight = 72.0
 )
 
