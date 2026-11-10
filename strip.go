@@ -111,22 +111,22 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 	b.WriteString(fmt.Sprintf(
 		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="%.1f" font-weight="700" fill="%s">%s</text>`,
 		svgTextEscape.Replace(countdown), timeX, y+1, stripCountdownSize, svgRGB(chartPalette.Text), svgTextEscape.Replace(countdown)))
-	// The weekday and clock of the reset trail the countdown, right-aligned
-	// against the speed bar. The countdown says how long is left, this says
-	// until when — adding "6d 23h" to a wristwatch is arithmetic the row can do
-	// once. The column is only as wide as the countdown leaves it, so the stamp
-	// takes the largest size that still clears it (see stripStampSizes).
+	// The weekday and clock of the reset follow the countdown: it says how long
+	// is left, this says until when — adding "6d 23h" to a wristwatch is
+	// arithmetic the row can do once. It is centred in whatever the countdown
+	// leaves between itself and the speed bar, rather than hugging either, and
+	// takes the largest size that still fits there (see stripStampSizes).
 	barX := x + width*stripBarAt
-	stampRight := barX - 5
 	if clock := fmtResetClockCompact(now, now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
-		avail := stampRight - (timeX + textWidth(countdown, stripCountdownSize) + 4)
+		gapLeft := timeX + textWidth(countdown, stripCountdownSize) + 4
+		gapRight := barX - 5
 		for _, size := range stripStampSizes {
-			if textWidth(clock, size) > avail && size != stripStampSizes[len(stripStampSizes)-1] {
+			if textWidth(clock, size) > gapRight-gapLeft && size != stripStampSizes[len(stripStampSizes)-1] {
 				continue
 			}
 			b.WriteString(fmt.Sprintf(
-				`<text data-strip-clock="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="%.1f" font-weight="600" fill="%s">%s</text>`,
-				svgTextEscape.Replace(clock), stampRight, y+1, size, svgRGB(chartPalette.Dim), svgTextEscape.Replace(clock)))
+				`<text data-strip-clock="%s" x="%.2f" y="%.2f" text-anchor="middle" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="%.1f" font-weight="600" fill="%s">%s</text>`,
+				svgTextEscape.Replace(clock), (gapLeft+gapRight)/2, y+1, size, svgRGB(chartPalette.Dim), svgTextEscape.Replace(clock)))
 			break
 		}
 	}

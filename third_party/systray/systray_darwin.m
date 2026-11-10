@@ -50,6 +50,53 @@ withParentMenuId: (int)theParentMenuId
 }
 @end
 
+// gChartViewWidth is how wide the last laid-out ChartView was allowed to be:
+// the width of the menu-item row it sits in, less wherever AppKit put its left
+// edge. A standard menu-item image can never reach the row's right edge — the
+// menu reserves a trailing column for submenu arrows and key equivalents — so
+// wide artwork is handed to a view instead, and the Go side re-renders it at
+// the width this reports (see menuImageViewWidth). It is written on the main
+// thread during layout and read from Go; a torn double would only cost one
+// redraw at the wrong width, which the next layout corrects.
+static double gChartViewWidth = 0;
+
+// ChartView draws one image across a whole menu row.
+@interface ChartView : NSView
+@property (nonatomic, strong) NSImage* chart;
+@end
+
+@implementation ChartView
+- (void) drawRect:(NSRect)dirtyRect {
+  if (self.chart == nil) {
+    return;
+  }
+  [self.chart drawInRect:self.bounds
+                fromRect:NSZeroRect
+               operation:NSCompositingOperationSourceOver
+                fraction:1.0];
+}
+
+- (void) measureRow {
+  NSView* row = self.superview;
+  double w = row != nil
+    ? row.bounds.size.width - self.frame.origin.x
+    : self.frame.size.width;
+  if (w > 0) {
+    gChartViewWidth = w;
+  }
+}
+
+- (void) viewDidMoveToSuperview {
+  [super viewDidMoveToSuperview];
+  [self measureRow];
+}
+
+- (void) setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+  [self measureRow];
+}
+@end
+
 @interface AppDelegate: NSObject <NSApplicationDelegate>
   - (void) add_or_update_menu_item:(MenuItem*) item;
   - (IBAction)menuHandler:(id)sender;
@@ -248,6 +295,31 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
   menuItem.image = image;
 }
 
+- (void) setMenuItemImageView:(NSArray*)args {
+  NSImage* image = [args objectAtIndex:0];
+  NSNumber* menuId = [args objectAtIndex:1];
+  CGFloat w = [[args objectAtIndex:2] doubleValue];
+  CGFloat h = [[args objectAtIndex:3] doubleValue];
+
+  NSMenuItem* menuItem = find_menu_item(menu, menuId);
+  if (menuItem == NULL) {
+    return;
+  }
+  ChartView* view = (ChartView*)menuItem.view;
+  if (![view isKindOfClass:[ChartView class]]) {
+    view = [[ChartView alloc] initWithFrame:NSMakeRect(0, 0, w, h)];
+    view.autoresizingMask = NSViewWidthSizable;
+    menuItem.image = nil; // the view draws it now; both would stack
+    menuItem.view = view;
+  }
+  view.chart = image;
+  NSRect frame = view.frame;
+  if (fabs(frame.size.width - w) > 0.5 || fabs(frame.size.height - h) > 0.5) {
+    [view setFrameSize:NSMakeSize(w, h)];
+  }
+  [view setNeedsDisplay:YES];
+}
+
 - (void) show_menu_item:(NSNumber*) menuId
 {
   NSMenuItem* menuItem = find_menu_item(menu, menuId);
@@ -389,6 +461,32 @@ void setMenuItemIconSize(const char* iconBytes, int length, int menuId, double w
     NSNumber *mId = [NSNumber numberWithInt:menuId];
     runInMainThread(@selector(setMenuItemIcon:), @[image, (id)mId]);
   }
+}
+
+// setMenuItemImageView hands a menu item's whole row over to the image: the
+// row's standard metrics (leading image inset, trailing arrow column) no
+// longer box the artwork in. Pair it with menuImageViewWidth to render at the
+// width the row actually grants.
+void setMenuItemImageView(const char* iconBytes, int length, int menuId, double width, double height) {
+  @autoreleasepool {
+    NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    if (image == nil) {
+      return;
+    }
+    CGFloat w = width > 0 ? (CGFloat)width : 16;
+    CGFloat h = height > 0 ? (CGFloat)height : 16;
+    [image setSize:NSMakeSize(w, h)];
+    runInMainThread(@selector(setMenuItemImageView:),
+                    @[image, [NSNumber numberWithInt:menuId],
+                      [NSNumber numberWithDouble:w], [NSNumber numberWithDouble:h]]);
+  }
+}
+
+// menuImageViewWidth is the width the last laid-out chart row offered, or 0
+// before the menu has ever been opened.
+double menuImageViewWidth(void) {
+  return gChartViewWidth;
 }
 
 void setTitle(char* ctitle) {

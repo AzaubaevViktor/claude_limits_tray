@@ -904,6 +904,14 @@ func (item *MenuItem) SetIconSize(iconBytes []byte, width, height float64) {
 	item.SetIcon(iconBytes)
 }
 
+// SetImageView falls back to the ordinary menu icon on Windows.
+func (item *MenuItem) SetImageView(iconBytes []byte, width, height float64) {
+	item.SetIcon(iconBytes)
+}
+
+// MenuImageWidth has no measured row width to report on Windows.
+func MenuImageWidth() float64 { return 0 }
+
 // SetTooltip sets the systray tooltip to display on mouse hover of the tray icon,
 // only available on Mac and Windows.
 func SetTooltip(tooltip string) {

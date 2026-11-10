@@ -830,3 +830,27 @@ func TestDayCardPacesAgainstTheWeeklyWindow(t *testing.T) {
 		t.Fatalf("day labels should carry the weekday: %s", svg)
 	}
 }
+
+// The menu reports back how wide a chart row really is; the images follow it,
+// but only within reason — the two set each other's width, so an unbounded
+// loop would widen the dropdown a step at a time.
+func TestChartWidthFollowsTheMenuWithinBounds(t *testing.T) {
+	defer func(w float64, n int) { pairedChartWidth, chartWidthSets = w, n }(pairedChartWidth, chartWidthSets)
+	pairedChartWidth, chartWidthSets = 570, 0
+
+	if adoptMenuImageWidth(0) || adoptMenuImageWidth(2000) || adoptMenuImageWidth(570.4) {
+		t.Fatal("a missing, absurd or unchanged width should be ignored")
+	}
+	if pairedChartWidth != 570 {
+		t.Fatalf("width moved to %v on a rejected measurement", pairedChartWidth)
+	}
+	if !adoptMenuImageWidth(624) || pairedChartWidth != 624 {
+		t.Fatalf("a real measurement should be adopted, width is %v", pairedChartWidth)
+	}
+	for i := 0; i < 5; i++ {
+		adoptMenuImageWidth(pairedChartWidth + 20) // a row that always wants more
+	}
+	if chartWidthSets > maxChartWidthSet || pairedChartWidth > 624+20*maxChartWidthSet {
+		t.Fatalf("runaway growth: %v after %d corrections", pairedChartWidth, chartWidthSets)
+	}
+}

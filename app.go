@@ -279,7 +279,9 @@ func (a *App) tickLoop() {
 		}
 		// Light/dark can flip under us (the user, or the system at sunset), and
 		// the images already on screen keep their old palette until redrawn.
-		if refreshChartTheme() {
+		// The menu also reports back how wide a chart row really is once it has
+		// been laid out, which is the only way to know what "full width" is.
+		if refreshChartTheme() || adoptMenuImageWidth(systray.MenuImageWidth()) {
 			a.renderHistory()
 		}
 		a.updateStatus()
@@ -1496,7 +1498,7 @@ func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPan
 		return
 	}
 	it.SetTitle("")
-	it.SetIconSize(renderPairedBurnChart(left, right, a.workStart, a.workEnd), pairedChartWidth, pairedChartHeight)
+	it.SetImageView(renderPairedBurnChart(left, right, a.workStart, a.workEnd), pairedChartWidth, pairedChartHeight)
 }
 
 // renderHistory keeps the two providers visible as peer cards at the top of
@@ -1510,7 +1512,7 @@ func (a *App) renderHistory() {
 	if a.histStrip != nil {
 		svg, h := renderQuotaStrip(a.claudeStripSide(now), a.codexStripSide(now), time.Unix(now, 0))
 		a.histStrip.SetTitle("")
-		a.histStrip.SetIconSize(svg, pairedChartWidth, h)
+		a.histStrip.SetImageView(svg, pairedChartWidth, h)
 	}
 	claudeShort, claudeLong := a.claudeHistoryWindows()
 	claudeFocus := claudeShort

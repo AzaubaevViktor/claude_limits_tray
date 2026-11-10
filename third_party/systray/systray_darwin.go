@@ -73,6 +73,26 @@ func (item *MenuItem) SetIconSize(iconBytes []byte, width, height float64) {
 	C.setMenuItemIconSize(cstr, (C.int)(len(iconBytes)), C.int(item.id), C.double(width), C.double(height), false)
 }
 
+// SetImageView draws wide artwork across the item's whole row instead of as a
+// standard menu-item image. A menu that holds any submenu reserves a trailing
+// column for the arrows, and an image is inset from the leading edge besides,
+// so a chart set with SetIconSize can never reach either edge of the dropdown.
+// A row handed to a view has no such margins.
+func (item *MenuItem) SetImageView(iconBytes []byte, width, height float64) {
+	if len(iconBytes) == 0 {
+		return
+	}
+	cstr := (*C.char)(unsafe.Pointer(&iconBytes[0]))
+	C.setMenuItemImageView(cstr, (C.int)(len(iconBytes)), C.int(item.id), C.double(width), C.double(height))
+}
+
+// MenuImageWidth is how wide a row set with SetImageView may draw, measured
+// the last time one was laid out; 0 before the menu has ever been opened.
+// Render at this width to fill the dropdown exactly.
+func MenuImageWidth() float64 {
+	return float64(C.menuImageViewWidth())
+}
+
 // SetTemplateIcon sets the icon of a menu item as a template icon (on macOS). On Windows, it
 // falls back to the regular icon bytes and on Linux it does nothing.
 // templateIconBytes and regularIconBytes should be the content of .ico for windows and

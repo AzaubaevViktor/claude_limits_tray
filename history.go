@@ -453,16 +453,44 @@ func trendColor(trend float64) [3]int {
 	return lerpColor(trendBlue, dialPurple, (strength-0.5)/0.5)
 }
 
+const pairedChartHeight = 72.0
+
+// pairedChartWidth is what every menu image is drawn at, and so how wide the
+// dropdown gets: macOS sizes the menu to its widest item, and the text rows are
+// kept shorter than this. It starts at the width that fits comfortably and is
+// then corrected to the width a chart row actually offers, which is only known
+// once the menu has been laid out — a row drawn as a plain menu-item image is
+// inset at the leading edge and stops short of the trailing submenu-arrow
+// column, so the rows are handed to views instead (see adoptMenuImageWidth).
+var pairedChartWidth = 570.0
+
+// The bounds a measured row width is accepted within, and how many times it
+// may be acted on. The measurement is a feedback loop — the images set the
+// menu's width, the menu sets theirs — so a row that reports back more than it
+// was given would otherwise widen the dropdown a little every second. In
+// practice it converges at once (a view-backed row is exactly as wide as the
+// menu it sized); these only bound what happens if it doesn't.
 const (
-	// pairedChartWidth is what every menu image is drawn at. It also sets how
-	// wide the dropdown gets: macOS sizes the menu to its widest item, so the
-	// text rows are kept shorter than this and the charts span the full width.
-	// Not quite the full width, in fact — a menu holding any submenu reserves a
-	// trailing column for the arrows plus the item's own inset (~50pt measured),
-	// and an image cannot be drawn into it. The images carry the rest.
-	pairedChartWidth  = 570.0
-	pairedChartHeight = 72.0
+	minChartWidth    = 420.0
+	maxChartWidth    = 760.0
+	maxChartWidthSet = 3
 )
+
+var chartWidthSets int
+
+// adoptMenuImageWidth takes the row width measured by the menu and reports
+// whether the images need redrawing at it.
+func adoptMenuImageWidth(w float64) bool {
+	if chartWidthSets >= maxChartWidthSet || w < minChartWidth || w > maxChartWidth {
+		return false
+	}
+	if math.Abs(w-pairedChartWidth) < 1 {
+		return false
+	}
+	pairedChartWidth = w
+	chartWidthSets++
+	return true
+}
 
 // chartGradientDefs are the two scales shared by every menu image: the burn
 // speed ramp (idle → affordable → too fast) and the acceleration ramp.

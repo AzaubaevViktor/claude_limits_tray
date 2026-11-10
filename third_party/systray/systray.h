@@ -14,6 +14,8 @@ double mainScreenHeight(void);
 bool isDarkMode(void);
 void setMenuItemIcon(const char* iconBytes, int length, int menuId, bool template);
 void setMenuItemIconSize(const char* iconBytes, int length, int menuId, double width, double height, bool template);
+void setMenuItemImageView(const char* iconBytes, int length, int menuId, double width, double height);
+double menuImageViewWidth(void);
 void setTitle(char* title);
 void setTooltip(char* tooltip);
 void add_or_update_menu_item(int menuId, int parentMenuId, char* title, char* tooltip, short disabled, short checked, short isCheckable);

@@ -17,6 +17,13 @@ func (item *MenuItem) SetIcon(iconBytes []byte) {
 func (item *MenuItem) SetIconSize(iconBytes []byte, width, height float64) {
 }
 
+// SetImageView is a no-op on Linux, matching SetIcon.
+func (item *MenuItem) SetImageView(iconBytes []byte, width, height float64) {
+}
+
+// MenuImageWidth has no measured row width to report on Linux.
+func MenuImageWidth() float64 { return 0 }
+
 // SetTemplateIcon sets the icon of a menu item as a template icon (on macOS). On Windows, it
 // falls back to the regular icon bytes and on Linux it does nothing.
 // templateIconBytes and regularIconBytes should be the content of .ico for windows and
