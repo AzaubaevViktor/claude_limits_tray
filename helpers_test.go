@@ -19,17 +19,33 @@ func TestFmtResetClock(t *testing.T) {
 		t.Errorf("unknown reset should be empty, got %q", got)
 	}
 	now := time.Now()
-	// Same day -> bare clock.
+	// Same day still carries the weekday: the point of the stamp is naming the
+	// day, and "today" is a day like any other.
 	today := time.Date(now.Year(), now.Month(), now.Day(), 23, 30, 0, 0, now.Location())
 	if now.Hour() < 23 { // only meaningful when 23:30 is still ahead today
-		if got := fmtResetClock(today, true); got != "23:30" {
-			t.Errorf("same-day should be bare clock, got %q", got)
+		if got := fmtResetClock(today, true); got != today.Format("Mon 15:04") {
+			t.Errorf("same-day = %q, want %q", got, today.Format("Mon 15:04"))
 		}
 	}
 	// A few days out -> weekday-prefixed.
 	soon := now.Add(3 * 24 * time.Hour)
 	if got := fmtResetClock(soon, true); got != soon.Format("Mon 15:04") {
 		t.Errorf("within-week reset = %q, want %q", got, soon.Format("Mon 15:04"))
+	}
+	// Past a week the weekday alone no longer pins the day down: the long form
+	// spells the date out, the compact one drops the weekday for it.
+	far := now.Add(20 * 24 * time.Hour)
+	if got := fmtResetClock(far, true); got != far.Format("Mon Jan 2 15:04") {
+		t.Errorf("far reset = %q, want %q", got, far.Format("Mon Jan 2 15:04"))
+	}
+	if got := fmtResetClockCompact(now, far, true); got != far.Format("Jan 2 15:04") {
+		t.Errorf("far compact reset = %q, want %q", got, far.Format("Jan 2 15:04"))
+	}
+	if got := fmtResetClockCompact(now, soon, true); got != soon.Format("Mon 15:04") {
+		t.Errorf("near compact reset = %q, want %q", got, soon.Format("Mon 15:04"))
+	}
+	if got := fmtResetClockCompact(now, now, false); got != "" {
+		t.Errorf("unknown compact reset should be empty, got %q", got)
 	}
 	// withClock appends only when known.
 	if got := withClock("2h", soon, true); got != "2h · "+soon.Format("Mon 15:04") {

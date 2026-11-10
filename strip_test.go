@@ -59,6 +59,17 @@ func TestQuotaStripShowsEveryWindowsCountdownAndSpeed(t *testing.T) {
 	if !strings.Contains(out, `data-strip-reset="2h00m"`) || !strings.Contains(out, `data-strip-reset="5d 13h"`) {
 		t.Fatalf("resets should be spelled out per window: %s", out)
 	}
+	// Every countdown is paired with the day and time it lands on, stamped
+	// from the moment the strip was rendered for.
+	for _, want := range []string{
+		`data-strip-clock="Thu 14:00"`, // 2h from Thursday noon
+		`data-strip-clock="Wed 01:00"`, // 5d 13h out, still inside the week
+		`data-strip-clock="Thu 13:00"`, // the credit balance's own reset
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing reset stamp %s: %s", want, out)
+		}
+	}
 	// 60% left over the two working hours to a 14:00 reset affords 30%/h, so a
 	// 10%/h reading is a third of it; the idle 7d window has nothing measured.
 	if !strings.Contains(out, `data-speed-ratio="0.333"`) {

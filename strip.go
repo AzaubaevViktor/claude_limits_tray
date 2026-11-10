@@ -21,7 +21,13 @@ const (
 	stripBottom   = 8.0  // below the last row's baseline
 	stripTimeX    = 30.0 // countdown column, from the side's left edge
 	stripBarAt    = 0.44 // speed bar column, as a share of the side's width
+
+	stripCountdownSize = 13.0 // the row's headline: time left in the window
 )
+
+// stripStampSizes are the sizes the reset stamp is tried at, largest first; the
+// last one is used even if it overruns, since a cramped stamp still beats none.
+var stripStampSizes = []float64{7.5, 7, 6.5, 6}
 
 // stripHeight is the image height for the taller of the two sides.
 func stripHeight(rows int) float64 {
@@ -103,16 +109,26 @@ func writeStripRow(b *strings.Builder, row stripRow, x, width, y float64, now ti
 	countdown := fmtRemaining(left, resetKnown)
 	timeX := x + stripTimeX
 	b.WriteString(fmt.Sprintf(
-		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="%s">%s</text>`,
-		svgTextEscape.Replace(countdown), timeX, y+1, svgRGB(chartPalette.Text), svgTextEscape.Replace(countdown)))
-	// The wall-clock moment trails the countdown, right-aligned against the
-	// speed bar: a long countdown ("5d 13h") only ever pairs with a weekday
-	// clock, a short one with a bare time, so the two never meet.
+		`<text data-strip-reset="%s" x="%.2f" y="%.2f" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="%.1f" font-weight="700" fill="%s">%s</text>`,
+		svgTextEscape.Replace(countdown), timeX, y+1, stripCountdownSize, svgRGB(chartPalette.Text), svgTextEscape.Replace(countdown)))
+	// The weekday and clock of the reset trail the countdown, right-aligned
+	// against the speed bar. The countdown says how long is left, this says
+	// until when — adding "6d 23h" to a wristwatch is arithmetic the row can do
+	// once. The column is only as wide as the countdown leaves it, so the stamp
+	// takes the largest size that still clears it (see stripStampSizes).
 	barX := x + width*stripBarAt
-	if clock := fmtResetClock(now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
-		b.WriteString(fmt.Sprintf(
-			`<text x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="6" font-weight="600" fill="%s">%s</text>`,
-			barX-5, y+1, svgRGB(chartPalette.Dim), svgTextEscape.Replace(clock)))
+	stampRight := barX - 5
+	if clock := fmtResetClockCompact(now, now.Add(time.Duration(left)*time.Second), resetKnown); clock != "" {
+		avail := stampRight - (timeX + textWidth(countdown, stripCountdownSize) + 4)
+		for _, size := range stripStampSizes {
+			if textWidth(clock, size) > avail && size != stripStampSizes[len(stripStampSizes)-1] {
+				continue
+			}
+			b.WriteString(fmt.Sprintf(
+				`<text data-strip-clock="%s" x="%.2f" y="%.2f" text-anchor="end" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="%.1f" font-weight="600" fill="%s">%s</text>`,
+				svgTextEscape.Replace(clock), stampRight, y+1, size, svgRGB(chartPalette.Dim), svgTextEscape.Replace(clock)))
+			break
+		}
 	}
 
 	ratio, ratioKnown := stripSpeed(panel)

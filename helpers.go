@@ -185,29 +185,37 @@ func fmtRemaining(seconds float64, known bool) string {
 	return fmt.Sprintf("%dd %dh", d, h)
 }
 
-// fmtResetClock formats an absolute reset moment as a short local clock time:
-// bare "15:04" when it lands today, "Mon 15:04" within the coming week, and
-// "Jan 2 15:04" beyond. Empty when the reset time isn't known.
+// fmtResetClock formats an absolute reset moment as a weekday and a local
+// clock time — "Mon 15:04" — so the moment can be read off directly instead of
+// being added to the countdown beside it. The weekday is kept even for a reset
+// later today: the countdown already says "soon", what it doesn't say is which
+// day's evening that is. Beyond a week the date is spelled out as well
+// ("Mon Jan 2 15:04"), where the weekday alone would be ambiguous. Empty when
+// the reset time isn't known.
 func fmtResetClock(t time.Time, known bool) string {
+	return fmtResetStamp(time.Now(), t, known, "Mon Jan 2 15:04")
+}
+
+// fmtResetClockCompact is the same stamp for a column too narrow for the long
+// form: past a week the weekday is dropped rather than the date, since by then
+// "Mon" alone no longer pins the moment down. ref is what "within a week" is
+// measured from, so an image rendered for a given moment stamps itself from
+// that moment rather than from the wall clock.
+func fmtResetClockCompact(ref, t time.Time, known bool) string {
+	return fmtResetStamp(ref, t, known, "Jan 2 15:04")
+}
+
+// fmtResetStamp is the shared body: the weekday and clock within a week of
+// ref, otherwise the caller's longer layout.
+func fmtResetStamp(ref, t time.Time, known bool, far string) string {
 	if !known {
 		return ""
 	}
-	now := time.Now()
-	t = t.In(now.Location())
-	switch {
-	case sameDay(t, now):
-		return t.Format("15:04")
-	case t.Sub(now) < 6*24*time.Hour:
+	t = t.In(ref.Location())
+	if t.Sub(ref) < 6*24*time.Hour {
 		return t.Format("Mon 15:04")
-	default:
-		return t.Format("Jan 2 15:04")
 	}
-}
-
-func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-	return ay == by && am == bm && ad == bd
+	return t.Format(far)
 }
 
 // withClock appends the absolute reset moment to a "resets in <dur>" fragment,
