@@ -54,17 +54,21 @@ type stripSide struct {
 // image height it chose for the row count.
 func renderQuotaStrip(left, right stripSide, now time.Time) ([]byte, float64) {
 	const gap = 8.0
-	sideW := (pairedChartWidth - gap) / 2
+	sideW := (pairedChartWidth - 2*chartMargin - gap) / 2
 	h := stripHeight(max(len(left.Rows), len(right.Rows)))
+	imgH := h + 2*chartMargin
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
-		pairedChartWidth, h, pairedChartWidth, h))
+		pairedChartWidth, imgH, pairedChartWidth, imgH))
 	b.WriteString(chartGradientDefs)
+	// Both sides are drawn card-relative and shifted into the margin together,
+	// the same way the burn cards are (see renderPairedBurnChart).
+	b.WriteString(fmt.Sprintf(`<g transform="translate(%.2f,%.2f)">`, chartMargin, chartMargin))
 	writeStripSide(&b, left, 0, sideW, h, now)
 	writeStripSide(&b, right, sideW+gap, sideW, h, now)
-	b.WriteString(`</svg>`)
-	return []byte(b.String()), h
+	b.WriteString(`</g></svg>`)
+	return []byte(b.String()), imgH
 }
 
 func writeStripSide(b *strings.Builder, side stripSide, x, width, height float64, now time.Time) {

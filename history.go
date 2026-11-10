@@ -453,7 +453,19 @@ func trendColor(trend float64) [3]int {
 	return lerpColor(trendBlue, dialPurple, (strength-0.5)/0.5)
 }
 
-const pairedChartHeight = 72.0
+const (
+	pairedChartHeight = 72.0
+
+	// chartMargin is the breathing room drawn around every card — about half a
+	// character — so the cards stop short of the dropdown's edges and of each
+	// other now that the rows span the menu's full width. It is half the gap
+	// between the two provider cards, which keeps them reading as a pair.
+	chartMargin = 4.0
+)
+
+// pairedChartImageHeight is the menu row a paired card needs: the card plus
+// its margin above and below.
+func pairedChartImageHeight() float64 { return pairedChartHeight + 2*chartMargin }
 
 // pairedChartWidth is what every menu image is drawn at, and so how wide the
 // dropdown gets: macOS sizes the menu to its widest item, and the text rows are
@@ -795,17 +807,21 @@ func abs(v int) int {
 // stays put while the reference curve climbs toward each reset.
 func renderPairedBurnChart(left, right burnChartPanel, ws, we int) []byte {
 	const gap = 8.0
-	panelW := (pairedChartWidth - gap) / 2
+	h := pairedChartImageHeight()
+	panelW := (pairedChartWidth - 2*chartMargin - gap) / 2
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" viewBox="0 0 %.0f %.0f">`,
-		pairedChartWidth, pairedChartHeight, pairedChartWidth, pairedChartHeight))
+		pairedChartWidth, h, pairedChartWidth, h))
 	b.WriteString(chartGradientDefs)
+	// The cards are laid out as if the margin weren't there and then shifted
+	// into it, so every panel coordinate below stays card-relative.
+	b.WriteString(fmt.Sprintf(`<g transform="translate(%.2f,%.2f)">`, chartMargin, chartMargin))
 	left.WorkStart, left.WorkEnd = ws, we
 	right.WorkStart, right.WorkEnd = ws, we
 	writeBurnPanel(&b, left, 0, panelW, ws, we)
 	writeBurnPanel(&b, right, panelW+gap, panelW, ws, we)
-	b.WriteString(`</svg>`)
+	b.WriteString(`</g></svg>`)
 	return []byte(b.String())
 }
 

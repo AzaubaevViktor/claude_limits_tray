@@ -1498,7 +1498,7 @@ func (a *App) setPairedHistoryRow(it *systray.MenuItem, left, right burnChartPan
 		return
 	}
 	it.SetTitle("")
-	it.SetImageView(renderPairedBurnChart(left, right, a.workStart, a.workEnd), pairedChartWidth, pairedChartHeight)
+	it.SetImageView(renderPairedBurnChart(left, right, a.workStart, a.workEnd), pairedChartWidth, pairedChartImageHeight())
 }
 
 // renderHistory keeps the two providers visible as peer cards at the top of

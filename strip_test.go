@@ -43,7 +43,8 @@ func TestQuotaStripShowsEveryWindowsCountdownAndSpeed(t *testing.T) {
 	if err := xml.Unmarshal(svg, &root); err != nil {
 		t.Fatalf("strip is not valid SVG: %v", err)
 	}
-	if want := stripHeight(3); h != want {
+	// The row is the card plus the margin drawn above and below it.
+	if want := stripHeight(3) + 2*chartMargin; h != want {
 		t.Fatalf("height %v, want the three-row height %v", h, want)
 	}
 	if !strings.Contains(out, fmt.Sprintf(`width="%.0f" height="%.0f"`, pairedChartWidth, h)) {
@@ -92,8 +93,8 @@ func TestQuotaStripShowsEveryWindowsCountdownAndSpeed(t *testing.T) {
 func TestQuotaStripStaysOneRowTallWhenNothingIsKnown(t *testing.T) {
 	now := time.Now()
 	svg, h := renderQuotaStrip(stripSide{Provider: "Claude"}, stripSide{Provider: "Codex"}, now)
-	if h != stripHeight(1) {
-		t.Fatalf("empty strip height %v, want %v", h, stripHeight(1))
+	if want := stripHeight(1) + 2*chartMargin; h != want {
+		t.Fatalf("empty strip height %v, want %v", h, want)
 	}
 	if strings.Contains(string(svg), "data-strip-row") {
 		t.Fatal("an unknown provider should contribute no rows")
