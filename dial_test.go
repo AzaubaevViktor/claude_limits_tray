@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -271,5 +272,39 @@ func TestLimitPaceProjectsOverWorkingHours(t *testing.T) {
 	work.PaceLeftSecs = 7*workDay - 7.5*3600
 	if got := limitPace(work, 0.94); got != pacePurple {
 		t.Fatalf("working-hours pace = %v, want purple", got)
+	}
+}
+
+func TestResetDotsFillCornersClockwiseFromTopLeft(t *testing.T) {
+	in := dialRenderInput{limits: blankLimits, resets: resetDots(1, 1)}
+	svg := string(renderDialSVG([]dialRenderInput{{limits: blankLimits}, in}))
+	// Second dial, so the box starts at x = 18 + dialGap.
+	for _, want := range []string{
+		`<circle data-reset="0" cx="21.35" cy="1.35" r="1.15" fill="rgb(10,132,255)"/>`,
+		`<circle data-reset="1" cx="36.65" cy="1.35" r="1.15" fill="rgb(191,64,255)"/>`,
+	} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("missing %s in %s", want, svg)
+		}
+	}
+	if strings.Count(svg, "data-reset=") != 2 {
+		t.Errorf("want 2 dots: %s", svg)
+	}
+
+	six := string(renderDialSVG([]dialRenderInput{{limits: blankLimits, resets: resetDots(6, 0)}}))
+	if strings.Count(six, "data-reset=") != maxResetDots {
+		t.Errorf("want the dots capped at %d: %s", maxResetDots, six)
+	}
+	for _, want := range []string{`data-reset="2" cx="16.65" cy="16.65"`, `data-reset="3" cx="1.35" cy="16.65"`} {
+		if !strings.Contains(six, want) {
+			t.Errorf("missing %s in %s", want, six)
+		}
+	}
+	// The dots must clear the outermost ring.
+	if reach := math.Hypot(dialCX-resetDotInset, dialCY-resetDotInset) - resetDotR; reach < creditR+creditSW/2 {
+		t.Errorf("corner dot reaches in to %.2f, inside the credits ring", reach)
+	}
+	if resetDotsKey(resetDots(1, 1)) == resetDotsKey(resetDots(2, 0)) {
+		t.Error("cache key must tell dot kinds apart")
 	}
 }

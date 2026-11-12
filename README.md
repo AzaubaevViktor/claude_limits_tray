@@ -54,6 +54,10 @@ dial has two concentric rings, split left/right:
 - **Centre dot** — the worst known outer-ring pace category. An unknown/learning
   window does not mask a known warning from the other window; the dot is grey
   only while both windows are still unknown.
+- **Corner dots** — one dot per limit reset you hold, filling the corners of
+  that dial's box from the top-left clockwise (four at most; the menu's
+  **Resets available** row has the full count). **Blue** is a general reset,
+  **purple** one that refills a single model's limit (e.g. Fable).
 - **Single-limit mode** — when only **one** window is in play (Codex handing
   out only a weekly limit, or a Claude account whose usage response carries
   `five_hour: null` and no session limit) the dial auto-collapses to **one big

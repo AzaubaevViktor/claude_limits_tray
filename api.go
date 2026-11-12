@@ -725,38 +725,64 @@ func claudeResetsText(u *Usage) string {
 	return "Resets available: —"
 }
 
-func claudeGrantsText(u *Usage) (string, bool) {
+// resetKind is the resets of one kind an account holds: "general" ones, or
+// those of a model named by Name. General reports which it is.
+type resetKind struct {
+	Name    string
+	Count   int
+	General bool
+}
+
+// resetKinds reads the limit-reset block: the resets left, grouped by kind in
+// the order the grants list them. ok is false when the response carries no
+// block (not asked for, or not offered to this client).
+func (u *Usage) resetKinds() (kinds []resetKind, ok bool) {
 	var block struct {
 		Grants []resetGrant `json:"grants"`
 	}
+	if u == nil {
+		return nil, false
+	}
 	raw := strings.TrimSpace(string(u.LimitResets))
 	if raw == "" || raw == "null" || json.Unmarshal(u.LimitResets, &block) != nil {
-		return "", false
+		return nil, false
 	}
-	total := 0
-	var kinds []string
-	counts := map[string]int{}
 	for _, g := range block.Grants {
 		if g.ResetsLeft <= 0 {
 			continue
 		}
-		kind := "general"
+		k := resetKind{Name: "general", Count: g.ResetsLeft, General: true}
 		if !g.general() {
-			kind = u.scopedGrantName(g)
+			k.Name, k.General = u.scopedGrantName(g), false
 		}
-		if counts[kind] == 0 {
-			kinds = append(kinds, kind)
+		merged := false
+		for i := range kinds {
+			if kinds[i].General == k.General && kinds[i].Name == k.Name {
+				kinds[i].Count += k.Count
+				merged = true
+			}
 		}
-		counts[kind] += g.ResetsLeft
-		total += g.ResetsLeft
+		if !merged {
+			kinds = append(kinds, k)
+		}
 	}
-	// A block with no grants left still answers the question: zero.
-	if len(kinds) < 2 && counts["general"] == total {
-		return fmt.Sprintf("Resets available: %d", total), true
+	return kinds, true
+}
+
+func claudeGrantsText(u *Usage) (string, bool) {
+	kinds, ok := u.resetKinds()
+	if !ok {
+		return "", false
 	}
+	total := 0
 	parts := make([]string, 0, len(kinds))
 	for _, k := range kinds {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[k], k))
+		total += k.Count
+		parts = append(parts, fmt.Sprintf("%d %s", k.Count, k.Name))
+	}
+	// Only general resets (or none at all): the bare count says it all.
+	if len(kinds) == 0 || (len(kinds) == 1 && kinds[0].General) {
+		return fmt.Sprintf("Resets available: %d", total), true
 	}
 	return fmt.Sprintf("Resets available: %d  ·  %s", total, strings.Join(parts, ", ")), true
 }

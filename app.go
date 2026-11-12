@@ -1778,6 +1778,10 @@ func (a *App) renderIcon() {
 	now := time.Now()
 	ci, ck := a.errorOr(a.errorOn, "claude", a.claudeDial)
 	xi, xk := a.errorOr(a.codexErrorOn, "codex", a.codexDial)
+	// The resets held don't change with an error blink, so the corner dots
+	// stay put through it.
+	ci.resets, xi.resets = claudeResetDots(a.lastUsage), codexResetDots(a.lastCodex)
+	ck, xk = ck+resetDotsKey(ci.resets), xk+resetDotsKey(xi.resets)
 	if !a.errorOn {
 		ci.pulse, ck = withPulse(a.claudePulse, now, ck)
 	}
@@ -2333,6 +2337,28 @@ func codexPlanLabel(plan string) string {
 	default:
 		return plan
 	}
+}
+
+// claudeResetDots is the corner dots for Claude: general resets first, then
+// the model-scoped ones.
+func claudeResetDots(u *Usage) []resetDot {
+	kinds, _ := u.resetKinds()
+	general, scoped := 0, 0
+	for _, k := range kinds {
+		if k.General {
+			general += k.Count
+		} else {
+			scoped += k.Count
+		}
+	}
+	return resetDots(general, scoped)
+}
+
+func codexResetDots(u *CodexUsage) []resetDot {
+	if u == nil || !u.ResetCreditsKnown {
+		return nil
+	}
+	return resetDots(u.ResetCredits, 0)
 }
 
 func codexResetsText(u *CodexUsage) string {

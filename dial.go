@@ -320,6 +320,70 @@ type dialRenderInput struct {
 	credits creditRing
 	// pulse is the spend animation for this side; zero value draws nothing.
 	pulse pulseFrame
+	// resets is one corner dot per limit reset held, in drawing order.
+	resets []resetDot
+}
+
+// resetDot is one limit reset the account holds, drawn as a dot in a corner of
+// the dial's box. Scoped marks a reset that refills a single model's limit
+// rather than the whole plan's.
+type resetDot struct{ Scoped bool }
+
+// Corner dots: the dial is a circle in a square box, so the four corners are
+// free. Dots fill them from the top-left clockwise; a fifth reset and beyond
+// has no corner left and is only in the menu.
+const (
+	resetDotR     = 1.15
+	resetDotInset = 1.35 // dot centre, in from each edge of the box
+	maxResetDots  = 4
+)
+
+var dialResetBlue = [3]int{10, 132, 255} // a general reset; legible on light and dark bars
+
+// resetDots is n general resets followed by scoped model ones.
+func resetDots(general, scoped int) []resetDot {
+	dots := make([]resetDot, 0, general+scoped)
+	for i := 0; i < general; i++ {
+		dots = append(dots, resetDot{})
+	}
+	for i := 0; i < scoped; i++ {
+		dots = append(dots, resetDot{Scoped: true})
+	}
+	return dots
+}
+
+// resetDotsKey extends an icon cache key with the dots drawn.
+func resetDotsKey(dots []resetDot) string {
+	var b strings.Builder
+	b.WriteString("-r")
+	for i, d := range dots {
+		if i >= maxResetDots {
+			break
+		}
+		if d.Scoped {
+			b.WriteByte('s')
+		} else {
+			b.WriteByte('g')
+		}
+	}
+	return b.String()
+}
+
+func writeResetDots(b *strings.Builder, xoff float64, dots []resetDot) {
+	lo, hi := resetDotInset, 18-resetDotInset
+	corners := [maxResetDots][2]float64{{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}
+	for i, d := range dots {
+		if i >= maxResetDots {
+			break
+		}
+		c := dialResetBlue
+		if d.Scoped {
+			c = dialPurple
+		}
+		b.WriteString(fmt.Sprintf(
+			`<circle data-reset="%d" cx="%.2f" cy="%.2f" r="%.2f" fill="%s"/>`,
+			i, xoff+corners[i][0], corners[i][1], resetDotR, svgRGB(c)))
+	}
 }
 
 // dialViewWidth is the icon's width in dial units for n dials side by side.
@@ -340,7 +404,9 @@ func renderDialSVG(inputs []dialRenderInput) []byte {
 		`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %.2f 18">`,
 		iround(float64(pxSize)*width/18), pxSize, width))
 	for i, input := range inputs {
-		renderDialGroup(&b, input, float64(i)*(18+dialGap))
+		xoff := float64(i) * (18 + dialGap)
+		renderDialGroup(&b, input, xoff)
+		writeResetDots(&b, xoff, input.resets)
 	}
 	b.WriteString(`</svg>`)
 	return []byte(b.String())
