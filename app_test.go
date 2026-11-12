@@ -404,6 +404,45 @@ func TestClaudeHistoryWindowsFallBackToWeeklyWithoutSession(t *testing.T) {
 	}
 }
 
+func TestClaudeResetsTextGrants(t *testing.T) {
+	limits := `"limits":[{"kind":"weekly_all"},{"kind":"weekly_scoped","scope":{"model":{"display_name":"Fable"}}}]`
+	general := `{"label":"One full limit reset","resets_left":1,"clears":["seven_day","seven_day_overage_included"]}`
+	fable := `{"label":"New model launch: one Fable reset","resets_left":1,"clears":["seven_day_overage_included"]}`
+	spent := `{"label":"Used up","resets_left":0,"clears":["seven_day"]}`
+	usage := func(grants string) *Usage {
+		return parseUsage([]byte(`{"seven_day":{},` + limits + `,"cedar_ember":{"eligible":true,"grants":[` + grants + `]}}`))
+	}
+	for _, c := range []struct{ grants, want string }{
+		{general + "," + fable + "," + spent, "Resets available: 2  ·  1 general, 1 Fable"},
+		{general, "Resets available: 1"},
+		{fable, "Resets available: 1  ·  1 Fable"},
+		{spent, "Resets available: 0"},
+		{"", "Resets available: 0"},
+	} {
+		if got := claudeResetsText(usage(c.grants)); got != c.want {
+			t.Errorf("grants [%s] = %q, want %q", c.grants, got, c.want)
+		}
+	}
+	if got := claudeResetsText(parseUsage([]byte(`{"seven_day":{},"cedar_ember":null}`))); got != "Resets available: —" {
+		t.Errorf("null block = %q", got)
+	}
+}
+
+func TestInstalledCLIVersion(t *testing.T) {
+	dir := t.TempDir()
+	if got := installedCLIVersion(dir); got != fallbackCLIVer {
+		t.Fatalf("empty dir = %q", got)
+	}
+	for _, n := range []string{"2.1.9", "2.10.3", "2.9.40", "notes.txt", "1.2"} {
+		if err := os.WriteFile(filepath.Join(dir, n), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := installedCLIVersion(dir); got != "2.10.3" {
+		t.Fatalf("highest = %q", got)
+	}
+}
+
 func TestClaudeResetsText(t *testing.T) {
 	if got := claudeResetsText(parseUsage([]byte(`{"five_hour":{},"seven_day":{}}`))); got != "Resets available: —" {
 		t.Fatalf("no field = %q", got)

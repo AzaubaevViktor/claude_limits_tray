@@ -33,7 +33,7 @@ func (e *APIError) Error() string { return e.Msg }
 const (
 	apiBase           = "https://api.anthropic.com"
 	keychain          = "Claude Code-credentials"
-	userAgent         = "claude-cli/2.1.263 (external, cli)"
+	fallbackCLIVer    = "2.1.322"
 	oauthBeta         = "oauth-2025-04-20"
 	claudeOAuthClient = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeTokenURL    = "https://platform.claude.com/v1/oauth/token"
@@ -319,7 +319,7 @@ func (c *Client) postToken(url string, body []byte) (int, []byte, error) {
 	}
 	cmd := exec.Command("curl", "-sS", "--max-time", "15", "-X", "POST",
 		"-H", "Content-Type: application/json",
-		"-H", "User-Agent: "+userAgent,
+		"-H", "User-Agent: "+userAgent(),
 		"-w", metaMark+"%{http_code}",
 		"--data-binary", "@-", url)
 	cmd.Stdin = bytes.NewReader(body)
@@ -537,7 +537,7 @@ func (c *Client) do(path, tok string) ([]byte, error) {
 	out, err := exec.Command("curl", "-sS", "--max-time", "15",
 		"-H", "Authorization: Bearer "+tok,
 		"-H", "anthropic-beta: "+oauthBeta,
-		"-H", "User-Agent: "+userAgent,
+		"-H", "User-Agent: "+userAgent(),
 		"-H", "Accept: application/json",
 		"-w", wfmt, apiBase+path).Output()
 	took := time.Since(start).Round(time.Millisecond)
@@ -609,13 +609,107 @@ type Usage struct {
 	// Rate-limit reset credits, if Claude ever exposes them the way Codex
 	// does (rate_limit_reset_credits.available_count). Read leniently.
 	ResetCredits json.RawMessage `json:"rate_limit_reset_credits,omitempty"`
+	// The limit-reset block (grants of resets the account holds), present only
+	// when asked for — see usagePath.
+	LimitResets json.RawMessage `json:"cedar_ember,omitempty"`
 }
 
-// claudeResetsText is the "Resets available" row for Claude: the count when
-// the response carries one (an object with available_count, or a bare
-// number), "—" otherwise.
+// claudeVersionsDir is where Claude Code keeps its installed builds, one entry
+// per version. A var so tests can point it elsewhere.
+var claudeVersionsDir = func() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "share", "claude", "versions")
+}
+
+// userAgent names the Claude Code build installed on this machine. The server
+// gates parts of the usage response on the CLI version (limit resets come back
+// "ineligible: cli_version" for an old one), so a hard-coded version silently
+// goes stale; the installed one keeps pace with Claude Code's own updates.
+func userAgent() string {
+	return "claude-cli/" + installedCLIVersion(claudeVersionsDir()) + " (external, cli)"
+}
+
+// installedCLIVersion is the highest x.y.z entry in dir, never lower than the
+// version this build was written against.
+func installedCLIVersion(dir string) string {
+	best, bestV := fallbackCLIVer, parseSemver(fallbackCLIVer)
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		v, ok := parseSemverOK(e.Name())
+		if !ok {
+			continue
+		}
+		if semverLess(bestV, v) {
+			best, bestV = e.Name(), v
+		}
+	}
+	return best
+}
+
+func parseSemver(s string) [3]int { v, _ := parseSemverOK(s); return v }
+
+func parseSemverOK(s string) ([3]int, bool) {
+	var v [3]int
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+func semverLess(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+// usagePath asks for the limit-reset block along with the usage: without the
+// flag the response carries "cedar_ember": null whatever the account holds.
+const usagePath = "/api/oauth/usage?cedar_ember=1"
+
+// resetGrant is one batch of limit resets the account holds. Clears lists the
+// windows a reset refills: a general one names seven_day (and/or five_hour), a
+// model-scoped one only that model's own weekly.
+type resetGrant struct {
+	Label      string   `json:"label"`
+	ResetsLeft int      `json:"resets_left"`
+	Clears     []string `json:"clears"`
+}
+
+func (g resetGrant) general() bool {
+	for _, c := range g.Clears {
+		if c == "seven_day" || c == "five_hour" {
+			return true
+		}
+	}
+	return len(g.Clears) == 0
+}
+
+// claudeResetsText is the "Resets available" row for Claude. The grants in the
+// limit-reset block are counted and split into general resets and per-model
+// ones ("2  ·  1 general, 1 Fable"); failing that, a Codex-style
+// rate_limit_reset_credits count is used; "—" when neither is known.
 func claudeResetsText(u *Usage) string {
-	if u == nil || len(u.ResetCredits) == 0 {
+	if u == nil {
+		return "Resets available: —"
+	}
+	if text, ok := claudeGrantsText(u); ok {
+		return text
+	}
+	if len(u.ResetCredits) == 0 {
 		return "Resets available: —"
 	}
 	var obj struct {
@@ -629,6 +723,64 @@ func claudeResetsText(u *Usage) string {
 		return fmt.Sprintf("Resets available: %d", int(n))
 	}
 	return "Resets available: —"
+}
+
+func claudeGrantsText(u *Usage) (string, bool) {
+	var block struct {
+		Grants []resetGrant `json:"grants"`
+	}
+	raw := strings.TrimSpace(string(u.LimitResets))
+	if raw == "" || raw == "null" || json.Unmarshal(u.LimitResets, &block) != nil {
+		return "", false
+	}
+	total := 0
+	var kinds []string
+	counts := map[string]int{}
+	for _, g := range block.Grants {
+		if g.ResetsLeft <= 0 {
+			continue
+		}
+		kind := "general"
+		if !g.general() {
+			kind = u.scopedGrantName(g)
+		}
+		if counts[kind] == 0 {
+			kinds = append(kinds, kind)
+		}
+		counts[kind] += g.ResetsLeft
+		total += g.ResetsLeft
+	}
+	// A block with no grants left still answers the question: zero.
+	if len(kinds) < 2 && counts["general"] == total {
+		return fmt.Sprintf("Resets available: %d", total), true
+	}
+	parts := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[k], k))
+	}
+	return fmt.Sprintf("Resets available: %d  ·  %s", total, strings.Join(parts, ", ")), true
+}
+
+// scopedGrantName names the model a scoped grant refills: the model-scoped
+// weekly limit its label mentions, else the only such limit, else "model".
+func (u *Usage) scopedGrantName(g resetGrant) string {
+	var names []string
+	for _, l := range u.Limits {
+		if l.Kind != "weekly_scoped" || l.Scope == nil || l.Scope.Model == nil || l.Scope.Model.DisplayName == "" {
+			continue
+		}
+		names = append(names, l.Scope.Model.DisplayName)
+	}
+	label := strings.ToLower(g.Label)
+	for _, n := range names {
+		if strings.Contains(label, strings.ToLower(n)) {
+			return n
+		}
+	}
+	if len(names) == 1 {
+		return names[0]
+	}
+	return "model"
 }
 
 type Profile struct {
@@ -645,7 +797,7 @@ type Profile struct {
 
 // Usage returns the raw bytes (for persistence) and the parsed struct.
 func (c *Client) Usage() ([]byte, *Usage, error) {
-	raw, err := c.get("/api/oauth/usage")
+	raw, err := c.get(usagePath)
 	if err != nil {
 		return nil, nil, err
 	}
