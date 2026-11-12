@@ -332,12 +332,13 @@ type resetMark struct{ Scoped bool }
 // Corner wedges: the dial is a circle in a square box, so the four corners are
 // free. Each wedge hugs the dial — its outer edge is the box's rounded corner,
 // its inner edge an arc concentric with the dial, a small gap off the rings —
-// and tapers to nothing where that arc meets the box's sides. Wedges fill the
-// corners from the top-left clockwise; a fifth reset and beyond has no corner
-// left and is only in the menu.
+// and its two tips, where that arc nears the box's sides, are rounded off too.
+// Wedges fill the corners from the top-left clockwise; a fifth reset and
+// beyond has no corner left and is only in the menu.
 const (
-	resetInnerR   = 9.6 // inner arc radius: clear of the credits ring
+	resetInnerR   = 9.4 // inner arc radius: clear of the credits ring
 	resetCornerR  = 3.0 // rounding of the box corner
+	resetTipR     = 0.5 // rounding of the wedge's two tips
 	maxResetMarks = 4
 )
 
@@ -373,8 +374,15 @@ func resetMarksKey(marks []resetMark) string {
 }
 
 func writeResetMarks(b *strings.Builder, xoff float64, marks []resetMark) {
-	// Where the inner arc meets the box's sides, measured from the corner.
-	tip := dialCX - math.Sqrt(resetInnerR*resetInnerR-dialCX*dialCX)
+	// The tips are rounded by drawing the wedge resetTipR smaller on every
+	// side and stroking it that much back out with round joins. So the path
+	// below is the inset outline: box sides at in, a tighter corner, a wider
+	// inner arc — the stroke lands the outside edges where they belong.
+	in := resetTipR
+	corner := resetCornerR - resetTipR
+	arcR := resetInnerR + resetTipR
+	// Where the inset inner arc meets the inset box sides.
+	tip := dialCX - math.Sqrt(arcR*arcR-(dialCX-in)*(dialCX-in))
 	// The top-left wedge, mirrored into the other corners by (sx, sy).
 	signs := [maxResetMarks][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}
 	for i, m := range marks {
@@ -390,15 +398,16 @@ func writeResetMarks(b *strings.Builder, xoff float64, marks []resetMark) {
 		if sx*sy < 0 {
 			outer, inner = 1, 0
 		}
-		c := dialResetBlue
+		c := svgRGB(dialResetBlue)
 		if m.Scoped {
-			c = dialPurple
+			c = svgRGB(dialPurple)
 		}
 		b.WriteString(fmt.Sprintf(
-			`<path data-reset="%d" d="M%s L%s A%.2f %.2f 0 0 %d %s L%s A%.2f %.2f 0 0 %d %sZ" fill="%s"/>`,
-			i, pt(tip, 0), pt(resetCornerR, 0),
-			resetCornerR, resetCornerR, outer, pt(0, resetCornerR), pt(0, tip),
-			resetInnerR, resetInnerR, inner, pt(tip, 0), svgRGB(c)))
+			`<path data-reset="%d" d="M%s L%s A%.2f %.2f 0 0 %d %s L%s A%.2f %.2f 0 0 %d %sZ"`+
+				` fill="%s" stroke="%s" stroke-width="%.2f" stroke-linejoin="round"/>`,
+			i, pt(tip, in), pt(in+corner, in),
+			corner, corner, outer, pt(in, in+corner), pt(in, tip),
+			arcR, arcR, inner, pt(tip, in), c, c, 2*resetTipR))
 	}
 }
 

@@ -278,11 +278,13 @@ func TestLimitPaceProjectsOverWorkingHours(t *testing.T) {
 func TestResetMarksFillCornersClockwiseFromTopLeft(t *testing.T) {
 	in := dialRenderInput{limits: blankLimits, resets: resetMarks(1, 1)}
 	svg := string(renderDialSVG([]dialRenderInput{{limits: blankLimits}, in}))
-	// Second dial, so the box starts at x = 18 + dialGap = 20. Each wedge
-	// starts at its tip on the box's top edge and runs to the rounded corner.
+	// Second dial, so the box starts at x = 18 + dialGap = 20. The path is
+	// the wedge inset by resetTipR; the round-joined stroke fills it back out.
 	for _, want := range []string{
-		`<path data-reset="0" d="M25.66 0.00 L23.00 0.00 A3.00 3.00 0 0 0 20.00 3.00 L20.00 5.66 A9.60 9.60 0 0 1 25.66 0.00Z" fill="rgb(10,132,255)"/>`,
-		`<path data-reset="1" d="M32.34 0.00 L35.00 0.00 A3.00 3.00 0 0 1 38.00 3.00 L38.00 5.66 A9.60 9.60 0 0 0 32.34 0.00Z" fill="rgb(191,64,255)"/>`,
+		`<path data-reset="0" d="M23.92 0.50 L23.00 0.50 A2.50 2.50 0 0 0 20.50 3.00 L20.50 3.92 A9.90 9.90 0 0 1 23.92 0.50Z"` +
+			` fill="rgb(10,132,255)" stroke="rgb(10,132,255)" stroke-width="1.00" stroke-linejoin="round"/>`,
+		`<path data-reset="1" d="M34.08 0.50 L35.00 0.50 A2.50 2.50 0 0 1 37.50 3.00 L37.50 3.92 A9.90 9.90 0 0 0 34.08 0.50Z"` +
+			` fill="rgb(191,64,255)" stroke="rgb(191,64,255)" stroke-width="1.00" stroke-linejoin="round"/>`,
 	} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("missing %s in %s", want, svg)
@@ -296,7 +298,7 @@ func TestResetMarksFillCornersClockwiseFromTopLeft(t *testing.T) {
 	if strings.Count(six, "data-reset=") != maxResetMarks {
 		t.Errorf("want the wedges capped at %d: %s", maxResetMarks, six)
 	}
-	for _, want := range []string{`data-reset="2" d="M12.34 18.00 L15.00 18.00`, `data-reset="3" d="M5.66 18.00 L3.00 18.00`} {
+	for _, want := range []string{`data-reset="2" d="M14.08 17.50 L15.00 17.50`, `data-reset="3" d="M3.92 17.50 L3.00 17.50`} {
 		if !strings.Contains(six, want) {
 			t.Errorf("missing %s in %s", want, six)
 		}
