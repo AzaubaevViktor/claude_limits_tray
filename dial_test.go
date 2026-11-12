@@ -275,36 +275,41 @@ func TestLimitPaceProjectsOverWorkingHours(t *testing.T) {
 	}
 }
 
-func TestResetDotsFillCornersClockwiseFromTopLeft(t *testing.T) {
-	in := dialRenderInput{limits: blankLimits, resets: resetDots(1, 1)}
+func TestResetMarksFillCornersClockwiseFromTopLeft(t *testing.T) {
+	in := dialRenderInput{limits: blankLimits, resets: resetMarks(1, 1)}
 	svg := string(renderDialSVG([]dialRenderInput{{limits: blankLimits}, in}))
-	// Second dial, so the box starts at x = 18 + dialGap.
+	// Second dial, so the box starts at x = 18 + dialGap = 20. Each wedge
+	// starts at its tip on the box's top edge and runs to the rounded corner.
 	for _, want := range []string{
-		`<circle data-reset="0" cx="21.35" cy="1.35" r="1.15" fill="rgb(10,132,255)"/>`,
-		`<circle data-reset="1" cx="36.65" cy="1.35" r="1.15" fill="rgb(191,64,255)"/>`,
+		`<path data-reset="0" d="M25.66 0.00 L23.00 0.00 A3.00 3.00 0 0 0 20.00 3.00 L20.00 5.66 A9.60 9.60 0 0 1 25.66 0.00Z" fill="rgb(10,132,255)"/>`,
+		`<path data-reset="1" d="M32.34 0.00 L35.00 0.00 A3.00 3.00 0 0 1 38.00 3.00 L38.00 5.66 A9.60 9.60 0 0 0 32.34 0.00Z" fill="rgb(191,64,255)"/>`,
 	} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("missing %s in %s", want, svg)
 		}
 	}
 	if strings.Count(svg, "data-reset=") != 2 {
-		t.Errorf("want 2 dots: %s", svg)
+		t.Errorf("want 2 wedges: %s", svg)
 	}
 
-	six := string(renderDialSVG([]dialRenderInput{{limits: blankLimits, resets: resetDots(6, 0)}}))
-	if strings.Count(six, "data-reset=") != maxResetDots {
-		t.Errorf("want the dots capped at %d: %s", maxResetDots, six)
+	six := string(renderDialSVG([]dialRenderInput{{limits: blankLimits, resets: resetMarks(6, 0)}}))
+	if strings.Count(six, "data-reset=") != maxResetMarks {
+		t.Errorf("want the wedges capped at %d: %s", maxResetMarks, six)
 	}
-	for _, want := range []string{`data-reset="2" cx="16.65" cy="16.65"`, `data-reset="3" cx="1.35" cy="16.65"`} {
+	for _, want := range []string{`data-reset="2" d="M12.34 18.00 L15.00 18.00`, `data-reset="3" d="M5.66 18.00 L3.00 18.00`} {
 		if !strings.Contains(six, want) {
 			t.Errorf("missing %s in %s", want, six)
 		}
 	}
-	// The dots must clear the outermost ring.
-	if reach := math.Hypot(dialCX-resetDotInset, dialCY-resetDotInset) - resetDotR; reach < creditR+creditSW/2 {
-		t.Errorf("corner dot reaches in to %.2f, inside the credits ring", reach)
+	// The wedges must clear the outermost ring and still have some body.
+	if resetInnerR <= creditR+creditSW/2 {
+		t.Errorf("inner arc %.2f cuts into the credits ring", resetInnerR)
 	}
-	if resetDotsKey(resetDots(1, 1)) == resetDotsKey(resetDots(2, 0)) {
-		t.Error("cache key must tell dot kinds apart")
+	thick := math.Hypot(dialCX-resetCornerR, dialCY-resetCornerR) + resetCornerR - resetInnerR
+	if thick < 1.5 {
+		t.Errorf("wedge is only %.2f thick at the corner", thick)
+	}
+	if resetMarksKey(resetMarks(1, 1)) == resetMarksKey(resetMarks(2, 0)) {
+		t.Error("cache key must tell reset kinds apart")
 	}
 }

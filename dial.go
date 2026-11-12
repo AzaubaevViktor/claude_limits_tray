@@ -320,44 +320,47 @@ type dialRenderInput struct {
 	credits creditRing
 	// pulse is the spend animation for this side; zero value draws nothing.
 	pulse pulseFrame
-	// resets is one corner dot per limit reset held, in drawing order.
-	resets []resetDot
+	// resets is one corner wedge per limit reset held, in drawing order.
+	resets []resetMark
 }
 
-// resetDot is one limit reset the account holds, drawn as a dot in a corner of
-// the dial's box. Scoped marks a reset that refills a single model's limit
-// rather than the whole plan's.
-type resetDot struct{ Scoped bool }
+// resetMark is one limit reset the account holds, drawn as a filled wedge in
+// a corner of the dial's box. Scoped marks a reset that refills a single
+// model's limit rather than the whole plan's.
+type resetMark struct{ Scoped bool }
 
-// Corner dots: the dial is a circle in a square box, so the four corners are
-// free. Dots fill them from the top-left clockwise; a fifth reset and beyond
-// has no corner left and is only in the menu.
+// Corner wedges: the dial is a circle in a square box, so the four corners are
+// free. Each wedge hugs the dial — its outer edge is the box's rounded corner,
+// its inner edge an arc concentric with the dial, a small gap off the rings —
+// and tapers to nothing where that arc meets the box's sides. Wedges fill the
+// corners from the top-left clockwise; a fifth reset and beyond has no corner
+// left and is only in the menu.
 const (
-	resetDotR     = 1.15
-	resetDotInset = 1.35 // dot centre, in from each edge of the box
-	maxResetDots  = 4
+	resetInnerR   = 9.6 // inner arc radius: clear of the credits ring
+	resetCornerR  = 3.0 // rounding of the box corner
+	maxResetMarks = 4
 )
 
 var dialResetBlue = [3]int{10, 132, 255} // a general reset; legible on light and dark bars
 
-// resetDots is n general resets followed by scoped model ones.
-func resetDots(general, scoped int) []resetDot {
-	dots := make([]resetDot, 0, general+scoped)
+// resetMarks is n general resets followed by scoped model ones.
+func resetMarks(general, scoped int) []resetMark {
+	marks := make([]resetMark, 0, general+scoped)
 	for i := 0; i < general; i++ {
-		dots = append(dots, resetDot{})
+		marks = append(marks, resetMark{})
 	}
 	for i := 0; i < scoped; i++ {
-		dots = append(dots, resetDot{Scoped: true})
+		marks = append(marks, resetMark{Scoped: true})
 	}
-	return dots
+	return marks
 }
 
-// resetDotsKey extends an icon cache key with the dots drawn.
-func resetDotsKey(dots []resetDot) string {
+// resetMarksKey extends an icon cache key with the wedges drawn.
+func resetMarksKey(marks []resetMark) string {
 	var b strings.Builder
 	b.WriteString("-r")
-	for i, d := range dots {
-		if i >= maxResetDots {
+	for i, d := range marks {
+		if i >= maxResetMarks {
 			break
 		}
 		if d.Scoped {
@@ -369,20 +372,33 @@ func resetDotsKey(dots []resetDot) string {
 	return b.String()
 }
 
-func writeResetDots(b *strings.Builder, xoff float64, dots []resetDot) {
-	lo, hi := resetDotInset, 18-resetDotInset
-	corners := [maxResetDots][2]float64{{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}
-	for i, d := range dots {
-		if i >= maxResetDots {
+func writeResetMarks(b *strings.Builder, xoff float64, marks []resetMark) {
+	// Where the inner arc meets the box's sides, measured from the corner.
+	tip := dialCX - math.Sqrt(resetInnerR*resetInnerR-dialCX*dialCX)
+	// The top-left wedge, mirrored into the other corners by (sx, sy).
+	signs := [maxResetMarks][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}
+	for i, m := range marks {
+		if i >= maxResetMarks {
 			break
 		}
+		sx, sy := signs[i][0], signs[i][1]
+		pt := func(x, y float64) string {
+			return fmt.Sprintf("%.2f %.2f", xoff+dialCX+sx*(dialCX-x), dialCY+sy*(dialCY-y))
+		}
+		// A mirror in one axis reverses the direction every arc turns.
+		outer, inner := 0, 1
+		if sx*sy < 0 {
+			outer, inner = 1, 0
+		}
 		c := dialResetBlue
-		if d.Scoped {
+		if m.Scoped {
 			c = dialPurple
 		}
 		b.WriteString(fmt.Sprintf(
-			`<circle data-reset="%d" cx="%.2f" cy="%.2f" r="%.2f" fill="%s"/>`,
-			i, xoff+corners[i][0], corners[i][1], resetDotR, svgRGB(c)))
+			`<path data-reset="%d" d="M%s L%s A%.2f %.2f 0 0 %d %s L%s A%.2f %.2f 0 0 %d %sZ" fill="%s"/>`,
+			i, pt(tip, 0), pt(resetCornerR, 0),
+			resetCornerR, resetCornerR, outer, pt(0, resetCornerR), pt(0, tip),
+			resetInnerR, resetInnerR, inner, pt(tip, 0), svgRGB(c)))
 	}
 }
 
@@ -406,7 +422,7 @@ func renderDialSVG(inputs []dialRenderInput) []byte {
 	for i, input := range inputs {
 		xoff := float64(i) * (18 + dialGap)
 		renderDialGroup(&b, input, xoff)
-		writeResetDots(&b, xoff, input.resets)
+		writeResetMarks(&b, xoff, input.resets)
 	}
 	b.WriteString(`</svg>`)
 	return []byte(b.String())
