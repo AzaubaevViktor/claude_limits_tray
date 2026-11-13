@@ -100,6 +100,8 @@ Click it for everything as numbers, plus your account.
 
 ## What it can do
 
+<p align="center"><img src="menu.png" width="855" alt="the charts at the top of the menu: the quota strip with reset countdowns and speed bars, then paired Claude and Codex burn-history cards for 1h, 5h, 24h and 7d"></p>
+
 - Live **session (5h)** and **weekly** limits — % remaining and time to reset.
 - A **burn-rate forecast** per window, projected over your **working hours**
   (so the weekly burn reflects ~9h workdays, not 24h of wall-clock). The dial
