@@ -2,17 +2,37 @@
 
 <p align="center"><img src="dial.svg" width="320" alt="the paired dial icon on weekly-only accounts: Claude and Codex each as one full weekly circle, Codex with the thin credits ring"></p>
 
-A tiny macOS menu-bar app that shows — at a glance — how much of your Claude
-and Codex usage is left and whether your current pace will blow through it.
+A tiny macOS menu-bar app that shows how fast your Claude and Codex quota is
+burning — not just how much is left — so you can plan the work around it.
 
 ## What it solves
 
-Claude Code / claude.ai usage runs against a **rolling 5-hour session limit** and
-a **weekly cap**, and you usually only discover you've hit one when you get
-rate-limited in the middle of something. This app keeps both limits in your menu
-bar, projects your current **burn rate** forward — counting only your working
-hours — and colours a warning *before* you run out, so you can pace yourself or
-take a break instead of getting cut off.
+Claude and Codex meter usage against **quota windows** — a rolling 5-hour
+session, a weekly cap, sometimes a credit balance on top. The providers tell
+you how much of a window is used. They don't tell you the thing you need in
+order to plan: **how fast it is going**, and whether that speed is one you can
+keep up until the reset.
+
+Without that you find out too late. Either you get rate-limited in the middle
+of something with days still to go, or the week ends with a third of the quota
+unspent because you were being careful for no reason.
+
+This app measures the burn rate and puts it next to the one number that gives
+it meaning — the **pace you can afford**: quota left ÷ working time left until
+the reset. That turns "71% left" into answers you can act on:
+
+- **Am I going too fast?** Current speed against the affordable pace, as a
+  multiple (`1.6×`) and as a colour, on the icon and in the menu.
+- **How long will it last?** The runway at the current rate, next to the time
+  to the reset.
+- **What did that cost?** Per-hour, per-session, per-day and per-week history,
+  so you can see which task or parallel run ate the quota.
+- **Can I afford more?** Under pace there is room to start another agent or
+  switch to a heavier model; over pace it is time to slow down, move the heavy
+  job to after the reset, or shift it to the other provider.
+
+Time is counted in **your working hours**, so a night or a weekend never makes
+the pace look tighter than it is.
 
 ## How to read the dial
 
@@ -102,146 +122,110 @@ Click it for everything as numbers, plus your account.
 
 <p align="center"><img src="menu.png" width="855" alt="the charts at the top of the menu: the quota strip with reset countdowns and speed bars, then paired Claude and Codex burn-history cards for 1h, 5h, 24h and 7d"></p>
 
-- Live **session (5h)** and **weekly** limits — % remaining and time to reset.
-- A **burn-rate forecast** per window, projected over your **working hours**
-  (so the weekly burn reflects ~9h workdays, not 24h of wall-clock). The dial
-  colours and the chart's affordable pace use the same clock.
-- Configurable **working hours** (30-min steps, default 09:00–18:00, may wrap
-  past midnight like 09:00–02:00) — picked from the dropdown, saved to disk.
-- **Burn-driven icon size** — the menu-bar icon **grows while tokens are
-  actively burning** (18→24 pt, scored per window so a fast weekly burn and a
-  fast 5h burn count equally) and shrinks back when idle. On by default; turn it
-  off to pin a fixed **icon size** (14–24 pt, default 19). This toggle, the
-  **Time ring** fill direction and the **Spend pulse** mode are picked from the
-  dropdown and saved to disk.
-- **Weekly limit in 5-hour-session blocks** — the dropdown spells out the dial's
-  notches as "≈ N / M × 5h blocks left", with the calibrated cost of one block
-  (weekly-% per session) and the spend basis it was measured from, globally and
-  **per model**.
-- Consumption **speed** two ways — a **recent** rate and the **average since the
-  window opened** — with session in **%/h** and weekly in **%/d** (Codex
-  windows pick the unit the same way, by their length), each with the
-  **spare left at reset** if that pace holds. The recent line is labelled with
-  the **actual span it was measured over** (nominally ~15 min, but widening to the
-  real gap between polls when they're sparse — e.g. "Last 12m" — so a slow or
-  manual refresh never misreads as 0).
-- **Quota strip** at the very top of the menu — one row per real quota window
-  (Claude's 5h and 7d plus credits on the left, Codex's two windows plus
-  credits on the right). Each row spells out the **time to that window's
-  reset** in 13-point digits beside the wall-clock moment it lands, so the
-  countdown is readable without squinting, and repeats it once per window
-  rather than once per chart. Next to it sits a compact **speed bar** — the
-  old dial speedometer rolled flat, on the same 0–2× scale against the pace
-  you can still **afford before the reset** (quota left ÷ working time left):
-  purple under pace, green at exactly 1× (runs out precisely at the reset),
-  yellow at 1¼×, red at 1½× or more, with fixed **½× / 1× / 1½×** notches, an
-  accent pip below marking where the plain whole-window pace currently sits on
-  that scale (left of 1× you can go faster than normal, right of it even
-  normal is too fast), and a thin bar above comparing the last 5 minutes with
-  the last 15 — right means accelerating (green → yellow → red), left means
-  easing off (green → blue → purple). `LEFT` closes the row with the runway
-  read two ways: at the **15-minute rate** and at the **average since the
-  window opened**. A window with nothing measured, or with nothing finite to
-  pace against (an unlimited credit balance, or no reset), greys out instead
-  of reading zero. Credits keep the wall clock throughout: they only burn
-  while the plan quota is exhausted, so their row counts down to the reset
-  that brings plan quota back.
-- **Paired burn history** under the strip — Claude is always the left
-  card and Codex the right card, with large high-resolution timelines and
-  separate totals and scales for the last hour, the short window, the last
-  **24 hours**, and the long window. Neither provider exposes a daily quota, so
-  the 24h card is the long window seen over a day — the pace line it is read
-  against is still the weekly budget, which makes it answer "how much of the
-  week did today cost". Each
-  independent scale has three speed labels on the right in `%/h` or `%/d`, plus
-  start/midpoint/end time labels along the bottom. Both APIs report quota in
-  whole percent, so every bar is one run between counter changes: a 1% step is
-  spread evenly over the flat polls since the previous step, giving the exact
-  average speed of that run instead of a spike at the poll that happened to
-  reveal it. The run still waiting for its next step is drawn at zero. The
-  dashed line, drawn over the burn, is the **affordable pace** at each moment
-  of the chart: the quota that was still left then ÷ the **working time** that
-  was left to that window's reset (the same working-hours clock as the menu's
-  forecast rows, so a night or a weekend never makes the pace look tighter).
-  It climbs while nothing is spent (the same remainder over a shrinking
-  wait), holds flat outside working hours, drops with every run, starts over
-  at each observed reset, and is clipped to the top of the plot just before a
-  reset, where almost any speed is affordable. Bar and area colour compare each run's
-  speed with the pace affordable at that moment on the speed bar's scale,
-  which follows the dial: purple when under pace, green at exactly 1× (runs
-  out precisely at the reset, like the credits ring), yellow at 1¼×, red at
-  1½× or more. The y axis is scaled from the flat whole-window pace (over
-  the window's working hours) instead, so it stays put while the reference
-  curve moves. If a window's reset is
-  unknown the line falls back to that flat pace. The 1h, 5h and 24h rows blur
-  those runs into a smooth area (a Gaussian of 1/60 of the horizon, so ~60s,
-  ~5min and ~24min) drawn over the raw bars at low opacity. The blur never leaks
-  past the window edges, so the area's integral equals the bars' integral and
-  the SPENT total exactly, and any run faster than the blur pokes out above it
-  as a faint stub, so outliers stay visible. The 7d row's width is a menu
-  choice, **7d smoothing**: plain bars,
-  30 min, 1 hour (default), 2 hours or 4 hours. The
-  headline figure in the card's top-right corner — set at 16 points, since it
-  is the one number the card exists for — is labelled **SPENT** and counts from
-  the **last reset in view** (every observed reset is drawn as a thin vertical dashed
-  line on the plot), so the previous window's burn is never added to the
-  current one; with no reset in view it is the spend across the whole chart.
-  Everything else a card used to carry — the reset countdown, the runways, the
-  measurement span and the speedometer — described the quota window rather than
-  this horizon, and now lives once on the strip. A weekly-only Codex limit is placed in the long-window row even when the API
-  calls it `primary`; its real utilisation history is also shown as a 5-hour
-  slice in the middle row instead of leaving that Codex card empty.
-- **Credits runway** for both providers — a `Credits:` row with the balance
-  (and the monthly cap / % used where Claude reports one) plus an indented
-  detail row: how long the balance lasts at the recent rate **against the time
-  to reset** and what one more day costs (`lasts 2d 3h of 4d 2h to reset (52%)
-  · ≈ $6.10/day`). Claude's figure comes from `spend` (usage credits) when
-  enabled, otherwise from `extra_usage`; extra-usage amounts are read as minor
-  units scaled by `decimal_places`. Codex credits are tracked as a running
-  counter of balance drops, since its API only reports the balance.
-- A fifth **Credits 5h** chart row (Claude left, Codex right) in credit units:
-  bars are credits spent per run between balance changes, the dashed line is
-  the pace that would have spent the balance left at each moment exactly by
-  the reset (only for the current period — an earlier period's budget is not
-  recorded), and the strip's average runway for credits is taken over the last
-  24 h.
-- **Per-model** weekly limits.
-- Two peer dropdown blocks — **Claude** and **Codex** — each with its plan,
-  both usage windows, forecast, speed, credits, **available rate-limit
-  resets** and per-model/additional limits (Codex also shows the signed-in
-  account). Claude's usage API does not expose reset credits today, so its row
-  reads "—" until a `rate_limit_reset_credits` field appears in the response.
-- Shows the active Claude account and provides **Use current Claude login** to
-  reload `Claude Code-credentials` immediately after switching accounts.
-- **Next reset at a glance** — the strip counts every window down, and each
-  block title carries its own countdown to the soonest of its windows
-  (`Claude · Claude Max 20× · ↻ 3d 4h`). Both tick every second.
-- **A short top level** — the charts, the two provider blocks, **Settings**
-  (working hours, icon size, time ring, spend pulse, 7d smoothing, the dial
-  legend), **Status** (the last success/failure rows for both providers),
-  Refresh and Quit. Text rows are kept narrower than the chart images, and the
-  status line is elided, so the dropdown is as wide as the charts rather than
-  as wide as a sentence of explanation.
-- Polls in the background with a live "requesting…" indicator; on errors it
-  keeps showing the **last good values for 10 minutes** before going grey.
-  The bottom of the menu lists **separate last success / last failure** rows
-  for Claude and for Codex, the failure row carrying the error it hit.
-- **Adaptive polling**: starts at one poll every **2 minutes** and self-tunes —
-  each `429` grows the interval (×1.5, up to 10 min) and a run of clean polls
-  shrinks it back — so it converges on a rate the usage endpoint accepts instead
-  of hammering it every 30 s. The interval is remembered across restarts.
-- **Backoff that respects the server**: on `429` it honours `retry-after` /
-  ratelimit-reset headers, otherwise exponential with jitter capped at **10
-  minutes** — and remembers the next-allowed poll time across restarts so
-  relaunching doesn't immediately re-hit a 429. Failures that only clear when
-  something external recovers — a **network outage** or an **expired token**
-  (401/403, waiting for Claude Code to refresh it) — don't back off: they retry
-  **once a minute** until they recover.
-- **Request/response logging**: each call to the usage API — its status,
-  duration, and body — is logged to **stderr**; the bearer token is never
-  logged.
-- Caches the **account, plan, last quota values and rate**, and saves on quit
-  **and Ctrl-C** — so a restart is populated instantly.
+Everything is shown for Claude and Codex side by side: Claude on the left,
+Codex on the right.
+
+### How fast it is burning
+
+- **Quota strip** at the top of the menu — one row per real quota window
+  (5h, 7d, credits). Each row has:
+  - the **time to that window's reset** and the wall-clock moment it lands,
+    ticking every second;
+  - a **speed bar** on a 0–2× scale against the affordable pace: purple under
+    pace, green at exactly 1× (runs out precisely at the reset), yellow at
+    1¼×, red at 1½× or more, with fixed ½× / 1× / 1½× notches. The pip below
+    marks where the plain whole-window pace sits on that scale; the thin bar
+    above compares the last 5 minutes with the last 15 — right means
+    accelerating, left means easing off;
+  - `LEFT` — the **runway** read two ways: at the 15-minute rate and at the
+    average since the window opened.
+
+  A window with nothing measured, or nothing finite to pace against (an
+  unlimited credit balance, no reset), greys out instead of reading zero.
+- **Speed and forecast as numbers** in each provider's block — a **recent**
+  rate and the **average since the window opened**, session in %/h and weekly
+  in %/d, each with the **spare left at reset** if that pace holds. The recent
+  line is labelled with the span it was really measured over ("Last 12m"), so
+  sparse polls never misread as zero.
+
+### Where it went
+
+- **Paired burn history** under the strip — four rows of cards: the last
+  **hour**, the **short window** (5h), the last **24 hours** and the **long
+  window** (7d). Each card shows:
+  - **SPENT** — the headline figure, counted from the last reset in view, so
+    the previous window's burn is never added to the current one;
+  - the **burn speed over time**, coloured on the same scale as the speed
+    bar, so the stretches that were too fast stand out in red;
+  - a dashed **affordable pace** line: the quota still left at that moment ÷
+    the working time left to the reset. It climbs while nothing is spent,
+    holds flat outside working hours, drops with every spend and starts over
+    at each reset;
+  - every observed **reset** as a vertical dashed line.
+
+  Neither provider has a daily quota, so the 24h card is the weekly window
+  seen over a day: it answers "how much of the week did today cost".
+- **Honest bars.** Both APIs report quota in whole percent, so a 1% step is
+  spread evenly over the polls since the previous step — the exact average
+  speed of that run, not a spike at the poll that happened to reveal it. The
+  1h, 5h and 24h rows blur the runs into a smooth area whose integral still
+  equals SPENT exactly; the 7d row's smoothing is a menu choice (plain bars,
+  30 min, 1 h, 2 h, 4 h).
+- **Credits 5h** — a fifth row in credit units: credits spent per run, and
+  the pace that would spend the remaining balance exactly by the reset.
+
+### What is left
+
+- **Session (5h)** and **weekly** limits — % remaining and time to reset —
+  plus **per-model** weekly limits.
+- **Weekly limit in 5-hour sessions** — "≈ N / M × 5h blocks left": how many
+  more full sessions the week still holds. The cost of one session is
+  **measured from your own spending**, globally and per model.
+- **Limit resets you hold** — `Resets available: 2 · 1 general, 1 Fable`, and
+  as wedges in the corners of the dial.
+- **Credits runway** — the balance (and the monthly cap where Claude reports
+  one), how long it lasts at the recent rate against the time to reset, and
+  what one more day costs: `lasts 2d 3h of 4d 2h to reset (52%) · ≈ $6.10/day`.
+- **Weekly-only accounts** — when a provider hands out only a weekly limit,
+  the session rows disappear and the short-window cards show slices of the
+  weekly history instead of sitting empty.
+
+### On the menu bar
+
+- **The dial** — quota left, time to reset and pace colour for both providers
+  without opening anything (see [How to read the dial](#how-to-read-the-dial)).
+- **Burn-driven icon size** — the icon grows while tokens are actively burning
+  (18→24 pt) and shrinks back when idle. Or pin a fixed size (14–24 pt).
+- **Spend pulse** — a burst on the dial every time a quota % ticks up, so you
+  notice spend as it happens: off, pulse, pulse + sparks, or a firework.
+- **Countdown in the block title** — `Claude · Claude Max 20× · ↻ 3d 4h`.
+
+### Settings
+
+- **Working hours** — 30-minute steps, default 09:00–18:00, may wrap past
+  midnight (09:00–02:00). Every pace, forecast and colour uses this clock.
+- **Icon size**, **Time ring** fill direction, **Spend pulse** mode and
+  firework size, **7d smoothing**, and the dial legend.
+- **Use current Claude login** — reloads the Claude Code credentials right
+  after you switch accounts; the active account is shown in the menu.
+
+All of it is saved to disk.
+
+### Staying out of the way
+
+- **Adaptive polling** — starts at one poll every 2 minutes; each `429` grows
+  the interval (×1.5, up to 10 min) and a run of clean polls shrinks it back.
+- **Backoff that respects the server** — honours `retry-after` and
+  ratelimit-reset headers, otherwise exponential with jitter capped at 10
+  minutes. A network outage or an expired token retries once a minute instead.
+- **Survives errors and restarts** — the last good values stay on screen for
+  10 minutes before going grey; account, plan, quota values, history and the
+  next-allowed poll time are cached, so a relaunch is populated instantly and
+  doesn't re-hit a 429.
+- **Status** submenu — separate last success / last failure rows for Claude
+  and Codex, the failure row carrying the error.
+- **Request logging** to stderr — status, duration and body of each usage
+  call; the bearer token is never logged.
 
 ## Run
 
