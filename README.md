@@ -229,9 +229,23 @@ All of it is saved to disk.
 
 ## Run
 
+From source (needs Go):
+
 ```sh
 ./claude_limits.sh
 ```
+
+Or download the universal macOS binary from the
+[latest release](https://github.com/AzaubaevViktor/claude_limits_tray/releases/latest).
+It is not notarised, so clear the quarantine flag before the first launch:
+
+```sh
+unzip claude-limits-*-macos-universal.zip
+xattr -d com.apple.quarantine claude-limits
+./claude-limits
+```
+
+It keeps its state in `.poll-state.json` next to the binary.
 
 ### Start at login (optional)
 
